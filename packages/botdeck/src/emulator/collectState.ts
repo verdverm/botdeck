@@ -1,11 +1,13 @@
-import { SRAM_START, SRAM_SIZE, type Emulator } from "@/emulator/emulator";
+import {
+  SRAM_START,
+  SRAM_SIZE,
+  type Emulator,
+} from "@/emulator/emulator";
 
 /**
  * Snapshot a running NES into a plain, JSON-safe object: the full jsnes save
- * state (cpu/ppu/papu/controllers), the parsed iNES header / ROM info, and the
- * battery-backed save RAM window ($6000-$7FFF). This is the "collect game
- * state/info" process (folded in from humdeck) that botdeck's game plugins will
- * eventually build structured state on top of.
+ * state, the parsed iNES header / ROM info, and the battery-backed save RAM
+ * window ($6000-$7FFF).
  */
 export interface CollectedState {
   capturedAt: string;
@@ -14,11 +16,10 @@ export interface CollectedState {
   saveState: unknown;
 }
 
-export function collectState(emulator: Emulator): CollectedState | null {
-  const rom = emulator.romInfo;
-  if (!rom) return null;
+export function collectState(em: Emulator | null): CollectedState | null {
+  if (!em || !em.hasRomLoaded()) return null;
 
-  const mem = emulator.getMemory();
+  const mem = em.getMemory();
   const saveRam: number[] = [];
   if (mem) {
     for (let i = 0; i < SRAM_SIZE; i++) {
@@ -28,8 +29,8 @@ export function collectState(emulator: Emulator): CollectedState | null {
 
   return {
     capturedAt: new Date().toISOString(),
-    rom: { ...rom },
+    rom: em.romInfo ?? {},
     saveRam,
-    saveState: emulator.toJSON(),
+    saveState: em.toJSON(),
   };
 }

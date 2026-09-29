@@ -25,7 +25,7 @@ Data flow per turn:
 2. botdeck composes a `TurnRequest` (structured state + optional screenshot +
    available commands).
 3. botdeck POSTs the request to vermbot's `/api/turn`.
-4. vermbot runs its ADK agent and returns a chosen `GameCommand`.
+4. vermbot asks the model and returns a chosen `GameCommand`.
 5. botdeck's `GamePlugin` compiles the command into a `ButtonStep[]` macro.
 6. the emulator plays the sequence frame-by-frame, then the next turn begins.
 7. (new) the resulting step is persisted to the play directory via the file API.
@@ -91,7 +91,7 @@ vermbot-plays-games/
     botdeck/             # browser: emulator + dashboard + agent loop (the UI)
     vermbot/             # node: agent + HTTP front door + file API
     games/<game>/        # game plugins (state reader + command compiler) [planned]
-  .extern/               # vendored jsnes + adk-js (linked deps)
+  .extern/               # vendored jsnes + opencode llm (linked deps)
 ```
 
 Git policy:
@@ -205,8 +205,8 @@ play directory; whether they share one collection is an open question (§13).
 
 `ButtonStep`, `GameCommand`, `CommandSpec`, `TurnRequest`, `TurnResponse` are
 defined in `packages/vermbot/src/protocol.ts` and mirrored in
-`packages/botdeck/src/types.ts` (botdeck is browser-side and cannot import node
-`@google/adk`). Keep them byte-for-byte aligned; a real change edits both.
+`packages/botdeck/src/types.ts` (botdeck is browser-side and cannot import the
+node-only llm client). Keep them byte-for-byte aligned; a real change edits both.
 
 NES button indices (`packages/botdeck/src/types.ts`) match jsnes `Controller`:
 A=0, B=1, SELECT=2, START=3, UP=4, DOWN=5, LEFT=6, RIGHT=7.
@@ -436,14 +436,15 @@ plugin actually needs, and let it be a no-op stub for the generic plugin.
 - **vermbot** (node, tsx, :8787)
   - `server.ts` - HTTP front door: `/api/turn`, `/api/games`, `/api/plays`,
     file handlers, `/health`, `/api/ws` signaling.
-  - `agent.ts` - ADK `LlmAgent` decision. Provider-agnostic: ADK wraps any
-    OpenAI-compatible model, configured for the **homelab vLLM** (open-weights).
-    No hosted/proprietary model providers.
+  - `agent.ts` - model decision via `@opencode-ai/llm`'s OpenAICompatible
+    provider, configured for the **homelab vLLM** (open-weights): base URL is
+    project-level (`packages/vermbot/config.json`), model comes from the play's
+    config.json. No hosted/proprietary model providers.
   - `files.ts` [planned] - repo-rooted fs helpers for games/ and plays/ (§4).
   - `signal.ts` [planned] - WebSocket SDP/ICE relay (§7).
 - **packages/games/<game>** [planned] - per-title plugins + data (opencode
   plugins per README).
-- **.extern** - vendored jsnes + adk-js.
+- **.extern** - vendored jsnes + opencode llm.
 
 ---
 
@@ -451,17 +452,18 @@ plugin actually needs, and let it be a no-op stub for the generic plugin.
 
 Requires node 24 / pnpm. `pnpm install` once.
 
-- `pnpm dev:vermbot` - agent + file API + signaling on :8787. The agent model is
-  the homelab vLLM endpoint (open-weights); configure its base URL and model via
-  `VERMBOT_BASE_URL` + `VERMBOT_MODEL`. No hosted/proprietary provider keys.
+- `pnpm dev:vermbot` - agent + file API + signaling on :8787. The agent talks to
+  the homelab vLLM endpoint (open-weights): base URL is project-level in
+  `packages/vermbot/config.json`, model comes from the play's config.json.
+  No hosted/proprietary provider keys.
 - `pnpm dev:botdeck` - dashboard on :5173 (proxies `/api` -> :8787).
 
 Then open `http://localhost:5173/?play=ff1/0000_dev` (default play if no
 `?play=`). The emulator auto-loads the ROM derived from the play's game via the
 file API. `pnpm build` and `pnpm typecheck` run across all packages.
 
-The vendored adk core must be built once for types:
-`cd .extern/adk-js && npm install --ignore-scripts && npm run build --workspace core`.
+The vendored llm client needs its deps installed once:
+`cd .extern/opencode && bun install --filter @opencode-ai/llm...`.
 
 ---
 

@@ -96,6 +96,13 @@ export function listGames(): GameInfo[] {
     .sort((a, b) => a.game.localeCompare(b.game));
 }
 
+/** The game's system prompt: games/<game>/prompts/system.md */
+export function readGamePrompt(game: string): string {
+  const file = join(gameDir(game), "prompts", "system.md");
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return readFileSync(file, "utf8").trim();
+}
+
 export function readPlayConfig(game: string, id: string): Record<string, unknown> {
   const file = join(playDir(game, id), "config.json");
   if (!existsSync(file)) throw new FileNotFoundError(file);

@@ -1,12 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import {
-  Emulator,
-  SCREEN_WIDTH,
-  SCREEN_HEIGHT,
-} from "@/emulator/emulator";
+import { Emulator, SCREEN_WIDTH, SCREEN_HEIGHT } from "@/emulator/emulator";
 import { collectState, type CollectedState } from "@/emulator/collectState";
-import type { ButtonStep } from "@/types";
-import { loadPlayConfig, loadRomBytes } from "@/play";
+import { loadRomBytes } from "@/play";
 
 // NES buttons keyed by KeyboardEvent.code; jsnes indices (see types.ts).
 const KEY_BUTTONS: Record<string, number> = {
@@ -24,16 +19,11 @@ const KEY_DEBOUNCE_MS = 50;
 
 export interface UseEmulatorResult {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
-  emulator: Emulator;
   fps: number;
   power: boolean;
   romName: string | null;
   hasRom: boolean;
   error?: string;
-  screenshot: () => string;
-  /** Fire-and-forget single tap for the manual test controls. */
-  tap: (step: ButtonStep) => void;
-  playSequence: (steps: ButtonStep[], onDone?: () => void) => void;
   buttonDown: (button: number) => void;
   buttonUp: (button: number) => void;
   loadRom: (data: ArrayBuffer, name?: string) => void;
@@ -46,16 +36,15 @@ export interface UseEmulatorResult {
 }
 
 /**
- * Mounts the single Emulator core, renders its frames onto the returned canvas,
- * and exposes the merged human + agent controls (DESIGN.md §10): power, loadRom,
- * reset, button down/up (on-screen pad + debounced keyboard), save/load state,
- * collect snapshot, and the frame-counted macro playback the agent loop uses.
+ * Mounts the Emulator core, renders its frames onto the returned canvas, and
+ * exposes the human controls: power, loadRom, reset, on-screen pad + debounced
+ * keyboard, save/load state, and collect snapshot.
  *
- * `playId` (e.g. "ff1/0000_dev") drives a dev-time boot over the file API
- * (§4): the play config is read from /api/plays/.../config, then the ROM bytes
- * are fetched from /api/games/:game/rom and loaded. No client-side repo paths.
+ * `game` drives a dev-time boot over the file API (§4): the ROM bytes are
+ * fetched from /api/games/:game/rom and loaded. The ROM is game-scoped, not
+ * play-scoped, so no play config is read here. No client-side repo paths.
  */
-export function useEmulator(playId: string): UseEmulatorResult {
+export function useEmulator(game: string): UseEmulatorResult {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [emulator] = useState(() => new Emulator());
   const [fps, setFps] = useState(0);
@@ -64,7 +53,7 @@ export function useEmulator(playId: string): UseEmulatorResult {
   const [hasRom, setHasRom] = useState(false);
   const [error, setError] = useState<string | undefined>();
 
-  // Render loop: draw each emulated frame onto the canvas, then auto-boot.
+  // Render loop: draw each emulated frame onto the canvas.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -86,14 +75,18 @@ export function useEmulator(playId: string): UseEmulatorResult {
       ctx.putImageData(image, 0, 0);
     });
 
+    const unsubscribeError = emulator.onError((message) => {
+      setError(message);
+      setPower(false);
+    });
+
     emulator.start();
     setPower(true);
     const fpsTimer = window.setInterval(() => setFps(emulator.getFps()), 1000);
 
-    loadPlayConfig(playId)
-      .then(() => loadRomBytes(playId))
+    loadRomBytes(game)
       .then((buf) => {
-        emulator.loadROM(buf, `${playId}.nes`);
+        emulator.loadROM(buf, `${game}.nes`);
         setRomName(emulator.getRomName());
         setHasRom(true);
         setError(undefined);
@@ -103,9 +96,10 @@ export function useEmulator(playId: string): UseEmulatorResult {
     return () => {
       window.clearInterval(fpsTimer);
       unsubscribe();
+      unsubscribeError();
       emulator.stop();
     };
-  }, [emulator, playId]);
+  }, [emulator, game]);
 
   // Debounced keyboard: a held key stays a single press (no key-repeat spam).
   useEffect(() => {
@@ -136,22 +130,6 @@ export function useEmulator(playId: string): UseEmulatorResult {
     };
   }, [emulator, hasRom]);
 
-  const screenshot = useCallback(() => {
-    const canvas = canvasRef.current;
-    return canvas ? canvas.toDataURL("image/png") : "";
-  }, []);
-
-  const tap = useCallback(
-    (step: ButtonStep) => emulator.playSequence([step]),
-    [emulator],
-  );
-
-  const playSequence = useCallback(
-    (steps: ButtonStep[], onDone?: () => void) =>
-      emulator.playSequence(steps, onDone),
-    [emulator],
-  );
-
   const buttonDown = useCallback(
     (button: number) => emulator.buttonDown(button),
     [emulator],
@@ -179,11 +157,13 @@ export function useEmulator(playId: string): UseEmulatorResult {
   const reset = useCallback(() => emulator.reset(), [emulator]);
 
   const powerOn = useCallback(() => {
+    setError(undefined);
     emulator.start();
     setPower(true);
   }, [emulator]);
 
   const powerOff = useCallback(() => {
+    setError(undefined);
     emulator.stop();
     setPower(false);
   }, [emulator]);
@@ -222,15 +202,11 @@ export function useEmulator(playId: string): UseEmulatorResult {
 
   return {
     canvasRef,
-    emulator,
     fps,
     power,
     romName,
     hasRom,
     error,
-    screenshot,
-    tap,
-    playSequence,
     buttonDown,
     buttonUp,
     loadRom,

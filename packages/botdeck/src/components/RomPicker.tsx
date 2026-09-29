@@ -1,64 +1,38 @@
-import { useRef } from "react";
+import { useEffect, useState } from "react";
+import { gamesUrl, readGameId, type GameSummary } from "@/play";
 
-interface RomPickerProps {
-  onLoad: (data: ArrayBuffer, name?: string) => void;
-  disabled?: boolean;
-}
+/**
+ * Displays the active game id (from ?game=), validated against the file API
+ * (/api/games). It is a passive label, not a control: the ROM is auto-loaded
+ * on boot via /api/games/:game/rom, so there is nothing to click.
+ */
+export function RomPicker() {
+  const active = readGameId();
+  const [games, setGames] = useState<GameSummary[]>([]);
 
-const PRESET_ROMS = [
-  { label: "nestest", url: "/roms/nestest.nes" },
-  { label: "croom", url: "/roms/croom.nes" },
-];
+  useEffect(() => {
+    fetch(gamesUrl())
+      .then((res) => {
+        if (!res.ok) throw new Error(`games list (${res.status})`);
+        return res.json() as Promise<GameSummary[]>;
+      })
+      .then(setGames)
+      .catch(() => setGames([]));
+  }, []);
 
-/** Load a ROM from disk or from one of the bundled presets. */
-export function RomPicker({ onLoad, disabled }: RomPickerProps) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const onFile = async (file: File) => {
-    const buf = await file.arrayBuffer();
-    onLoad(buf, file.name);
-  };
-
-  const onPreset = async (url: string) => {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) return;
-      const buf = await res.arrayBuffer();
-      onLoad(buf, url.split("/").pop());
-    } catch {
-      // ignore unreachable preset
-    }
-  };
+  const entry = games.find((g) => g.game === active);
+  const hasRom = entry?.hasRom ?? true;
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <button
-        disabled={disabled}
-        onClick={() => inputRef.current?.click()}
-        className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500 disabled:opacity-50"
-      >
-        Load .nes
-      </button>
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".nes"
-        className="hidden"
-        onChange={(e) => {
-          const file = e.target.files?.[0];
-          if (file) void onFile(file);
-        }}
-      />
-      {PRESET_ROMS.map((rom) => (
-        <button
-          key={rom.url}
-          disabled={disabled}
-          onClick={() => void onPreset(rom.url)}
-          className="rounded bg-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-600 disabled:opacity-50"
-        >
-          {rom.label}
-        </button>
-      ))}
-    </div>
+    <span
+      className={`rounded px-3 py-1.5 text-sm font-medium ${
+        hasRom
+          ? "bg-emerald-600 text-white"
+          : "bg-neutral-700 text-rose-400"
+      }`}
+    >
+      {active}
+      {hasRom ? "" : " (no ROM)"}
+    </span>
   );
 }

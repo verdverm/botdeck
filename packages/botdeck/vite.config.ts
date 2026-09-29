@@ -4,8 +4,8 @@ import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
 // Module import alias only: "@/..." -> "src/...". Repo files (games/, plays/)
-// are served at runtime by the vermbot file API over /api (DESIGN.md 4, 9) -
-// never via a Vite alias, which adds no HTTP route.
+// are served at runtime by the vermbot file API over /api - never via a Vite
+// alias, which adds no HTTP route.
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
 
 export default defineConfig({

@@ -11,8 +11,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/adk": "link:../../.extern/adk-js/core",
-    "@google/genai": "^2.9.0",
+    "@opencode-ai/llm": "link:../../.extern/opencode/packages/llm",
+    "effect": "4.0.0-beta.83",
     "zod": "^4.2.1"
   },
   "devDependencies": {

@@ -1,29 +1,37 @@
 /**
- * Builds the vermbot LlmAgent and turns a TurnRequest into a single chosen
+ * Builds the vermbot model client and turns a TurnRequest into a single chosen
  * GameCommand. The agent is given structured state, the list of available
  * command specs, and optionally the current frame as an image, and must output
  * one command (name + optional args) - never raw button pushes. botdeck's game
  * plugin owns the command -> button-sequence mapping.
+ *
+ * Transport is the linked @opencode-ai/llm OpenAICompatible provider talking to
+ * the homelab vLLM (open-weights). The base URL is project-level
+ * (packages/vermbot/config.json); the model comes from the play's config.json
+ * "model" field; the system prompt is games/<game>/prompts/system.md.
  */
 
-import {LlmAgent, InMemoryRunner} from "@google/adk";
-import type {CommandSpec, GameCommand, TurnRequest, TurnResponse} from "./protocol.ts";
-import {readPlayConfig, FileNotFoundError} from "./files.ts";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { Effect, Layer } from "effect";
+import { LLM, LLMClient, Auth } from "@opencode-ai/llm";
+import { RequestExecutor } from "@opencode-ai/llm/route";
+import { OpenAICompatible } from "@opencode-ai/llm/providers";
+import type { CommandSpec, GameCommand, TurnRequest, TurnResponse } from "./protocol.ts";
+import { readPlayConfig, readGamePrompt, FileNotFoundError } from "./files.ts";
 
-// Reuse adk's own genai Content type via its method signature so vermbot never
-// references the (potentially different) top-level @google/genai copy.
-type StepMessage = Parameters<InMemoryRunner["runEphemeral"]>[0]["newMessage"];
+// Project-level transport config (base URL), read once at startup.
+const PROJECT_CONFIG = JSON.parse(
+  readFileSync(fileURLToPath(new URL("../config.json", import.meta.url)), "utf8"),
+) as { baseUrl: string };
 
-// Model comes from the play's config.json, not a hardcoded default.
-// VERMBOT_PLAY selects which play (default ff1/0000_dev); the config's "model"
-// field points at the homelab vLLM (open-weights).
+// VERMBOT_PLAY selects which play (default ff1/0000_dev); the play config's
+// "model" field names the served model at the vLLM endpoint.
 const PLAY = process.env.VERMBOT_PLAY ?? "ff1/0000_dev";
-const MODEL = readModelFromConfig(PLAY);
+const [playGame, playId] = PLAY.split("/");
 
-function readModelFromConfig(playId: string): string {
+function readModelFromConfig(game: string, id: string): string {
   try {
-    const [game, id] = playId.split("/");
-    if (!game || !id) return "<set-model-in-config>";
     const cfg = readPlayConfig(game, id);
     if (typeof cfg["model"] === "string") return cfg["model"];
   } catch (e) {
@@ -32,46 +40,32 @@ function readModelFromConfig(playId: string): string {
   return "<set-model-in-config>";
 }
 
-function buildInstruction(options: CommandSpec[]): string {
-  const catalog = options
+const MODEL = readModelFromConfig(playGame, playId);
+const SYSTEM_PROMPT = readGamePrompt(playGame);
+
+const vllm = OpenAICompatible.configure({
+  baseURL: PROJECT_CONFIG.baseUrl,
+  provider: "homelab-vllm",
+  auth: Auth.passthrough,
+  headers: {
+    "X-GoModel-User-Path": `/proj/vermbot-plays-games/${playGame}/${playId}`,
+  },
+});
+const model = vllm.model(MODEL);
+
+const requestExecutorLayer = RequestExecutor.fetchLayer;
+const llmClientLayer = LLMClient.layer.pipe(Layer.provide(requestExecutorLayer));
+
+function buildPrompt(req: TurnRequest): string {
+  const catalog = req.options
     .map((o) => `- ${o.name}${o.args ? ` ${o.args}` : ""}: ${o.description}`)
     .join("\n");
   return [
-    "You are vermbot, an agent that plays turn-based NES games (e.g. Final",
-    "Fantasy, Pokemon). You take one turn at a time and are NOT in a fast",
-    "action loop, so prefer meaningful progress over frantic tapping.",
-    "You are given the current game state, optionally the screen as an image,",
-    "and this list of available commands:",
-    catalog,
-    "Choose exactly ONE command from that list. Reply with JSON only:",
-    '{"command": {"name": "<one name>", "args": {...}}, "reason": "<short why>"}',
-    "Omit args if the command takes none. Never invent a command outside the list.",
-  ].join("\n");
-}
-
-const runner = new InMemoryRunner({
-  agent: new LlmAgent({
-    name: "vermbot",
-    description: "Picks the next high-level command for a turn-based game.",
-    model: MODEL,
-  }),
-});
-
-function buildMessage(req: TurnRequest, instruction: string): StepMessage {
-  const parts: StepMessage["parts"] = [
-    { text: instruction },
-    { text: `Game: ${req.gameId}` },
-    { text: `State:\n${JSON.stringify(req.state, null, 2)}` },
-  ];
-  if (req.screenshot) {
-    const match = /^data:(image\/\w+);base64,(.+)$/.exec(req.screenshot);
-    if (match) {
-      parts.push({
-        inlineData: { mimeType: match[1] ?? "image/png", data: match[2] ?? "" },
-      });
-    }
-  }
-  return { role: "user", parts };
+    `Game: ${req.gameId}`,
+    `Available commands:\n${catalog}`,
+    `State:\n${JSON.stringify(req.state, null, 2)}`,
+    "Choose exactly ONE command. Reply with JSON only.",
+  ].join("\n\n");
 }
 
 function coerceCommand(value: unknown, options: CommandSpec[]): GameCommand {
@@ -91,39 +85,43 @@ function coerceCommand(value: unknown, options: CommandSpec[]): GameCommand {
 }
 
 function parseDecision(raw: string, options: CommandSpec[]): TurnResponse {
-  try {
-    const obj = JSON.parse(raw) as {
-      command?: unknown;
-      reason?: unknown;
-    };
-    return {
-      command: coerceCommand(obj.command, options),
-      reason: typeof obj.reason === "string" ? obj.reason : undefined,
-    };
-  } catch {
-    const found = options.find((o) => raw.toUpperCase().includes(o.name.toUpperCase()));
-    return {
-      command: found ? { name: found.name } : { name: "wait" },
-      reason: raw.slice(0, 120),
-    };
+  const jsonStart = raw.indexOf("{");
+  const jsonEnd = raw.lastIndexOf("}");
+  if (jsonStart >= 0 && jsonEnd > jsonStart) {
+    try {
+      const obj = JSON.parse(raw.slice(jsonStart, jsonEnd + 1)) as {
+        command?: unknown;
+        reason?: unknown;
+      };
+      return {
+        command: coerceCommand(obj.command, options),
+        reason: typeof obj.reason === "string" ? obj.reason : undefined,
+      };
+    } catch {
+      // fall through to name-match below
+    }
   }
+  const found = options.find((o) => raw.toUpperCase().includes(o.name.toUpperCase()));
+  return {
+    command: found ? { name: found.name } : { name: "wait" },
+    reason: raw.slice(0, 120),
+  };
 }
 
 export async function decide(req: TurnRequest): Promise<TurnResponse> {
-  const instruction = buildInstruction(req.options);
-  let text = "";
-  for await (const event of runner.runEphemeral({
-    userId: "vermbot",
-    newMessage: buildMessage(req, instruction),
-  })) {
-    const content = event.content;
-    if (!content?.parts) continue;
-    const joined = content.parts
-      .map((p) => p.text)
-      .filter((t): t is string => typeof t === "string")
-      .join("");
-    if (joined) text = joined;
-  }
+  const request = LLM.request({
+    model,
+    system: SYSTEM_PROMPT,
+    prompt: buildPrompt(req),
+    generation: { maxTokens: 512 },
+  });
+
+  const program = Effect.gen(function* () {
+    const response = yield* LLM.generate(request);
+    return response.text;
+  }).pipe(Effect.provide(Layer.mergeAll(requestExecutorLayer, llmClientLayer)));
+
+  const text = await Effect.runPromise(program);
   if (!text) {
     return { command: { name: "wait" }, reason: "no model response" };
   }

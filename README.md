@@ -7,7 +7,7 @@ Inspired by https://github.com/christianmat/jev-pokemon
 ## Tech Stack
 
 - [.extern/jsnes](https://github.com/bfirsh/jsnes) | https://jsnes.org/
-- [.extern/adk-js](https://github.com/google/adk-js) | https://adk.dev/
+- [.extern/opencode](https://github.com/anomalyco/opencode) `packages/llm` (`@opencode-ai/llm`) - OpenAI-compatible LLM client
 - [../opencode](https://github.com/anomalyco/opencode) | https://opencode.ai/docs
 - pnpm workspaces, node runtime
 - react / tailwind, only in-house components
@@ -33,7 +33,7 @@ Data flow per turn:
 1. botdeck reads game state via a GamePlugin
 2. botdeck composes a turn request (structured state + optional screenshot + available commands)
 3. botdeck POSTs the request to vermbot's `/api/turn`
-4. vermbot runs its ADK agent and returns a chosen GameCommand
+4. vermbot asks the model and returns a chosen GameCommand
 5. botdeck's GamePlugin compiles the command into a sequence of button presses
 6. the emulator plays the sequence out frame-by-frame, then the next turn begins
 
@@ -49,18 +49,18 @@ a browser app and vermbot stays Node-only.
 
 ## Local dependencies
 
-jsnes and adk-js are vendored under .extern/ and consumed via pnpm `link:`
-workspace deps:
+jsnes and the opencode LLM client are vendored under .extern/ and consumed via
+pnpm `link:` workspace deps:
 
 - botdeck links `.extern/jsnes` (consumed as ESM source, no separate build step)
-- vermbot links `.extern/adk-js/core` as `@google/adk`; the vendored core must be built once for types to resolve:
-  - `cd .extern/adk-js && npm install --ignore-scripts && npm run build --workspace core`
+- vermbot links `.extern/opencode/packages/llm` as `@opencode-ai/llm`; install its deps once inside the vendored tree:
+  - `cd .extern/opencode && bun install --filter @opencode-ai/llm...`
 
 ## Running
 
 Requires node 24 / pnpm. Install once with `pnpm install`.
 
-- `pnpm dev:vermbot` - agent + file API on :8787. The agent model is the homelab vLLM endpoint (open-weights); configure `VERMBOT_BASE_URL` + `VERMBOT_MODEL` (or the `model` field in the play's config.json). No hosted/proprietary provider keys.
+- `pnpm dev:vermbot` - agent + file API on :8787. The agent talks to the homelab vLLM endpoint (open-weights): base URL is project-level in `packages/vermbot/config.json`, the model comes from the `model` field in the play's config.json. No hosted/proprietary provider keys.
 - `pnpm dev:botdeck` - dashboard on :5173 (proxies `/api` to :8787). Open `http://localhost:5173/?play=ff1/0000_dev` (default play if no `?play=`); the emulator auto-loads the ROM derived from the play's game via the file API.
 
 `pnpm build` and `pnpm typecheck` run across all packages.

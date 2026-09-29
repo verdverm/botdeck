@@ -2,5 +2,5 @@
   "id": "0000_dev",
   "game": "ff1",
   "label": "Final Fantasy - dev run",
-  "model": "qwen3-32b"
+  "model": "uranium-qwen-mini"
 }

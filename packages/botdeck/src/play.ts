@@ -6,20 +6,51 @@
  * no Vite resolve.alias used for serving files (§9).
  */
 
+// --- game / ROM ------------------------------------------------------------
+// The frontend ALWAYS loads a ROM through the game ROM endpoint: the ROM is
+// game-scoped, not play-scoped.
+
+export const DEFAULT_GAME = "ff1";
+
+/** Read the active game id from the ?game= query param (dev-time selector). */
+export function readGameId(): string {
+  if (typeof window === "undefined") return DEFAULT_GAME;
+  const fromQuery = new URLSearchParams(window.location.search).get("game");
+  return fromQuery && fromQuery.length > 0 ? fromQuery : DEFAULT_GAME;
+}
+
+export function gamesUrl(): string {
+  return "/api/games";
+}
+
+/** A game entry returned by GET /api/games. */
+export interface GameSummary {
+  game: string;
+  hasRom: boolean;
+  hasGuide: boolean;
+}
+
+/** Streamed ROM binary, keyed by game. */
+export function romUrl(game: string): string {
+  return `/api/games/${encodeURIComponent(game)}/rom`;
+}
+
+/** Fetch the ROM bytes for a game (via the file API). */
+export async function loadRomBytes(game: string): Promise<ArrayBuffer> {
+  const res = await fetch(romUrl(game));
+  if (!res.ok) {
+    throw new Error(`ROM for "${game}" (${res.status})`);
+  }
+  return await res.arrayBuffer();
+}
+
+// --- plays / config (separate concern, not the ROM boot) -------------------
+
 export interface PlayConfig {
   id?: string;
   game?: string;
   label?: string;
   [key: string]: unknown;
-}
-
-export const DEFAULT_PLAY = "ff1/0000_dev";
-
-/** Read the active play id from the ?play= query param (dev-time selector). */
-export function readPlayId(): string {
-  if (typeof window === "undefined") return DEFAULT_PLAY;
-  const fromQuery = new URLSearchParams(window.location.search).get("play");
-  return fromQuery && fromQuery.length > 0 ? fromQuery : DEFAULT_PLAY;
 }
 
 export interface PlayRef {
@@ -36,13 +67,6 @@ export function parsePlayId(playId: string): PlayRef {
   return { game, id };
 }
 
-/** The game is the first segment of the play id, e.g. "ff1" from "ff1/0000_dev". */
-export function gameFromPlayId(playId: string): string {
-  return parsePlayId(playId).game;
-}
-
-// --- file-API URL builders (§4) -------------------------------------------
-
 function playBase(playId: string): string {
   const { game, id } = parsePlayId(playId);
   return `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}`;
@@ -50,16 +74,6 @@ function playBase(playId: string): string {
 
 export function playConfigUrl(playId: string): string {
   return `${playBase(playId)}/config`;
-}
-
-/** ROM is game-scoped, not play-scoped: derived from the play's first segment. */
-export function romUrl(playId: string): string {
-  const { game } = parsePlayId(playId);
-  return `/api/games/${encodeURIComponent(game)}/rom`;
-}
-
-export function gamesUrl(): string {
-  return "/api/games";
 }
 
 export function playsUrl(game?: string): string {
@@ -76,21 +90,10 @@ export function stepsUrl(playId: string): string {
   return `${playBase(playId)}/steps`;
 }
 
-// --- boot flow (§4) --------------------------------------------------------
-
 export async function loadPlayConfig(playId: string): Promise<PlayConfig> {
   const res = await fetch(playConfigUrl(playId));
   if (!res.ok) {
     throw new Error(`config for play "${playId}" (${res.status})`);
   }
   return (await res.json()) as PlayConfig;
-}
-
-/** Fetch the ROM bytes derived from the play's game (via the file API). */
-export async function loadRomBytes(playId: string): Promise<ArrayBuffer> {
-  const res = await fetch(romUrl(playId));
-  if (!res.ok) {
-    throw new Error(`ROM for "${gameFromPlayId(playId)}" (${res.status})`);
-  }
-  return await res.arrayBuffer();
 }
