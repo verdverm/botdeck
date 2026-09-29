@@ -14,11 +14,12 @@ Inspired by https://github.com/christianmat/jev-pokemon
 
 ## Components
 
-- ./packages/botdeck: emulator/dashboard - game in top-left, game state in bot-left, agent info right-half
-- ./packages/humdeck: human-only jsnes UI (canvas, keyboard/gamepad, ROM loader) for verifying the emulator subsystem in isolation, no agent involved
-- ./packages/vermbot: the agent loop that plays the game, given available options, game info, maybe image; outputs the option to take, not direct button pushes
-- ./packages/games/...: game specific data handling and context preparation, opencode plugins
-- ./packages/plays/...: run specific settings, references, guides
+See [DESIGN.md](./DESIGN.md) for the authoritative architecture.
+
+- ./packages/botdeck: browser UI - the single emulator core, dashboard, and agent loop (game top-left, game state bot-left, agent info right). The human-only controls (gamepad, debounced keyboard, ROM picker, save/load, collect-state viewer) live here after the humdeck merge.
+- ./packages/vermbot: node - the agent plus the HTTP front door: `/api/turn` (decision) and the repo-rooted file API (`/api/games`, `/api/plays`, config read/write) backed by node `fs`
+- ./games/<game>: per-ROM data (game.nes is gitignored), guide/, future RAM maps / command tables
+- ./plays/<game>/<id>: per-run config.json, states/, steps/
 
 ## Architecture
 
@@ -31,7 +32,7 @@ Data flow per turn:
 
 1. botdeck reads game state via a GamePlugin
 2. botdeck composes a turn request (structured state + optional screenshot + available commands)
-3. botdeck POSTs the request to vermbot's `/turn`
+3. botdeck POSTs the request to vermbot's `/api/turn`
 4. vermbot runs its ADK agent and returns a chosen GameCommand
 5. botdeck's GamePlugin compiles the command into a sequence of button presses
 6. the emulator plays the sequence out frame-by-frame, then the next turn begins
@@ -39,9 +40,8 @@ Data flow per turn:
 Layers:
 
 - botdeck owns the emulator, the render loop, the macro timing, and the game plugin interface (`GamePlugin`: `readState`, `availableCommands`, `compile`)
-- vermbot owns the agent: a model prompt built from the command catalog, returning `{command, reason}`, coerced to a valid option
+- vermbot owns the agent (a model prompt built from the command catalog, returning `{command, reason}`, coerced to a valid option) and the file API over repo `fs`
 - games own the smarts per title: RAM/state readers and command-to-button-sequence mappings (e.g. "travel to destination", "use healing potion")
-- humdeck exercises the emulator alone, with no agent, to confirm the core subsystems work
 
 The shared protocol types (`GameCommand`, `ButtonStep`, `CommandSpec`,
 `TurnRequest`, `TurnResponse`) are mirrored in botdeck and vermbot: botdeck is
@@ -52,7 +52,7 @@ a browser app and vermbot stays Node-only.
 jsnes and adk-js are vendored under .extern/ and consumed via pnpm `link:`
 workspace deps:
 
-- botdeck and humdeck link `.extern/jsnes` (consumed as ESM source, no separate build step)
+- botdeck links `.extern/jsnes` (consumed as ESM source, no separate build step)
 - vermbot links `.extern/adk-js/core` as `@google/adk`; the vendored core must be built once for types to resolve:
   - `cd .extern/adk-js && npm install --ignore-scripts && npm run build --workspace core`
 
@@ -60,18 +60,18 @@ workspace deps:
 
 Requires node 24 / pnpm. Install once with `pnpm install`.
 
-- `pnpm dev:humdeck` - human-only emulator UI on :5174 (load a .nes ROM)
-- `pnpm dev:vermbot` - agent server on :8787 (set `GEMINI_API_KEY`; optionally `VERMBOT_MODEL`)
-- `pnpm dev:botdeck` - dashboard on :5173 (proxies `/api` to :8787; set the ROM/plugin in `src/App.tsx`)
+- `pnpm dev:vermbot` - agent + file API on :8787. The agent model is the homelab vLLM endpoint (open-weights); configure `VERMBOT_BASE_URL` + `VERMBOT_MODEL` (or the `model` field in the play's config.json). No hosted/proprietary provider keys.
+- `pnpm dev:botdeck` - dashboard on :5173 (proxies `/api` to :8787). Open `http://localhost:5173/?play=ff1/0000_dev` (default play if no `?play=`); the emulator auto-loads the ROM derived from the play's game via the file API.
 
 `pnpm build` and `pnpm typecheck` run across all packages.
 
 ## Open items
 
 - No game plugin yet: only a generic single-tap placeholder exists in botdeck. Real Final Fantasy / Pokemon state readers and command macros (packages/games/...) still need to be written
-- games/ and plays/ are declared workspace globs but have no packages yet
-- The turn loop has only been exercised against the generic plugin; an end-to-end live turn needs a browser plus a valid GEMINI_API_KEY
-- vermbot's model call path and humdeck's live browser session have not been run end-to-end (typecheck, build, and server error handling are covered)
+- games/ and plays/ are declared workspace globs but have no packages yet (the on-disk `games/` and `plays/` are data dirs, not packages)
+- The turn loop has only been exercised against the generic plugin; an end-to-end live turn needs a browser plus a reachable model endpoint
+- Step persistence (steps/ + states/ file API endpoints) and state-change detection are DESIGN.md targets, not yet implemented
+- WebRTC read-only broadcasting (DESIGN.md §7) is unbuilt and currently out of scope
 
 
 ## Ideas
@@ -84,10 +84,14 @@ Requires node 24 / pnpm. Install once with `pnpm install`.
 ## Todos
 
 - [x] Add '@' import alias to botdeck vite.config + tsconfig
-- [ ] Port collectState onto Emulator core; add power/save/load/reset to Emulator wrapper
-- [ ] Expand useEmulator: loadRom, reset, buttonDown/Up, save/load, collect, romName, power
-- [ ] Add botdeck components: Gamepad, RomPicker, StateViewer (+ json-edit-react dep)
-- [ ] Rewrite botdeck App.tsx to unified UI (game+state+agent+gamepad+collect) and keyboard input
-- [ ] Rewrite all botdeck ../ imports to @/
-- [ ] Remove humdeck package + dev:humdeck script; update README
-- [ ] typecheck + build botdeck
+- [x] Port collectState onto Emulator core; add power/save/load/reset to Emulator wrapper
+- [x] Expand useEmulator: loadRom, reset, buttonDown/Up, save/load, collect, romName, power
+- [x] Add botdeck components: Gamepad, RomPicker, StateViewer (+ json-edit-react dep)
+- [x] Rewrite botdeck App.tsx to unified UI (game+state+agent+gamepad+collect) and keyboard input
+- [x] Rewrite all botdeck ../ imports to @/
+- [x] Remove humdeck package + dev:humdeck script; update README
+- [x] typecheck + build botdeck
+- [x] vermbot file API: /api/games, /api/plays (CRUD), config read/write over repo fs
+- [ ] Steps/states file API endpoints (DESIGN.md 4/5) and step persistence
+- [ ] State-change detection (DESIGN.md 8) to drive the loop instead of a timer
+- [ ] WebRTC read-only broadcast + signaling (DESIGN.md 7)

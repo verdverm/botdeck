@@ -467,17 +467,23 @@ The vendored adk core must be built once for types:
 
 ## 12. Status / gaps
 
-- **Not yet implemented (design ahead of code).** The current tree still has
-  *two* emulators (humdeck on `jsnes.Browser`, botdeck on `Emulator`) and still
-  fetches ROM/config via `/@fs` + `__REPO_ROOT__`. The merge (§2), file API (§4),
-  step persistence (§5), change detection (§8), and WebRTC (§7) are all targets.
+- **Merge + file API done.** humdeck is removed; botdeck now owns the single
+  `Emulator` core plus the folded-in human controls (`Gamepad`, `RomPicker`,
+  `StateViewer`, `SaveControls`, `collectState`, debounced keyboard). vermbot
+  exposes the file API (§4: games, ROM, plays CRUD, config read/write) over
+  repo-rooted `fs`, and botdeck boots via `/api` (`play.ts` builders, no `/@fs`
+  or `/@games`).
+- Step persistence (§5) and the `states/` + `steps/` endpoints are not yet
+  implemented; the play dir is created with `states/` and `steps/` subdirs.
+- State-change detection (§8) is not yet implemented; the loop still advances on
+  a fixed `thinkDelayMs` timer.
 - No real game plugin yet (only the generic single-tap placeholder).
 - `packages/games/*` and `packages/plays/*` workspace globs are declared but
   empty; the on-disk `games/` and `plays/` are data dirs, not packages.
 - The turn loop has only been exercised against the generic plugin; no
   end-to-end live turn has run.
-- WebRTC is unbuilt; signaling endpoint, host hook, and viewer mode are all
-  planned.
+- WebRTC is unbuilt and currently out of scope; signaling endpoint, host hook,
+  and viewer mode are planned.
 
 ---
 

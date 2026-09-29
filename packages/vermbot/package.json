@@ -1,0 +1,23 @@
+{
+  "name": "vermbot",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The agent loop that plays the game: given options + game info (+ image), outputs the option to take",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "tsx src/server.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@google/adk": "link:../../.extern/adk-js/core",
+    "@google/genai": "^2.9.0",
+    "zod": "^4.2.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.7",
+    "typescript": "^5.9.2"
+  }
+}
