@@ -1,0 +1,17 @@
+{
+  "name": "vermbot-plays-games",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "An experiment in agentic gaming",
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "dev:botdeck": "pnpm --filter botdeck dev",
+    "dev:humdeck": "pnpm --filter humdeck dev",
+    "dev:vermbot": "pnpm --filter vermbot dev"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}

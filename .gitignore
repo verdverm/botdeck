@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+*.log
+.env
+.DS_Store
+.extern/**/node_modules/
+.extern/**/dist/
+sessions/
+.nes
+.extern/
+*.nes
+games/ff1/guide/main/
+games/ff1/guide/raw/
