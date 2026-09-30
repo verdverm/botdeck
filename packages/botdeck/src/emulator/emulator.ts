@@ -1,4 +1,5 @@
 import { NES } from "jsnes";
+import { NesAudio } from "./audio";
 
 export const SCREEN_WIDTH = 256;
 export const SCREEN_HEIGHT = 240;
@@ -75,13 +76,16 @@ export class Emulator {
   private romBytes: string | Uint8Array | ArrayBuffer | null = null;
   private romName: string | null = null;
   private hasRom = false;
+  private audio = new NesAudio();
 
   constructor() {
     const opts = {
-      emulateSound: false,
+      emulateSound: true,
+      sampleRate: this.audio.getSampleRate(),
       onFrame: (buffer: Uint32Array) => {
         for (const listener of this.listeners) listener(buffer);
       },
+      onAudioSample: this.audio.writeSample,
       onBatteryRamWrite: (address: number, value: number) => {
         for (const listener of this.batteryListeners) listener(address, value);
       },
@@ -112,6 +116,13 @@ export class Emulator {
     this.running = true;
     this.lastTime = performance.now();
     this.accumulator = 0;
+    try {
+      this.audio.start();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      for (const listener of this.errorListeners)
+        listener(`audio start failed: ${msg}`);
+    }
     const loop = (now: number) => {
       if (!this.running) return;
       this.accumulator += now - this.lastTime;
@@ -133,6 +144,7 @@ export class Emulator {
   stop(): void {
     this.running = false;
     cancelAnimationFrame(this.raf);
+    this.audio.stop();
   }
 
   isRunning(): boolean {
@@ -196,6 +208,7 @@ export class Emulator {
   private stepFrame(): void {
     try {
       this.nes.frame();
+      this.audio.flush();
     } catch (e) {
       // A crashed emulation kills the loop silently if uncaught; stop and
       // surface the error to the UI instead.

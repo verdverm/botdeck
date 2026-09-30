@@ -77,6 +77,12 @@ export function readRom(game: string): Uint8Array {
   return new Uint8Array(readFileSync(file));
 }
 
+export function readSplash(game: string): Uint8Array {
+  const file = join(gameDir(game), "splash.png");
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return new Uint8Array(readFileSync(file));
+}
+
 export interface GameInfo {
   game: string;
   hasRom: boolean;

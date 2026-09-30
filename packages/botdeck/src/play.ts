@@ -35,6 +35,11 @@ export function romUrl(game: string): string {
   return `/api/games/${encodeURIComponent(game)}/rom`;
 }
 
+/** Splash image URL, keyed by game. */
+export function splashUrl(game: string): string {
+  return `/api/games/${encodeURIComponent(game)}/splash`;
+}
+
 /** Fetch the ROM bytes for a game (via the file API). */
 export async function loadRomBytes(game: string): Promise<ArrayBuffer> {
   const res = await fetch(romUrl(game));

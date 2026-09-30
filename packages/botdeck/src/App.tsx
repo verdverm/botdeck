@@ -15,6 +15,7 @@ export function App() {
     power,
     romName,
     hasRom,
+    splashUrl,
     error,
     buttonDown,
     buttonUp,
@@ -87,16 +88,24 @@ export function App() {
             >
               Collect state
             </button>
-            <p className="text-xs text-neutral-500">
-              arrows = d-pad, Z = B, X = A, Enter = Start, \ = Select
-            </p>
+            {error ? (
+              <p className="text-xs text-rose-400">{error}</p>
+            ) : (
+              <p className="text-xs text-neutral-500">
+                arrows = d-pad, Z = B, X = A, Enter = Start, \ = Select
+              </p>
+            )}
           </div>
 
-          <GameScreen canvasRef={canvasRef} />
+          <GameScreen
+            canvasRef={canvasRef}
+            canPlay={hasRom && !power}
+            splashUrl={splashUrl}
+            onPlay={powerOn}
+          />
 
           <div className="flex justify-center">
             <Gamepad onDown={buttonDown} onUp={buttonUp} />
-            {error && <p className="text-sm text-rose-400">{error}</p>}
           </div>
         </div>
 

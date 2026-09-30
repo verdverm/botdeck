@@ -5,6 +5,7 @@
  *   POST   /api/turn                        - agent decision (was /turn)
  *   GET    /api/games                       - list games
  *   GET    /api/games/:game/rom             - ROM binary
+ *   GET    /api/games/:game/splash          - splash PNG
  *   GET    /api/plays?game=<game>           - list plays
  *   POST   /api/plays                       - create play
  *   GET    /api/plays/:game/:id             - play metadata
@@ -22,6 +23,7 @@ import { decide } from "./agent.ts";
 import type { TurnRequest } from "./protocol.ts";
 import {
   readRom,
+  readSplash,
   listGames,
   listPlays,
   readPlayConfig,
@@ -73,6 +75,15 @@ function binary(res: ServerResponse, data: Uint8Array): void {
   res.end(Buffer.from(data));
 }
 
+function png(res: ServerResponse, data: Uint8Array): void {
+  res.writeHead(200, {
+    "content-type": "image/png",
+    "content-length": data.length,
+    "access-control-allow-origin": "*",
+  });
+  res.end(Buffer.from(data));
+}
+
 // ---------------------------------------------------------------------------
 
 /* Route helpers: each returns true if it handled the request. */
@@ -110,6 +121,19 @@ function handleGames(
     const game = segments[2]!;
     try {
       binary(res, readRom(game));
+    } catch (err) {
+      if (err instanceof FileNotFoundError) json(res, 404, { error: String(err) });
+      else if (err instanceof PathEscapeError) json(res, 400, { error: String(err) });
+      else json(res, 500, { error: String(err) });
+    }
+    return true;
+  }
+
+  // /api/games/:game/splash
+  if (segments.length === 4 && segments[3] === "splash") {
+    const game = segments[2]!;
+    try {
+      png(res, readSplash(game));
     } catch (err) {
       if (err instanceof FileNotFoundError) json(res, 404, { error: String(err) });
       else if (err instanceof PathEscapeError) json(res, 400, { error: String(err) });

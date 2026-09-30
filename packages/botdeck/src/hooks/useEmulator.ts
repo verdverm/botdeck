@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Emulator, SCREEN_WIDTH, SCREEN_HEIGHT } from "@/emulator/emulator";
 import { collectState, type CollectedState } from "@/emulator/collectState";
-import { loadRomBytes } from "@/play";
+import { loadRomBytes, splashUrl } from "@/play";
 
 // NES buttons keyed by KeyboardEvent.code; jsnes indices (see types.ts).
 const KEY_BUTTONS: Record<string, number> = {
@@ -23,6 +23,7 @@ export interface UseEmulatorResult {
   power: boolean;
   romName: string | null;
   hasRom: boolean;
+  splashUrl: string;
   error?: string;
   buttonDown: (button: number) => void;
   buttonUp: (button: number) => void;
@@ -80,8 +81,6 @@ export function useEmulator(game: string): UseEmulatorResult {
       setPower(false);
     });
 
-    emulator.start();
-    setPower(true);
     const fpsTimer = window.setInterval(() => setFps(emulator.getFps()), 1000);
 
     loadRomBytes(game)
@@ -206,6 +205,7 @@ export function useEmulator(game: string): UseEmulatorResult {
     power,
     romName,
     hasRom,
+    splashUrl: splashUrl(game),
     error,
     buttonDown,
     buttonUp,
