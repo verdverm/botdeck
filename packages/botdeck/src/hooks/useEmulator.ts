@@ -67,10 +67,10 @@ export function useEmulator(game: string): UseEmulatorResult {
     const unsubscribe = emulator.onFrame((buffer) => {
       for (let i = 0; i < buffer.length; i++) {
         const px = buffer[i] ?? 0;
-        // NES emits BGR in low 24 bits; canvas wants RGBA.
-        view.setUint8(i * 4, (px >> 16) & 0xff); // R
+        // jsnes emits BGR in low 24 bits; canvas wants RGBA.
+        view.setUint8(i * 4, px & 0xff); // R
         view.setUint8(i * 4 + 1, (px >> 8) & 0xff); // G
-        view.setUint8(i * 4 + 2, px & 0xff); // B
+        view.setUint8(i * 4 + 2, (px >> 16) & 0xff); // B
         view.setUint8(i * 4 + 3, 0xff); // A
       }
       ctx.putImageData(image, 0, 0);
