@@ -1,5 +1,5 @@
 {
   "prompt": {
-    "snippets": ["system", "game-info", "commands", "state", "instructions"]
+    "snippets": ["system", "game-info", "commands", "state", "tools", "instructions"]
   }
 }

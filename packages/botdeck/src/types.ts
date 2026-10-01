@@ -42,6 +42,25 @@ export interface TurnResponse {
   reason?: string;
 }
 
+export interface ToolSpec {
+  name: string;
+  description: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  input?: Record<string, unknown>;
+}
+
+export interface ToolResult {
+  id: string;
+  name: string;
+  result: unknown;
+  error?: string;
+}
+
 export interface PlayStateMetadata {
   name: string;
   createdAt: string;

@@ -107,7 +107,6 @@ export function listGames(): GameInfo[] {
     .sort((a, b) => a.game.localeCompare(b.game));
 }
 
-/** The game's system prompt: games/<game>/prompts/system.md */
 export interface PromptConfig {
   snippets?: string[];
 }
@@ -163,6 +162,114 @@ export function readPlayGoals(game: string, id: string): string {
   return readPlayTextFile(game, id, "goals", "goals.md");
 }
 
+function writePlayTextFile(
+  game: string,
+  id: string,
+  ...segments: string[]
+): void {
+  const file = join(playDir(game, id), ...segments);
+  mkdirSync(dirname(file), { recursive: true });
+}
+
+export interface WritePlayTextOptions {
+  content: string;
+  maxChars?: number;
+}
+
+export function writePlayMemory(
+  game: string,
+  id: string,
+  options: WritePlayTextOptions,
+): string {
+  const maxChars = options.maxChars ?? 2048;
+  if (options.content.length > maxChars) {
+    throw new ValidationError(
+      `memory exceeds ${maxChars} characters (${options.content.length})`,
+    );
+  }
+  writePlayTextFile(game, id, "memory", "memory.md");
+  const file = join(playDir(game, id), "memory", "memory.md");
+  writeFileSync(file, options.content);
+  return options.content;
+}
+
+export interface WriteJournalOptions extends WritePlayTextOptions {
+  mode?: "append" | "overwrite";
+}
+
+export function writePlayJournal(
+  game: string,
+  id: string,
+  options: WriteJournalOptions,
+): string {
+  const maxChars = options.maxChars ?? 32768;
+  if (options.content.length > maxChars) {
+    throw new ValidationError(
+      `journal exceeds ${maxChars} characters (${options.content.length})`,
+    );
+  }
+  writePlayTextFile(game, id, "journal", "journal.md");
+  const file = join(playDir(game, id), "journal", "journal.md");
+  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
+  const mode = options.mode ?? "append";
+  if (mode === "overwrite") {
+    writeFileSync(file, options.content);
+    return options.content;
+  }
+  const separator = existing.length > 0 ? "\n\n---\n\n" : "";
+  const timestamp = new Date().toISOString();
+  const entry = `${separator}[${timestamp}]\n${options.content}`;
+  writeFileSync(file, existing + entry);
+  return existing + entry;
+}
+
+export function writePlayGoals(
+  game: string,
+  id: string,
+  options: WritePlayTextOptions,
+): string {
+  const maxChars = options.maxChars ?? 1024;
+  if (options.content.length > maxChars) {
+    throw new ValidationError(
+      `goals exceeds ${maxChars} characters (${options.content.length})`,
+    );
+  }
+  writePlayTextFile(game, id, "goals", "goals.md");
+  const file = join(playDir(game, id), "goals", "goals.md");
+  writeFileSync(file, options.content);
+  return options.content;
+}
+
+export interface ResourceEntry {
+  name: string;
+  path: string;
+}
+
+function listPlayResourceDir(
+  game: string,
+  id: string,
+  resource: string,
+): ResourceEntry[] {
+  const dir = join(playDir(game, id), resource);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile())
+    .map((d) => ({ name: d.name, path: `${resource}/${d.name}` }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function listPlayMemory(game: string, id: string): ResourceEntry[] {
+  return listPlayResourceDir(game, id, "memory");
+}
+
+export function listPlayJournal(game: string, id: string): ResourceEntry[] {
+  return listPlayResourceDir(game, id, "journal");
+}
+
+export function listPlayGoals(game: string, id: string): ResourceEntry[] {
+  return listPlayResourceDir(game, id, "goals");
+}
+
 export function readPlayConfig(game: string, id: string): Record<string, unknown> {
   const file = join(playDir(game, id), "config.json");
   if (!existsSync(file)) throw new FileNotFoundError(file);
@@ -189,6 +296,9 @@ export function createPlay(
   if (existsSync(dir)) throw new AlreadyExistsError(dir);
   mkdirSync(join(dir, "states"), { recursive: true });
   mkdirSync(join(dir, "steps"), { recursive: true });
+  mkdirSync(join(dir, "memory"), { recursive: true });
+  mkdirSync(join(dir, "journal"), { recursive: true });
+  mkdirSync(join(dir, "goals"), { recursive: true });
   const config = { id, game, ...(label ? { label } : {}) };
   writePlayConfig(game, id, config);
   return config;

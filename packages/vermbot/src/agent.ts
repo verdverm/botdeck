@@ -15,12 +15,13 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Effect, Layer } from "effect";
-import { LLM, LLMClient, Auth } from "@opencode-ai/llm";
+import { LLM, LLMClient, Auth, Message, ToolDefinition, ToolCallPart, type LLMResponse } from "@opencode-ai/llm";
 import { RequestExecutor } from "@opencode-ai/llm/route";
 import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible";
 import type { CommandSpec, GameCommand, TurnRequest, TurnResponse } from "./protocol.ts";
 import { readPlayConfig, FileNotFoundError } from "./files.ts";
 import { renderPrompt } from "./prompts.ts";
+import { makeAgentTools, toolDefinitionsForRequest, executeTool } from "./tools.ts";
 
 // Project-level transport config (base URL), read once at startup.
 const PROJECT_CONFIG = JSON.parse(
@@ -100,24 +101,110 @@ function parseDecision(raw: string, options: CommandSpec[]): TurnResponse {
   };
 }
 
+function parsePlayId(rawPlayId: string | undefined): { game: string; id: string } {
+  if (rawPlayId && rawPlayId.includes("/")) {
+    const [game, id] = rawPlayId.split("/");
+    if (game && id) return { game, id };
+  }
+  return { game: playGame, id: rawPlayId ?? playId };
+}
+
+const MAX_TOOL_ROUNDS = 5;
+
+function toolCallsFromResponse(response: LLMResponse): Array<{
+  id: string;
+  name: string;
+  input: unknown;
+}> {
+  const native = response.toolCalls.filter((event) => event.type === "tool-call");
+  if (native.length > 0) {
+    return native.map((event) => ({ id: event.id, name: event.name, input: event.input }));
+  }
+  return parseToolCallsFromText(response.text);
+}
+
+function parseToolCallsFromText(text: string): Array<{ id: string; name: string; input: unknown }> {
+  const calls: Array<{ id: string; name: string; input: unknown }> = [];
+  const regex = /<tool_call>\s*([\s\S]*?)\s*<\/tool_call>/g;
+  let match: RegExpExecArray | null;
+  while ((match = regex.exec(text)) !== null) {
+    try {
+      const obj = JSON.parse(match[1] as string) as { name?: unknown; input?: unknown };
+      if (typeof obj.name === "string") {
+        calls.push({ id: `parsed_${calls.length}`, name: obj.name, input: obj.input });
+      }
+    } catch {
+      // ignore malformed blocks
+    }
+  }
+  return calls;
+}
+
 export async function decide(req: TurnRequest): Promise<TurnResponse> {
   const { system, user } = renderPrompt(req);
+  const { game, id } = parsePlayId(req.playId);
+  const tools = makeAgentTools({ game, id });
+  const toolDefinitions = toolDefinitionsForRequest(tools).map((t) =>
+    ToolDefinition.make({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }),
+  );
 
-  const request = LLM.request({
+  let messages = [Message.user(user)];
+  let request = LLM.request({
     model,
     system,
-    prompt: user,
-    generation: { maxTokens: 512 },
+    messages,
+    tools: toolDefinitions,
+    generation: { maxTokens: 1024 },
   });
 
-  const program = Effect.gen(function* () {
-    const response = yield* LLM.generate(request);
-    return response.text;
-  }).pipe(Effect.provide(Layer.mergeAll(requestExecutorLayer, llmClientLayer)));
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+    const program = Effect.gen(function* () {
+      const response = yield* LLM.generate(request);
+      return response;
+    }).pipe(Effect.provide(Layer.mergeAll(requestExecutorLayer, llmClientLayer)));
 
-  const text = await Effect.runPromise(program);
-  if (!text) {
-    return { command: { name: "wait" }, reason: "no model response" };
+    const response = await Effect.runPromise(program);
+    const calls = toolCallsFromResponse(response);
+
+    if (calls.length === 0) {
+      return parseDecision(response.text, req.options);
+    }
+
+    const assistantContent = calls.map((call) =>
+      ToolCallPart.make({
+        id: call.id,
+        name: call.name,
+        input: call.input,
+      }),
+    );
+
+    const toolResults = calls.map((call) => executeTool(tools, { game, id }, call));
+
+    messages = [
+      ...messages,
+      Message.assistant(assistantContent),
+      ...toolResults.map((result) =>
+        Message.tool({
+          id: result.id,
+          name: result.name,
+          result: result.error ? { type: "error", value: result.error } : result.result,
+          resultType: result.error ? "error" : undefined,
+        }),
+      ),
+    ];
+
+    request = LLM.request({
+      model,
+      system,
+      messages,
+      tools: toolDefinitions,
+      generation: { maxTokens: 1024 },
+    });
   }
-  return parseDecision(text, req.options);
+
+  return { command: { name: "wait" }, reason: "max tool rounds reached without a final command" };
 }

@@ -42,6 +42,26 @@ export interface TurnResponse {
   reason?: string;
 }
 
+export interface ToolSpec {
+  name: string;
+  description: string;
+  /** JSON Schema describing the tool's input arguments. */
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface ToolCall {
+  id: string;
+  name: string;
+  input?: Record<string, unknown>;
+}
+
+export interface ToolResult {
+  id: string;
+  name: string;
+  result: unknown;
+  error?: string;
+}
+
 /** Type guard: confirms a value is a well-formed TurnRequest. */
 export function isValidTurnRequest(value: unknown): value is TurnRequest {
   if (!value || typeof value !== "object") return false;
