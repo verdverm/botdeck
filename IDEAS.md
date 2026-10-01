@@ -1,3 +1,10 @@
+# 0. next
+
+- hook up to homelab little model
+- create available actions, incorp into prompts
+- take_action tool that should be the final tool call, this breaks the agent loop and runs macros
+- macro system for game input, a* for navigation
+
 # game state inspection - game playing automation loop
 
 ideally, we will iterate over 1-3 in a self improving loop
@@ -62,13 +69,6 @@ ideally, we will iterate over 1-3 in a self improving loop
 ----
 
 # other (later)
-
-### upcoming
-
-- hook up to homelab little model
-- create available actions, incorp into prompts
-- take_action tool that should be the final tool call, this breaks the agent loop and runs macros
-- macro system for game input, a* for navigation
 
 ### docs / site
 

@@ -1,6 +1,6 @@
 # DESIGN
 
-> Design document for `vermbot-plays-games`, an experiment in agentic gaming: a
+> Design document for `botdeck`, an experiment in agentic gaming: a
 > model plays turn-based NES games (Final Fantasy, Pokemon) through an emulator,
 > reasoning in high-level game commands rather than raw button pushes.
 >
@@ -25,10 +25,16 @@ Data flow per turn:
 2. botdeck composes a `TurnRequest` (structured state + optional screenshot +
    available commands).
 3. botdeck POSTs the request to vermbot's `/api/turn`.
-4. vermbot asks the model and returns a chosen `GameCommand`.
-5. botdeck's `GamePlugin` compiles the command into a `ButtonStep[]` macro.
-6. the emulator plays the sequence frame-by-frame, then the next turn begins.
-7. (new) the resulting step is persisted to the play directory via the file API.
+4. vermbot assembles the prompt from game and optional per-play snippets, then
+   asks the model.
+5. The model may call memory/journal/goals tools across `maxToolRounds` before
+   emitting a final command.
+6. vermbot returns a `TurnResponse` with the chosen `GameCommand`, reason,
+   rendered prompts, and raw output.
+7. botdeck's `GamePlugin` compiles the command into a `ButtonStep[]` macro.
+8. The emulator plays the sequence frame-by-frame.
+9. botdeck snapshots before/after states and persists the completed
+   `StepRecord` to the play directory via the file API.
 
 ---
 
@@ -64,33 +70,36 @@ These were resolved during design review and are now fixed:
 - **Import paths use a module alias (`@/` -> `src/`), never brittle
   `../../` chains.** Moving a file must not break its imports.
 
-- **Read-only viewing is WebRTC, with the host being the browser tab that runs
-  the emulator.** The operator's botdeck captures its game canvas and a
-  read-only data feed and broadcasts them to viewers over `RTCPeerConnection`;
-  vermbot handles only signaling (SDP/ICE), not the media. Viewers have no
-  input path at all - they watch the frame, the structured state, and the agent
-  log. See §7. This is a direct consequence of the browser-emulator decision:
-  each stream originates from a human tab, not the server.
+- **Prompts are snippets, not monolithic files.** Each game ships a
+  `prompts/` directory of markdown templates. A play may override individual
+  snippets by shadowing them in `plays/<game>/<id>/prompts/`. The snippet list
+  and order come from `prompt.snippets` in the resolved config (play overrides
+  game). Snippet names are safe file basenames only.
 
 ---
 
 ## 3. Repository layout (git-tracked)
 
 ```
-vermbot-plays-games/
+botdeck/
   games/<game>/          # one entry per ROM/game
     game.nes             # the ROM (gitignored - binary, see .gitignore)
+    splash.png           # optional dashboard splash image
+    config.json          # default agent + prompt config for the game
     guide/               # walkthrough/reference data for the game
-    ...                  # future game code (RAM maps, command tables)
+    prompts/             # markdown prompt snippets (system, commands, state, ...)
+    state/               # optional workspace package that reads live game state
   plays/<game>/<id>/     # many plays share one game/ROM
     config.json          # run settings (label, options; NO rom path - derived)
-    states/              # N save states + collected snapshots
+    states/              # N save states + extracted snapshots
     steps/               # per-turn agent artifacts (see §5)
-    ...                  # arbitrary run output the game/agent produces
+    memory/              # short-term memory entries the agent may write
+    journal/             # long-form learnings the agent may write
+    goals/               # current goals
+    prompts/             # optional per-play prompt overrides
   packages/
     botdeck/             # browser: emulator + dashboard + agent loop (the UI)
     vermbot/             # node: agent + HTTP front door + file API
-    games/<game>/        # game plugins (state reader + command compiler) [planned]
   .extern/               # vendored jsnes + opencode llm (linked deps)
 ```
 
@@ -123,6 +132,7 @@ real repo folder.
 | ------ | ----- | ------- |
 | `GET`  | `/api/games` | List games (those with a `game.nes` and/or `guide/`). |
 | `GET`  | `/api/games/:game/rom` | Stream the ROM binary (`application/octet-stream`). |
+| `GET`  | `/api/games/:game/splash` | Stream the splash PNG (`image/png`). |
 
 The ROM endpoint is game-scoped, not play-scoped: one ROM, many plays.
 
@@ -132,29 +142,47 @@ The ROM endpoint is game-scoped, not play-scoped: one ROM, many plays.
 | ------ | ----- | ------- |
 | `GET`    | `/api/plays?game=<game>` | List plays (for a game, or all). |
 | `POST`   | `/api/plays` | Create a play. Body `{ game, id, label? }`. |
-| `GET`    | `/api/plays/:game/:id` | Read play metadata (config + counts). |
+| `GET`    | `/api/plays/:game/:id` | Read play metadata (`config.json`). |
 | `PATCH`  | `/api/plays/:game/:id` | Update config fields. |
 | `DELETE` | `/api/plays/:game/:id` | Remove the play directory. |
 
-### Play artifacts (all scoped under `:game/:id`)
-
-Config:
+### Play config
 
 | Method | Route | Purpose |
 | ------ | ----- | ------- |
 | `GET`  | `/api/plays/:game/:id/config` | Read `config.json`. |
 | `PUT`  | `/api/plays/:game/:id/config` | Write `config.json`. |
 
-States - **N per play** (each "Collect state" press, each checkpoint):
+### States
+
+Each "Collect state" press or checkpoint produces a state entry with up to three
+sidecars: `.state.json` (jsNES save state), `.ff1.json` (extracted FF1 game
+state), and `.metadata.json` (name, createdAt, bookmarked).
 
 | Method | Route | Purpose |
 | ------ | ----- | ------- |
-| `GET`    | `/api/plays/:game/:id/states` | List state descriptors. |
-| `POST`   | `/api/plays/:game/:id/states` | Append a state. Body = snapshot. |
-| `GET`    | `/api/plays/:game/:id/states/:stateId` | Read one state. |
-| `DELETE` | `/api/plays/:game/:id/states/:stateId` | Remove one state. |
+| `GET`    | `/api/plays/:game/:id/states` | List state descriptors (sort=`newest`\|oldest\|name (a-z)\|name (z-a)). |
+| `POST`   | `/api/plays/:game/:id/states` | Append a state. Body `{ data, name? }`; `data` is base64 or JSON snapshot. |
+| `GET`    | `/api/plays/:game/:id/states/:file` | Read one state/sidecar file. |
+| `PATCH`  | `/api/plays/:game/:id/states/:file` | Update metadata (`name`, `bookmarked`). |
+| `DELETE` | `/api/plays/:game/:id/states/:file` | Remove one state and its sidecars. |
 
-Steps - **one per agent-loop iteration** (see §5):
+### Memory, journal, goals
+
+| Method | Route | Purpose |
+| ------ | ----- | ------- |
+| `GET`    | `/api/plays/:game/:id/memory` | List memory entries. |
+| `POST`   | `/api/plays/:game/:id/memory` | Write a memory entry (`{ slug?, content, label? }`; `slug` or `label` derives the file name). |
+| `GET`    | `/api/plays/:game/:id/memory/:slug` | Read one memory entry. |
+| `DELETE` | `/api/plays/:game/:id/memory/:slug` | Remove one memory entry. |
+| `GET`    | `/api/plays/:game/:id/journal` | List journal entries. |
+| `POST`   | `/api/plays/:game/:id/journal` | Write a journal entry (`name`, `content`). |
+| `GET`    | `/api/plays/:game/:id/journal/:name` | Read one journal entry. |
+| `DELETE` | `/api/plays/:game/:id/journal/:name` | Remove one journal entry. |
+| `GET`    | `/api/plays/:game/:id/goals` | Read current goals. |
+| `PUT`    | `/api/plays/:game/:id/goals` | Overwrite goals. |
+
+### Steps
 
 | Method | Route | Purpose |
 | ------ | ----- | ------- |
@@ -162,7 +190,7 @@ Steps - **one per agent-loop iteration** (see §5):
 | `POST`   | `/api/plays/:game/:id/steps` | Append one step. |
 | `GET`    | `/api/plays/:game/:id/steps/:stepId` | Read one step. |
 
-### boot flow (botdeck)
+### Boot flow (botdeck)
 
 ```
 readPlayId()  // ?play=ff1/0000_dev (default ff1/0000_dev)
@@ -182,36 +210,108 @@ A **step** is one full turn of the loop, persisted so a play is a replayable,
 inspectable history. Its shape mirrors the loop's phases:
 
 ```ts
-// draft - finalize during implementation (see Open Questions §13)
 interface StepRecord {
-  stepId: string;            // sequence/timestamp handle
-  ts: number;
-  request: TurnRequest;      // getState output: state + screenshot + options
-  response: TurnResponse;    // process output: chosen command + reason
-  command: GameCommand;
-  // putMoves output:
-  macro?: ButtonStep[];      // the compiled button sequence
-  stateBefore?: string;      // stateId or save snapshot
-  stateAfter?: string;
+  stepId: string;            // monotonic zero-padded sequence, e.g. "000042"
+  ts: number;                // client timestamp when the turn started
+  request: TurnRequest;      // state + screenshot + available commands
+  response: TurnResponse;    // chosen command + reason + prompt + raw output
+  command: GameCommand;      // final command echoed from response
+  macro?: ButtonStep[];      // compiled button sequence played by botdeck
+  stateBefore?: string;      // repo-relative path to saved before state
+  stateAfter?: string;       // repo-relative path to saved after state
 }
 ```
 
-Each `collectState` press (a human checkpoint) and each step both live under the
-play directory; whether they share one collection is an open question (§13).
+botdeck is the sole writer of steps. After the macro finishes it snapshots the
+emulator, `POST`s the completed `StepRecord`, and appends the turn to the local
+log. `/api/turn` stays read-only with respect to disk; persistence is an
+explicit `POST /steps`.
 
 ---
 
-## 6. Turn protocol (shared types)
+## 6. Prompt assembly
 
-`ButtonStep`, `GameCommand`, `CommandSpec`, `TurnRequest`, `TurnResponse` are
-defined in `packages/vermbot/src/protocol.ts` and mirrored in
+Prompts are built from markdown snippets under `games/<game>/prompts/`. The
+resolved config (play overrides game) provides `prompt.snippets`, an ordered
+list of snippet names. The snippet named exactly `system` becomes the system
+prompt; every other snippet is rendered and joined to form the user prompt.
+
+Rendering uses simple `{{key}}` substitution against a context built from the
+`TurnRequest`:
+
+| Key | Value |
+| --- | ----- |
+| `gameId` | `request.gameId` |
+| `playId` | `request.playId` |
+| `commands` | Formatted list of available commands |
+| `stateJson` | `JSON.stringify(request.state)` |
+| `gameInfo` | Human-readable FF1 summary from `@games/ff1-state` |
+| `memory` | Concatenated current memory entries |
+| `goals` | Current goals text |
+
+A play may shadow any game snippet by placing a file with the same name in
+`plays/<game>/<id>/prompts/`. This lets a single play specialize instructions,
+goals framing, or tool descriptions without forking the game prompts.
+
+---
+
+## 7. Agent tool-use loop
+
+vermbot resolves agent settings by merging the game's `config.json` and the
+play's `config.json` under the `agent` key:
+
+```ts
+interface AgentConfig {
+  model: string;
+  maxToolRounds: number;
+  maxTokens: number;
+  limits: {
+    goals: number;
+    memory: number;
+    journal: number;
+    memoryCount: number;
+  };
+}
+```
+
+The model is asked with a system prompt, user prompt, and tool definitions.
+After each response vermbot checks for tool calls:
+
+- Native `tool-call` events from the LLM provider are preferred.
+- As a fallback, vermbot parses `<tool_call>{ "name": ..., "input": ... }</tool_call>`
+  blocks from the raw text.
+
+Tool results are appended to the message list and the request is re-sent, up to
+`maxToolRounds`. Once the model returns without tool calls, the final text is
+parsed into a `TurnResponse`. If no valid command is found, the response falls
+back to `{ name: "wait" }`.
+
+### Tools
+
+The agent currently exposes:
+
+- `journal_list` / `journal_read` / `journal_write` - long-form play log.
+- `memory_write` - short-term, always-included memory (limited by `memory` chars
+  and `memoryCount` entries).
+- `goals_write` - overwrite the current goals.
+
+All writes land under `plays/<game>/<id>/{journal,memory,goals}/` and enforce
+size limits from the resolved config.
+
+---
+
+## 8. Turn protocol (shared types)
+
+`ButtonStep`, `GameCommand`, `CommandSpec`, `TurnRequest`, `TurnResponse`,
+`StepRecord`, `ToolSpec`, `ToolCall`, and `ToolResult` are defined in
+`packages/vermbot/src/protocol.ts` and mirrored in
 `packages/botdeck/src/types.ts` (botdeck is browser-side and cannot import the
 node-only llm client). Keep them byte-for-byte aligned; a real change edits both.
 
 NES button indices (`packages/botdeck/src/types.ts`) match jsnes `Controller`:
 A=0, B=1, SELECT=2, START=3, UP=4, DOWN=5, LEFT=6, RIGHT=7.
 
-`GamePlugin` interface (per game, in `packages/games/<game>/`):
+`GamePlugin` interface (per game):
 
 ```ts
 interface GamePlugin {
@@ -223,168 +323,85 @@ interface GamePlugin {
 }
 ```
 
-Only a `GenericGamePlugin` (single-tap placeholders) exists so far. Real FF1
-RAM readers and command macros are not yet written.
+Only a `GenericGamePlugin` (single-tap placeholders) and an FF1 state reader
+exist today. Real FF1 command compilers (menu navigation, travel, combat) are
+not yet written.
 
 ---
 
-## 7. Read-only WebRTC broadcasting
+## 9. Macro playback
 
-Goal: let an operator stream a live play to viewers (a home page / shared link)
-in **read-only** mode - they see the game, the structured state, and the agent's
-decisions, but cannot send any input.
-
-### Why the host is a browser tab
-
-The emulator lives in botdeck (browser, §2), so the authoritative frame buffer
-is `canvas.captureStream()`-able there. Making the operator's tab the WebRTC
-**host** (sender) avoids moving emulation server-side and keeps one emulator
-implementation. vermbot therefore does **signaling only** - it brokers
-SDP/ICE between host and viewers over WebSocket; it never touches media.
-
-### Topology
-
-```
-vermbot signaling (:8787, /api/ws)      WebRTC (P2P, SRTP)
-   host tab  ------------------  viewer tab(s)
-     ^                              (read-only)
-     | canvas.captureStream() -> video track
-     + gamepad/state/log          -> datachannel track
-```
-
-- **Host**: the botdeck tab that owns the emulator + agent loop. Captures the
-  `GameScreen` canvas as a `MediaStreamTrack` (video) and opens an
-  `RTCPeerConnection` with an `RTCDataChannel` for the read-only feed.
-- **Viewers**: a lightweight botdeck mode (no emulator, no loop). They render
-  the incoming video track to a `<video>` element and apply data-channel
-  messages to the same `GameStatePanel` / `AgentPanel` components.
-
-### Two tracks
-
-| Track | Transport | Content |
-| ----- | --------- | ------- |
-| Video | `captureStream()` -> `RTCRtpSender` | The live NES frame, encoded by the browser. No extra deps. |
-| Data  | `RTCDataChannel` (ordered, reliable) | Structured snapshots + agent decisions. |
-
-The data channel carries the same objects the UI already renders, so viewer
-panels are the operator's panels fed over the wire instead of from local RAM:
+The custom `Emulator` (`packages/botdeck/src/emulator/emulator.ts`) runs a
+frame-synced `requestAnimationFrame` loop. At the lowest level a macro is a list
+of `ButtonStep`s:
 
 ```ts
-// draft messages sent on the host datachannel
-type LiveMessage =
-  | { type: "state";  seq: number; state: Record<string, unknown> }   // readState output
-  | { type: "turn";   seq: number; turn: number; command: GameCommand; reason?: string }
-  | { type: "phase";  seq: number; phase: Phase }
-  | { type: "reset";  seq: number };                                   // viewer resyncs
-```
-
-Read-only is **structural**, not a UI hide: the viewer build has no `buttonDown`
-/ `buttonUp` / ROM-loader wiring, so there is literally no input path to
-misuse.
-
-### Signaling protocol (vermbot)
-
-A single WebSocket endpoint on vermbot relays SDP/ICE, served at `/api/ws` so
-it rides the same path prefix botdeck already proxies (with `ws: true` on that
-Vite proxy rule - the current `/api` proxy does not yet forward websockets).
-vermbot assigns each stream a topic id (the play id works: `ff1/0000_dev`);
-host publishes, viewers subscribe.
-
-```
-client -> server:  { type: "join",  topic, role: "host" | "viewer", peerId }
-server -> client:  { type: "peer",  peerId }                 // notify host a viewer joined
-server -> host:    { type: "signal", from, sdp }             // viewer offer (or host offer)
-server -> *:       { type: "signal", from, sdp | candidate } // relay SDP/ICE verbatim
-server -> client:  { type: "leave", peerId }
-```
-
-Negotiation: the **viewer creates the offer** (WebRTC `RTCPeerConnection`
-offerer role) and sends an offer with no tracks (receive-only); the host answers
-with its tracks attached. A viewer joining mid-broadcast just repeats this
-handshake; the host adds the new `RTCPeerConnection` to its fan-out set and the
-data channel sends a `{type:"state"}` snapshot on connect so the viewer isn't
-blank. Note the SDP offerer (viewer) and the media sender (host) are opposite
-sides here; the join `role` field ("host" | "viewer") is a participant kind,
-independent from who offers.
-
-### Lifecycle & limits
-
-- Host tab closed / navigated away -> all viewers drop (no server-side fallback
-  media; the source was the tab). Reopening the host lets viewers reconnect.
-- Fan-out is bounded by the host's encoder + bandwidth; keep viewer count small
-  (a handful). This is a demo/observation feature, not a CDN.
-- NAT traversal needs a STUN server (and TURN for symmetric-NAT viewers);
-  configured on the `RTCPeerConnection` iceServers, not stored in git.
-- Media is ephemeral and **not persisted** - durable capture stays with the
-  file API's steps/states (§4, §5), independent of who happened to be watching.
-
----
-
-## 8. State-change detection
-
-The loop, persistence, and broadcast all want to know when the game actually
-*changed* rather than firing blindly at 60fps. jsnes provides **no generic
-"game state changed" event**; the only hooks are on the `NES` constructor
-(`NESOptions`, `.extern/jsnes/src/nes.d.ts:13-17`):
-
-| Hook | Fires | Value for change detection |
-| ---- | ----- | -------------------------- |
-| `onFrame(buffer)` | every emulated frame, full 256x240 `Uint32Array` | the clock; pixel-level, not semantic |
-| `onBatteryRamWrite(addr,val)` | per byte, **only save-RAM ($6000-$7FFF)**, mapper-wired (only mapper0/5 emit it in the vendored tree) | detects in-game *saves*, not general state |
-| `onStatusUpdate(string)` | lifecycle text ("Ready to load a ROM.") | not useful |
-| `onAudioSample(l,r)` | audio samples | not useful |
-
-There is no CPU-write or PPU-change event. `collectState` already works around
-this by **polling** `cpu.mem` for the SRAM window. So "state changed" must be
-**derived**, anchored to the per-frame `onFrame` callback (the Emulator already
-fan-outs frames to listeners; see `packages/botdeck/src/emulator/emulator.ts`).
-
-Design: a single `onStateChanged` source of truth in `useEmulator`, computed
-each frame, that the loop, step persistence (§5), and broadcaster (§7) subscribe
-to.
-
-```ts
-type ChangeKind = "screen" | "state" | "save";
-interface StateChange {
-  kind: ChangeKind;
-  seq: number;                 // monotonic, shared ordering
-  frame: number;               // emulated frame index it fired on
-  state?: Record<string, unknown>; // present for kind "state"
-  address?: number;            // present for kind "save"
+interface ButtonStep {
+  button: number;
+  holdFrames?: number;
+  gapFrames?: number;
 }
 ```
 
-Derivation rules:
+`runMacro` queues the steps and, on each emulated frame, advances the macro
+state machine: hold the button for `holdFrames`, release, wait `gapFrames`, then
+press the next button. Defaults are two frames each. The macro promise resolves
+when all steps complete; resetting, stopping, or loading a ROM cancels the macro
+and releases any held button.
 
-- **screen** - hash (or region-of-interest diff, e.g. the message/menu box) the
-  `onFrame` buffer vs the previous; differs => screen changed. Cheap rolling
-  hash, not a full-pixel compare every frame.
-- **state** - on each frame, `plugin.readState()` and deep-diff vs last; a
-  difference => a semantic state event (the agent's "the game responded").
-- **save** - `onBatteryRamWrite` fired => a real in-game save occurred.
-
-Settling (no change for N frames, default ~12 = 200ms) is the signal that the
-macro's effect has played out.
-
-How each consumer uses it:
-
-- **Agent loop** (`useBotLoop`): instead of a fixed `thinkDelayMs` poll, advance
-  to the next turn only when the screen/state settles after a macro plays. This
-  is more faithful to turn-based than a timer, and naturally waits out animation.
-- **Step persistence** (§5): gate a `POST /steps` on an actual change, so
-  no-op/wait turns and steady-state 60fps re-renders don't spam the play dir.
-- **WebRTC data channel** (§7): video already carries pixels over its own
-  track; emit `{type:"state"}` on the data channel **only on change**, not every
-  frame. Keeps the feed small and viewers in sync.
-- **Auto-checkpoint**: on `save`, snapshot emulator state to `states/` without a
-  manual Collect press (pairs with the `onBatteryRamWrite` signal).
-
-Cost note: `readState()` runs every frame; keep it to the few RAM addresses the
-plugin actually needs, and let it be a no-op stub for the generic plugin.
+`ButtonStep[]` is the frame-accurate target, but macros are also intended to be
+named, reusable high-level constructs. A game plugin can statically define common
+sequences (e.g., "open menu", "use first item", "flee battle") and dynamically
+generate context-aware sequences (e.g., A* walking to a destination compiled into
+held d-pad segments, or adaptive combat sequences that pick spells based on
+current enemy state). The `GamePlugin.compile(command)` method is the boundary
+where a high-level `GameCommand` becomes concrete `ButtonStep`s.
 
 ---
 
-## 9. Conventions
+## 10. FF1 state reader
+
+`@games/ff1-state` (`games/ff1/state/`) reads Final Fantasy I state from live
+jsNES CPU memory or from a jsNES save-state object. It exposes:
+
+- Party characters (stats, HP, status, spells, equipment).
+- Inventory (consumables and key items).
+- Gold.
+- World state (overworld/standard map, position, vehicles, map objects).
+- Game flags (raw `$6200` page; decoded progression flags are still TODO).
+
+`formatFF1StateFromUnknown` produces a human-readable summary for the prompt's
+`gameInfo` context. The reader is linked into both botdeck (to display state in
+the UI) and vermbot (to render prompts and persist extracted snapshots).
+
+---
+
+## 11. WebRTC broadcasting (outline)
+
+Goal: let an operator stream a live play to viewers in **read-only** mode - they
+see the game frame, structured state, and agent decisions, but have no input
+path.
+
+Because the emulator lives in the browser, the authoritative frame buffer is the
+botdeck canvas. The operator tab would be the WebRTC sender; vermbot would act
+only as a signaling relay for SDP/ICE. Viewers would run a lightweight botdeck
+mode with no emulator or input wiring.
+
+Key unknowns and constraints:
+
+- NAT traversal requires STUN/TURN configuration outside git.
+- Fan-out is bounded by the host tab's encoder and upstream bandwidth; expect
+  only a handful of viewers.
+- Signaling would ride `/api/ws` and needs the Vite proxy to forward websockets.
+- The data channel should carry state snapshots and turn events only on change,
+  not every frame.
+- No server-side media fallback; if the host tab closes, the stream ends.
+
+This feature is further out and currently unbuilt. See `TODO.md`.
+
+---
+
+## 12. Conventions
 
 ### Imports
 
@@ -404,10 +421,9 @@ plugin actually needs, and let it be a no-op stub for the generic plugin.
 ### Emulator
 
 - jsnes is consumed as ESM source via the `link:../../.extern/jsnes` dep
-  (`optimizeDeps.exclude: ["jsnes"]`); no separate build step.
+  (`optimizeDeps.exclude: ["jsnes", "@games/ff1-state"]`); no separate build step.
 - The turn model never pauses the emulator; no input = "thinking".
-- The single core is the custom `Emulator` (RAF loop, frame-counted macros),
-  not `jsnes.Browser` (`Browser` is only used by the to-be-removed humdeck).
+- The single core is the custom `Emulator` (RAF loop, frame-counted macros).
 
 ### Naming
 
@@ -417,103 +433,36 @@ plugin actually needs, and let it be a no-op stub for the generic plugin.
 
 ---
 
-## 10. Component inventory (post-merge)
+## 13. Component inventory
 
 - **botdeck** (browser, Vite SPA, :5173)
   - `emulator/Emulator` - the single NES core (frame-synced loop + macro).
-  - `hooks/useEmulator` - boots Emulator, renders to canvas, owns
-    `onStateChanged` (§8); exposes loadRom/reset/buttonDown/Up/save/load/
-    collect/romName/power.
-  - `hooks/useBotLoop` - the turn loop (change-driven; reads state, POSTs
-    /api/turn, plays, persists the step).
-  - `hooks/useBroadcast` [planned] - WebRTC host side (§7).
-  - `games/*` - `GamePlugin` implementations (generic placeholder now).
-  - `components/` - `GameScreen`, `Gamepad`, `RomPicker`, `StateViewer`,
-    `AgentPanel`, `GameStatePanel`, `ControlBar`, `SaveControls`.
+  - `emulator/collectState` - snapshots jsNES CPU RAM, save RAM, ROM header,
+    and save state.
+  - `hooks/useEmulator` - boots Emulator, renders to canvas, exposes
+    loadRom/reset/buttonDown/Up/save/load/collect/romName/power.
+  - `hooks/useBotLoop` - the turn loop (reads state, POSTs `/api/turn`, plays
+    the macro, persists the step, auto-run scheduler).
+  - `games/*` - `GamePlugin` implementations (`GenericGamePlugin` now).
+  - `components/` - `GameScreen`, `Gamepad`, `RomPicker`, `SaveControls`,
+    `LoadMenu`, `GameInfoPanel` (+ `game-info/*` tabs).
   - `play.ts` - play-id resolution (`?play=`) + file-API URL builders (§4).
-  - `viewer` mode - read-only entry that renders an incoming stream, no
-    emulator/loop/input (§7).
 - **vermbot** (node, tsx, :8787)
   - `server.ts` - HTTP front door: `/api/turn`, `/api/games`, `/api/plays`,
-    file handlers, `/health`, `/api/ws` signaling.
+    file handlers, `/health`.
   - `agent.ts` - model decision via `@opencode-ai/llm`'s OpenAICompatible
     provider, configured for the **homelab vLLM** (open-weights): base URL is
     project-level (`packages/vermbot/config.json`), model comes from the play's
-    config.json. No hosted/proprietary model providers.
-  - `files.ts` [planned] - repo-rooted fs helpers for games/ and plays/ (§4).
-  - `signal.ts` [planned] - WebSocket SDP/ICE relay (§7).
-- **packages/games/<game>** [planned] - per-title plugins + data (opencode
-  plugins per README).
+    `config.json`. No hosted/proprietary model providers.
+  - `prompts.ts` - snippet resolution, template rendering, per-play overrides.
+  - `tools.ts` - memory/journal/goals tool definitions and execution.
+  - `files.ts` - repo-rooted `fs` helpers for games/ and plays/.
+- **@games/ff1-state** (`games/ff1/state/`) - FF1 RAM/save-state reader and
+  human-readable formatter.
 - **.extern** - vendored jsnes + opencode llm.
 
 ---
 
-## 11. Running (dev)
+## 14. Running (dev)
 
-Requires node 24 / pnpm. `pnpm install` once.
-
-- `pnpm dev:vermbot` - agent + file API + signaling on :8787. The agent talks to
-  the homelab vLLM endpoint (open-weights): base URL is project-level in
-  `packages/vermbot/config.json`, model comes from the play's config.json.
-  No hosted/proprietary provider keys.
-- `pnpm dev:botdeck` - dashboard on :5173 (proxies `/api` -> :8787).
-
-Then open `http://localhost:5173/?play=ff1/0000_dev` (default play if no
-`?play=`). The emulator auto-loads the ROM derived from the play's game via the
-file API. `pnpm build` and `pnpm typecheck` run across all packages.
-
-The vendored llm client needs its deps installed once:
-`cd .extern/opencode && bun install --filter @opencode-ai/llm...`.
-
----
-
-## 12. Status / gaps
-
-- **Merge + file API done.** humdeck is removed; botdeck now owns the single
-  `Emulator` core plus the folded-in human controls (`Gamepad`, `RomPicker`,
-  `StateViewer`, `SaveControls`, `collectState`, debounced keyboard). vermbot
-  exposes the file API (§4: games, ROM, plays CRUD, config read/write) over
-  repo-rooted `fs`, and botdeck boots via `/api` (`play.ts` builders, no `/@fs`
-  or `/@games`).
-- Step persistence (§5) and the `states/` + `steps/` endpoints are not yet
-  implemented; the play dir is created with `states/` and `steps/` subdirs.
-- State-change detection (§8) is not yet implemented; the loop still advances on
-  a fixed `thinkDelayMs` timer.
-- No real game plugin yet (only the generic single-tap placeholder).
-- `packages/games/*` and `packages/plays/*` workspace globs are declared but
-  empty; the on-disk `games/` and `plays/` are data dirs, not packages.
-- The turn loop has only been exercised against the generic plugin; no
-  end-to-end live turn has run.
-- WebRTC is unbuilt and currently out of scope; signaling endpoint, host hook,
-  and viewer mode are planned.
-
----
-
-## 13. Open questions (need user decision before implementation)
-
-Each carries a **proposed default** so work can start if left unanswered; flip
-any of these before implementation.
-
-1. **States vs steps.** Save-states (playbook checkpoints, human `collectState`
-   presses) and steps (agent turns) have different producers.
-   *Proposed default:* two collections under the play dir (`states/` and
-   `steps/`) as in §4/§5; a step may reference a `stateId` for
-   before/after but does not itself become a named state.
-
-2. **`:stateId` scheme.**
-   *Proposed default:* monotonic sequence (`000012`) as the id, with an
-   optional human `label` field for checkpoints (`before_boss`). Same scheme for
-   `:stepId`.
-
-3. **Persistence ownership / who POSTs a step.** botdeck (browser) drives the
-   emulator and reads live state; vermbot owns disk.
-   *Proposed default:* botdeck is the sole writer of steps - after playing the
-   macro it `POST`s the completed `StepRecord`. `/turn` stays read-only with
-   respect to disk (it decides, it does not persist); persistence is an explicit
-   step POST. Keeps the turn endpoint pure and the play dir authoritative from
-   the side that saw the frames.
-
-4. **Viewer mode location.** A separate botdeck route/query flag (`?view=`) vs a
-   distinct package.
-   *Proposed default:* a mode inside botdeck (`?play=<id>&view=readonly`), since
-   it reuses the same panels and just omits the emulator/loop/input.
+See `README.md` for install, setup, run, build, and test commands.
