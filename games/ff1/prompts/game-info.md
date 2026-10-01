@@ -1,0 +1,3 @@
+# Game info
+
+{{gameInfo}}

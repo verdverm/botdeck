@@ -2,5 +2,8 @@
   "id": "0000_dev",
   "game": "ff1",
   "label": "Final Fantasy - dev run",
-  "model": "uranium-qwen-mini"
+  "model": "uranium-qwen-mini",
+  "prompt": {
+    "snippets": ["system", "game-info", "commands", "state", "memory", "goals", "instructions"]
+  }
 }

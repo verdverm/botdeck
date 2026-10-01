@@ -12,6 +12,36 @@ export const NES_BUTTONS = {
 
 export type NesButtonName = keyof typeof NES_BUTTONS;
 
+export interface ButtonStep {
+  button: number;
+  holdFrames?: number;
+  gapFrames?: number;
+}
+
+export interface GameCommand {
+  name: string;
+  args?: Record<string, unknown>;
+}
+
+export interface CommandSpec {
+  name: string;
+  description: string;
+  args?: string;
+}
+
+export interface TurnRequest {
+  gameId: string;
+  playId?: string;
+  state: Record<string, unknown>;
+  screenshot?: string;
+  options: CommandSpec[];
+}
+
+export interface TurnResponse {
+  command: GameCommand;
+  reason?: string;
+}
+
 export interface PlayStateMetadata {
   name: string;
   createdAt: string;

@@ -27,6 +27,8 @@ export interface CommandSpec {
 
 export interface TurnRequest {
   gameId: string;
+  /** Optional play id (game/id) used to resolve prompt config and snippets. */
+  playId?: string;
   /** Structured game state prepared by the plugin. */
   state: Record<string, unknown>;
   /** Optional PNG data URL of the current frame. */
@@ -45,6 +47,7 @@ export function isValidTurnRequest(value: unknown): value is TurnRequest {
   if (!value || typeof value !== "object") return false;
   const req = value as Partial<TurnRequest>;
   if (typeof req.gameId !== "string" || req.gameId.length === 0) return false;
+  if (typeof req.playId !== "undefined" && typeof req.playId !== "string") return false;
   if (!req.state || typeof req.state !== "object") return false;
   if (!Array.isArray(req.options)) return false;
   return req.options.every(

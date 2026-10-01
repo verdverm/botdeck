@@ -108,10 +108,59 @@ export function listGames(): GameInfo[] {
 }
 
 /** The game's system prompt: games/<game>/prompts/system.md */
-export function readGamePrompt(game: string): string {
-  const file = join(gameDir(game), "prompts", "system.md");
-  if (!existsSync(file)) throw new FileNotFoundError(file);
+export interface PromptConfig {
+  snippets?: string[];
+}
+
+export function readGameConfig(game: string): Record<string, unknown> {
+  const file = join(gameDir(game), "config.json");
+  if (!existsSync(file)) return {};
+  return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function extractPromptConfig(config: Record<string, unknown> | undefined): PromptConfig | undefined {
+  if (!config) return undefined;
+  const prompt = config["prompt"];
+  if (!isPlainObject(prompt)) return undefined;
+  const snippets = prompt["snippets"];
+  if (!Array.isArray(snippets) || !snippets.every((s) => typeof s === "string")) return undefined;
+  return { snippets };
+}
+
+export function resolvePromptConfig(game: string, id?: string): PromptConfig {
+  if (id) {
+    try {
+      const play = extractPromptConfig(readPlayConfig(game, id));
+      if (play) return play;
+    } catch (e) {
+      if (!(e instanceof FileNotFoundError)) throw e;
+    }
+  }
+  const gameCfg = extractPromptConfig(readGameConfig(game));
+  if (gameCfg) return gameCfg;
+  return { snippets: ["system", "commands", "state"] };
+}
+
+function readPlayTextFile(game: string, id: string, ...segments: string[]): string {
+  const file = join(playDir(game, id), ...segments);
+  if (!existsSync(file)) return "";
   return readFileSync(file, "utf8").trim();
+}
+
+export function readPlayMemory(game: string, id: string): string {
+  return readPlayTextFile(game, id, "memory", "memory.md");
+}
+
+export function readPlayJournal(game: string, id: string): string {
+  return readPlayTextFile(game, id, "journal", "journal.md");
+}
+
+export function readPlayGoals(game: string, id: string): string {
+  return readPlayTextFile(game, id, "goals", "goals.md");
 }
 
 export function readPlayConfig(game: string, id: string): Record<string, unknown> {
@@ -209,10 +258,6 @@ export interface PlayStateEntry {
   name: string;
   createdAt: string;
   bookmarked: boolean;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNumberArray(value: unknown): value is number[] {

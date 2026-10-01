@@ -8,7 +8,8 @@
  * Transport is the linked @opencode-ai/llm OpenAICompatible provider talking to
  * the homelab vLLM (open-weights). The base URL is project-level
  * (packages/vermbot/config.json); the model comes from the play's config.json
- * "model" field; the system prompt is games/<game>/prompts/system.md.
+ * "model" field; the prompt is assembled from games/<game>/prompts/ and
+ * plays/<game>/<id>/prompts/ snippets via prompts.ts.
  */
 
 import { readFileSync } from "node:fs";
@@ -18,7 +19,8 @@ import { LLM, LLMClient, Auth } from "@opencode-ai/llm";
 import { RequestExecutor } from "@opencode-ai/llm/route";
 import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible";
 import type { CommandSpec, GameCommand, TurnRequest, TurnResponse } from "./protocol.ts";
-import { readPlayConfig, readGamePrompt, FileNotFoundError } from "./files.ts";
+import { readPlayConfig, FileNotFoundError } from "./files.ts";
+import { renderPrompt } from "./prompts.ts";
 
 // Project-level transport config (base URL), read once at startup.
 const PROJECT_CONFIG = JSON.parse(
@@ -44,7 +46,6 @@ function readModelFromConfig(game: string, id: string): string {
 }
 
 const MODEL = readModelFromConfig(playGame, playId);
-const SYSTEM_PROMPT = readGamePrompt(playGame);
 
 const vllm = OpenAICompatible.configure({
   baseURL: PROJECT_CONFIG.baseUrl,
@@ -58,18 +59,6 @@ const model = vllm.model(MODEL);
 
 const requestExecutorLayer = RequestExecutor.fetchLayer;
 const llmClientLayer = LLMClient.layer.pipe(Layer.provide(requestExecutorLayer));
-
-function buildPrompt(req: TurnRequest): string {
-  const catalog = req.options
-    .map((o) => `- ${o.name}${o.args ? ` ${o.args}` : ""}: ${o.description}`)
-    .join("\n");
-  return [
-    `Game: ${req.gameId}`,
-    `Available commands:\n${catalog}`,
-    `State:\n${JSON.stringify(req.state, null, 2)}`,
-    "Choose exactly ONE command. Reply with JSON only.",
-  ].join("\n\n");
-}
 
 function coerceCommand(value: unknown, options: CommandSpec[]): GameCommand {
   const names = new Set(options.map((o) => o.name));
@@ -112,10 +101,12 @@ function parseDecision(raw: string, options: CommandSpec[]): TurnResponse {
 }
 
 export async function decide(req: TurnRequest): Promise<TurnResponse> {
+  const { system, user } = renderPrompt(req);
+
   const request = LLM.request({
     model,
-    system: SYSTEM_PROMPT,
-    prompt: buildPrompt(req),
+    system,
+    prompt: user,
     generation: { maxTokens: 512 },
   });
 
