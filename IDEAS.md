@@ -1,3 +1,12 @@
+# 0. easy / quick
+
+### Enhance the snapshot/load button
+
+- user able to set name, default and index/id/timestamp remain
+- add a snapshot metadata.json file, put name field there, use that in list if available
+- sort snapshot by timestamp by default, also support by name
+- options menu on load list items for [rename,delete]
+
 # game state inspection - game playing automation loop
 
 ideally, we will iterate over 1-3 in a self improving loop
@@ -27,6 +36,9 @@ ideally, we will iterate over 1-3 in a self improving loop
     - memory/journal/goals/historian/reflection
     - options for prompt construction, well want to control snippets of markdown (static&dynamic) and their order
 - integrate agent chat into UI, make it a tab under the game state
+- server vs client / both options / which used through what control?
+    - want to stream game play live, youtube, but also webrtc too
+    - also want users to be able to play themselves if they have local llms or api keys
 
 ### 3. agent tools
 
@@ -55,9 +67,35 @@ ideally, we will iterate over 1-3 in a self improving loop
 
 # other (later)
 
+### docs / site
+
+- cloudflare cli
+- gaming.verdverm.ai
+- words about
+- user view-only / playable - webrtc for both
+
+
+### ui refactor
+
+- expand into pages
+    - landing
+    - botdeck
+    - games / plays simpler browser, gear towards finding and loading
+    - plays/snapshots browser / detailed / table with accordion rows?
+    - evals / analysis
+
+
 ### rom changing
 
 - manipulate copy of rom
 - if play has a rom, use that instead of the top-level / default / original
 - create new ./games/ff1/alchemy package
 - user interface
+
+### games
+
+- super nintendo, ff2 ; gameboy, pokemon; is there a better emulator for all systems in one? would like to stay TS
+- ksp, but that will require significantly different approach (mod, actual game, not browser/emulator)
+- versus, play games against an agent
+- 4x, civ, x4 foundations
+

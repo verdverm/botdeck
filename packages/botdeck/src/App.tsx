@@ -3,7 +3,7 @@ import { GameScreen } from "@/components/GameScreen";
 import { Gamepad } from "@/components/Gamepad";
 import { RomPicker } from "@/components/RomPicker";
 import { SaveControls } from "@/components/SaveControls";
-import { StateViewer } from "@/components/StateViewer";
+import { GameInfoPanel } from "@/components/game-info";
 import { useEmulator } from "@/hooks/useEmulator";
 import { readGameId, readPlayId } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
@@ -161,7 +161,7 @@ export function App() {
 
         {/* Right: JSON view of the collected game state */}
         <div className="flex min-h-0 flex-col">
-          <StateViewer
+          <GameInfoPanel
             data={snapshot}
             saved={lastSaved}
             disabled={!power || !hasRom}

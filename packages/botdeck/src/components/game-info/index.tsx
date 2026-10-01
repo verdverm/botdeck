@@ -1,0 +1,1 @@
+export { GameInfoPanel } from "./GameInfoPanel";
