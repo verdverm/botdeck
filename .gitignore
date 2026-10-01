@@ -13,3 +13,7 @@ sessions/
 games/ff1/guide/main/
 games/ff1/guide/raw/
 /plays/*/*/states/*
+coverage/
+test-results/
+playwright-report/
+.nyc_output/

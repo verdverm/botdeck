@@ -4,12 +4,23 @@
   "version": "0.0.0",
   "type": "module",
   "description": "An experiment in agentic gaming",
+  "dependencies": {
+    "@opencode-ai/schema": "link:.extern/opencode/packages/schema",
+    "effect": "4.0.0-beta.83"
+  },
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
     "dev": "pnpm --parallel --filter botdeck --filter vermbot dev",
     "dev:botdeck": "pnpm --filter botdeck dev",
-    "dev:vermbot": "pnpm --filter vermbot dev"
+    "dev:vermbot": "pnpm --filter vermbot dev",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint:fix",
+    "test": "pnpm -r test --run",
+    "test:coverage": "pnpm -r test:coverage",
+    "test:e2e": "pnpm --filter botdeck test:e2e",
+    "test:e2e:perf": "pnpm --filter botdeck test:e2e:perf",
+    "bench": "pnpm -r bench"
   },
   "devDependencies": {
     "tsx": "^4.20.7",

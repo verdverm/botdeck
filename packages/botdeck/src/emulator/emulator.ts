@@ -226,7 +226,7 @@ export class Emulator {
     this.nes.fromJSON(data as never);
   }
 
-  private stepFrame(): void {
+  stepFrame(): void {
     try {
       this.nes.frame();
       this.audio.flush();

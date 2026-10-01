@@ -16,7 +16,7 @@ import { fileURLToPath } from "node:url";
 import { Effect, Layer } from "effect";
 import { LLM, LLMClient, Auth } from "@opencode-ai/llm";
 import { RequestExecutor } from "@opencode-ai/llm/route";
-import { OpenAICompatible } from "@opencode-ai/llm/providers";
+import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible";
 import type { CommandSpec, GameCommand, TurnRequest, TurnResponse } from "./protocol.ts";
 import { readPlayConfig, readGamePrompt, FileNotFoundError } from "./files.ts";
 
@@ -29,6 +29,9 @@ const PROJECT_CONFIG = JSON.parse(
 // "model" field names the served model at the vLLM endpoint.
 const PLAY = process.env.VERMBOT_PLAY ?? "ff1/0000_dev";
 const [playGame, playId] = PLAY.split("/");
+if (!playGame || !playId) {
+  throw new Error(`VERMBOT_PLAY must be game/id, got: ${PLAY}`);
+}
 
 function readModelFromConfig(game: string, id: string): string {
   try {

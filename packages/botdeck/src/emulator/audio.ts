@@ -145,6 +145,16 @@ export class NesAudio {
     this.lastLogTime = 0;
   }
 
+  /**
+   * Test helper: allow `writeSample` to populate the ring buffer without an
+   * AudioContext. Does nothing if audio has already started normally.
+   */
+  enableTestBuffer(): void {
+    if (!this.scriptNode) {
+      this.scriptNode = {} as ScriptProcessorNode;
+    }
+  }
+
   writeSample = (left: number, right: number): void => {
     if (!this.scriptNode) return;
 

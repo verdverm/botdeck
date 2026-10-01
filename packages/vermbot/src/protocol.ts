@@ -39,3 +39,19 @@ export interface TurnResponse {
   command: GameCommand;
   reason?: string;
 }
+
+/** Type guard: confirms a value is a well-formed TurnRequest. */
+export function isValidTurnRequest(value: unknown): value is TurnRequest {
+  if (!value || typeof value !== "object") return false;
+  const req = value as Partial<TurnRequest>;
+  if (typeof req.gameId !== "string" || req.gameId.length === 0) return false;
+  if (!req.state || typeof req.state !== "object") return false;
+  if (!Array.isArray(req.options)) return false;
+  return req.options.every(
+    (o) =>
+      o &&
+      typeof o === "object" &&
+      typeof (o as CommandSpec).name === "string" &&
+      typeof (o as CommandSpec).description === "string",
+  );
+}
