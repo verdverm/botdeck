@@ -40,6 +40,29 @@ export interface TurnRequest {
 export interface TurnResponse {
   command: GameCommand;
   reason?: string;
+  /** The rendered system + user prompts sent to the model (for UI inspection). */
+  prompt?: { system?: string; user?: string };
+  /** Raw text output from the model before parsing/coercion. */
+  raw?: string;
+}
+
+export interface StepRecord {
+  stepId: string;
+  ts: number;
+  request: TurnRequest;
+  response: TurnResponse;
+  command: GameCommand;
+  macro?: ButtonStep[];
+  stateBefore?: string;
+  stateAfter?: string;
+}
+
+export interface GamePlugin {
+  id: string;
+  title: string;
+  availableCommands(): CommandSpec[];
+  readState(): Record<string, unknown>;
+  compile(command: GameCommand): ButtonStep[];
 }
 
 export interface ToolSpec {

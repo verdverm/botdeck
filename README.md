@@ -1,8 +1,10 @@
-# vermbot-plays-games
+# botdeck
 
 An experiment in agentic gaming.
 
 Inspired by https://github.com/christianmat/jev-pokemon
+
+## Overview
 
 ## Tech Stack
 

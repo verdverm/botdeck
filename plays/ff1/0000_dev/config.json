@@ -2,8 +2,18 @@
   "id": "0000_dev",
   "game": "ff1",
   "label": "Final Fantasy - dev run",
-  "model": "uranium-qwen-mini",
+  "agent": {
+    "model": "uranium-qwen-mini",
+    "maxToolRounds": 5,
+    "maxTokens": 1024,
+    "limits": {
+      "goals": 1024,
+      "memory": 2048,
+      "journal": 32768,
+      "memoryCount": 10
+    }
+  },
   "prompt": {
-    "snippets": ["system", "game-info", "commands", "state", "tools", "memory", "goals", "instructions"]
+    "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"]
   }
 }

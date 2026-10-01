@@ -1,20 +1,22 @@
 # Tools
 
-You have access to durable read/write tools for this play. Use them before committing to a final command whenever you need to recall facts, record observations, or adjust objectives.
+You have durable write tools for this play. Memory, goals, and journal entries persist across turns.
 
-Available tools:
+Use them intentionally:
 
-- `memory_read` — Read the play's short-term memory (max 2048 chars).
-- `memory_write` — Overwrite short-term memory. Input: `{ "content": "..." }`.
-- `journal_read` — Read the full journal (max 32768 chars).
-- `journal_write` — Append or overwrite the journal. Input: `{ "content": "...", "mode": "append" | "overwrite" }`. Default mode is `append`.
-- `goals_read` — Read the current goals (max 1024 chars).
-- `goals_write` — Overwrite goals. Input: `{ "content": "..." }`.
+- `memory_write` — Short-term, always-in-context notes. Use for facts you will need within the next few turns: "need to buy 5 potions in Cornelia", "Black Mage is at 12 HP", "talked to king already". Max 2048 characters per entry; only the 10 most recently modified entries are kept.
+- `goals_write` — Overwrite the current goals. Use when an objective is complete, blocked, or should change. Keep the goals file short and focused on the next 1-3 concrete objectives. Max 1024 characters.
+- `journal_list` / `journal_read` / `journal_write` — Long-term knowledge base. Use for reference material that is too large for memory or needed rarely: area maps, shop inventories/prices, enemy weaknesses, puzzle solutions, quest chronology. Read before re-writing to avoid duplicates. Max 32768 characters per entry.
+
+When to call tools:
+- Call tools **before** emitting your final command JSON.
+- Only call a tool when the current turn reveals new information worth recording or when the goal needs updating.
+- Do not call tools every turn; many turns only need the final command.
 
 JSON tool-call format (fallback if native tool calling is not used):
 
 ```xml
-<tool_call>{"name": "memory_write", "input": { "content": "Cornelia inn is at ..." }}</tool_call>
+<tool_call>{"name": "memory_write", "input": { "slug": "cornelia-inn", "content": "Cornelia inn is at ..." }}</tool_call>
 ```
 
-You may call one or more tools, review the results, and then emit your final command.
+After any tool calls, emit exactly one final command JSON.

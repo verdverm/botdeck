@@ -87,7 +87,7 @@ function RefreshRateDropdown({
   );
 }
 
-export function GameInfoPanel({ data, saved, disabled, onRefresh }: GameInfoPanelProps) {
+export function GameInfoPanel({ data, saved, disabled, onRefresh, agent }: GameInfoPanelProps) {
   const [tab, setTab] = useState<Tab>("overview");
   const [rate, setRate] = useState<RefreshRate>(DEFAULT_REFRESH_RATE);
 
@@ -153,7 +153,21 @@ export function GameInfoPanel({ data, saved, disabled, onRefresh }: GameInfoPane
         {tab === "party" && <PartyTab ff1={data?.ff1} />}
         {tab === "location" && <LocationTab ff1={data?.ff1} />}
         {tab === "battle" && <BattleTab />}
-        {tab === "agent" && <AgentTab />}
+        {tab === "agent" && (
+          <AgentTab
+            isThinking={agent?.isThinking}
+            isPlayingMacro={agent?.isPlayingMacro}
+            error={agent?.error}
+            lastRequest={agent?.lastRequest}
+            lastResponse={agent?.lastResponse}
+            messages={agent?.messages}
+            autoRun={agent?.autoRun}
+            onAutoRunChange={agent?.setAutoRun}
+            onStep={agent?.step}
+            pendingMessage={agent?.pendingMessage}
+            onPendingMessageChange={agent?.setPendingMessage}
+          />
+        )}
         {tab === "markdown" && <MarkdownTab />}
       </div>
     </div>

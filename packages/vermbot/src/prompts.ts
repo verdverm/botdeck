@@ -7,7 +7,6 @@ import {
   playDir,
   resolvePromptConfig,
   readPlayMemory,
-  readPlayJournal,
   readPlayGoals,
   PathEscapeError,
 } from "./files.ts";
@@ -75,7 +74,6 @@ interface RenderContext {
   stateJson: string;
   gameInfo: string;
   memory: string;
-  journal: string;
   goals: string;
 }
 
@@ -87,7 +85,6 @@ function buildContext(req: TurnRequest, game: string, id: string | undefined): R
     stateJson: JSON.stringify(req.state, null, 2),
     gameInfo: formatFF1StateFromUnknown(req.state),
     memory: id ? readPlayMemory(game, id) : "",
-    journal: id ? readPlayJournal(game, id) : "",
     goals: id ? readPlayGoals(game, id) : "",
   };
 }

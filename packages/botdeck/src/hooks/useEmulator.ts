@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Emulator, SCREEN_WIDTH, SCREEN_HEIGHT } from "@/emulator/emulator";
+import type { Emulator as EmulatorType } from "@/emulator/emulator";
 import { collectState, type CollectedState } from "@/emulator/collectState";
 import { loadRomBytes, splashUrl, statesUrl } from "@/play";
 
@@ -23,6 +24,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 export interface UseEmulatorResult {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
+  emulator: EmulatorType;
   fps: number;
   power: boolean;
   romName: string | null;
@@ -229,7 +231,7 @@ export function useEmulator(game: string): UseEmulatorResult {
       const res = await fetch(statesUrl(targetPlayId), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ state: collected, name }),
+        body: JSON.stringify({ data: collected, name }),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -302,6 +304,7 @@ export function useEmulator(game: string): UseEmulatorResult {
 
   return {
     canvasRef,
+    emulator,
     fps,
     power,
     romName,

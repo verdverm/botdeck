@@ -18,6 +18,19 @@
  *   GET    /api/plays/:game/:id/states/:file - read state / ff1 / metadata
  *   PATCH  /api/plays/:game/:id/states/:file - update metadata (name, bookmarked)
  *   DELETE /api/plays/:game/:id/states/:file - delete state + sidecars
+ *   GET    /api/plays/:game/:id/memory      - list memory entries
+ *   POST   /api/plays/:game/:id/memory      - write memory entry
+ *   GET    /api/plays/:game/:id/memory/:slug - read memory entry
+ *   DELETE /api/plays/:game/:id/memory/:slug - remove memory entry
+ *   GET    /api/plays/:game/:id/journal     - list journal entries
+ *   POST   /api/plays/:game/:id/journal     - write journal entry
+ *   GET    /api/plays/:game/:id/journal/:name - read journal entry
+ *   DELETE /api/plays/:game/:id/journal/:name - remove journal entry
+ *   GET    /api/plays/:game/:id/goals       - read goals
+ *   PUT    /api/plays/:game/:id/goals       - write goals
+ *   GET    /api/plays/:game/:id/steps       - list steps
+ *   POST   /api/plays/:game/:id/steps       - append step
+ *   GET    /api/plays/:game/:id/steps/:stepId - read step
  *   GET    /api/health
  *
  * Node built-in http keeps the sketch free of deps; swap once the shape settles.
@@ -41,6 +54,22 @@ import {
   deletePlayState,
   updatePlayStateMetadata,
   assertSaveStateBody,
+  listPlayMemoryEntries,
+  readPlayMemoryEntry,
+  writePlayMemory,
+  deletePlayMemory,
+  listPlayJournalEntries,
+  readPlayJournal,
+  writePlayJournal,
+  deletePlayJournal,
+  readPlayGoals,
+  writePlayGoals,
+  listPlaySteps,
+  readPlayStep,
+  writePlayStep,
+  assertStepRecord,
+  slugify,
+  formatTimestamp,
   FileNotFoundError,
   PathEscapeError,
   AlreadyExistsError,
@@ -333,6 +362,220 @@ async function handlePlays(
       try {
         deletePlayState(game, id, filename);
         json(res, 204, { ok: true });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/memory (GET | POST)
+  if (segments.length === 5 && segments[4] === "memory") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlayMemoryEntries(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const { slug, content, label } = JSON.parse(body) as {
+          slug?: string;
+          content: string;
+          label?: string;
+        };
+        if (typeof content !== "string") {
+          throw new ValidationError("content must be a string");
+        }
+        const derivedSlug = slug || slugify(label || content);
+        writePlayMemory(game, id, derivedSlug, { content });
+        json(res, 201, { slug: derivedSlug, content });
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/memory/:slug (GET | DELETE)
+  if (segments.length === 6 && segments[4] === "memory") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const slug = segments[5]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, { slug, content: readPlayMemoryEntry(game, id, slug) });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "DELETE") {
+      try {
+        deletePlayMemory(game, id, slug);
+        json(res, 204, { ok: true });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/journal (GET | POST)
+  if (segments.length === 5 && segments[4] === "journal") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlayJournalEntries(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const { name, content, label } = JSON.parse(body) as {
+          name?: string;
+          content: string;
+          label?: string;
+        };
+        if (typeof content !== "string") {
+          throw new ValidationError("content must be a string");
+        }
+        const derivedName =
+          name || (label ? `${formatTimestamp(new Date().toISOString())}_${slugify(label)}` : formatTimestamp(new Date().toISOString()));
+        writePlayJournal(game, id, derivedName, { content });
+        json(res, 201, { name: derivedName, content });
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/journal/:name (GET | DELETE)
+  if (segments.length === 6 && segments[4] === "journal") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const name = segments[5]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, { name, content: readPlayJournal(game, id, name) });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "DELETE") {
+      try {
+        deletePlayJournal(game, id, name);
+        json(res, 204, { ok: true });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/goals (GET | PUT)
+  if (segments.length === 5 && segments[4] === "goals") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, { content: readPlayGoals(game, id) });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "PUT") {
+      try {
+        const body = await readBody(req);
+        const { content } = JSON.parse(body) as { content: string };
+        if (typeof content !== "string") {
+          throw new ValidationError("content must be a string");
+        }
+        writePlayGoals(game, id, { content });
+        json(res, 200, { content });
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/steps (GET | POST)
+  if (segments.length === 5 && segments[4] === "steps") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlaySteps(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const input = assertStepRecord(JSON.parse(body));
+        const record = writePlayStep(game, id, input);
+        json(res, 201, record);
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/steps/:stepId (GET)
+  if (segments.length === 6 && segments[4] === "steps") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const stepId = segments[5]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, readPlayStep(game, id, stepId));
       } catch (err) {
         sendError(err);
       }

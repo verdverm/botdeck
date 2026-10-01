@@ -1,10 +1,12 @@
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { GameScreen } from "@/components/GameScreen";
 import { Gamepad } from "@/components/Gamepad";
 import { RomPicker } from "@/components/RomPicker";
 import { SaveControls } from "@/components/SaveControls";
 import { GameInfoPanel } from "@/components/game-info";
 import { useEmulator } from "@/hooks/useEmulator";
+import { useBotLoop } from "@/hooks/useBotLoop";
+import { GenericGamePlugin } from "@/games/generic";
 import { readGameId, readPlayId } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
 
@@ -14,6 +16,7 @@ export function App() {
 
   const {
     canvasRef,
+    emulator,
     fps,
     power,
     romName,
@@ -33,6 +36,27 @@ export function App() {
     loadState,
     setMuted,
   } = useEmulator(game);
+
+  const plugin = useMemo(() => new GenericGamePlugin(emulator), [emulator]);
+
+  const getScreenshot = useCallback(() => {
+    const canvas = canvasRef.current;
+    return canvas ? canvas.toDataURL("image/png") : undefined;
+  }, [canvasRef]);
+
+  const saveCheckpoint = useCallback(
+    async (name?: string) => saveStateToPlay(playId, name),
+    [saveStateToPlay, playId],
+  );
+
+  const agent = useBotLoop({
+    playId,
+    game,
+    emulator,
+    plugin,
+    getScreenshot,
+    saveCheckpoint,
+  });
 
   const [snapshot, setSnapshot] = useState<CollectedState | null>(null);
   const [lastSaved, setLastSaved] = useState<{
@@ -171,6 +195,7 @@ export function App() {
             saved={lastSaved}
             disabled={!power || !hasRom}
             onRefresh={onRefreshState}
+            agent={agent}
           />
         </div>
       </main>

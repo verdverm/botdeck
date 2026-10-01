@@ -1,10 +1,13 @@
 import { NES } from "jsnes";
 import { NesAudio } from "./audio";
+import type { ButtonStep } from "@/types";
 
 export const SCREEN_WIDTH = 256;
 export const SCREEN_HEIGHT = 240;
 const NES_FPS = 60.0988;
 const DEBUG_EMULATOR = true;
+const DEFAULT_HOLD_FRAMES = 2;
+const DEFAULT_GAP_FRAMES = 2;
 
 // iNES battery save RAM is mapped into cpu.mem at $6000-$7FFF.
 export const SRAM_START = 0x6000;
@@ -80,6 +83,13 @@ export class Emulator {
   private romName: string | null = null;
   private hasRom = false;
   private audio = new NesAudio();
+  private macro: {
+    steps: ButtonStep[];
+    index: number;
+    phase: "hold" | "gap";
+    remaining: number;
+    resolve: () => void;
+  } | null = null;
 
   constructor() {
     const audioSampleRate = this.audio.getSampleRate();
@@ -104,6 +114,7 @@ export class Emulator {
 
   /** Load bytes under an optional display name; marks power-on state. */
   loadROM(data: string | Uint8Array | ArrayBuffer, name?: string): void {
+    this.cancelMacro();
     this.nes.loadROM(data);
     this.romBytes = data;
     this.romName = name ?? "loaded.nes";
@@ -117,6 +128,7 @@ export class Emulator {
    * .extern/jsnes). Re-loading performs the same fresh init and works.
    */
   reset(): void {
+    this.cancelMacro();
     if (this.hasRom && this.romBytes) this.nes.loadROM(this.romBytes);
   }
 
@@ -166,6 +178,7 @@ export class Emulator {
     this.running = false;
     cancelAnimationFrame(this.raf);
     this.audio.stop();
+    this.cancelMacro();
   }
 
   isRunning(): boolean {
@@ -199,12 +212,91 @@ export class Emulator {
     this.nes.buttonUp(1, button as never);
   }
 
+  /**
+   * Play out a frame-timed button macro. Resolves when every step has been
+   * held and released with its configured gaps. If the emulator is reset or
+   * stopped, the macro is cancelled and the promise resolves early.
+   */
+  runMacro(steps: ButtonStep[]): Promise<void> {
+    this.cancelMacro();
+    return new Promise((resolve) => {
+      if (steps.length === 0) {
+        resolve();
+        return;
+      }
+      const first = steps[0]!;
+      this.macro = {
+        steps,
+        index: 0,
+        phase: "hold",
+        remaining: first.holdFrames ?? DEFAULT_HOLD_FRAMES,
+        resolve,
+      };
+      this.buttonDown(first.button);
+    });
+  }
+
+  /** Cancel an in-flight macro and release any held macro button. */
+  cancelMacro(): void {
+    if (!this.macro) return;
+    const step = this.macro.steps[this.macro.index];
+    if (step !== undefined && this.macro.phase === "hold") {
+      this.buttonUp(step.button);
+    }
+    const resolve = this.macro.resolve;
+    this.macro = null;
+    resolve();
+  }
+
+  private advanceMacro(): void {
+    if (!this.macro) return;
+    this.macro.remaining -= 1;
+    if (this.macro.remaining > 0) return;
+
+    const { steps, index, phase } = this.macro;
+    const step = steps[index];
+    if (step === undefined) {
+      this.macro.resolve();
+      this.macro = null;
+      return;
+    }
+
+    if (phase === "hold") {
+      this.buttonUp(step.button);
+      const nextIndex = index + 1;
+      if (nextIndex >= steps.length) {
+        this.macro.resolve();
+        this.macro = null;
+        return;
+      }
+      this.macro.index = nextIndex;
+      this.macro.phase = "gap";
+      this.macro.remaining = step.gapFrames ?? DEFAULT_GAP_FRAMES;
+      return;
+    }
+
+    // gap -> press next button and switch to hold
+    const nextStep = steps[index];
+    if (nextStep === undefined) {
+      this.macro.resolve();
+      this.macro = null;
+      return;
+    }
+    this.buttonDown(nextStep.button);
+    this.macro.phase = "hold";
+    this.macro.remaining = nextStep.holdFrames ?? DEFAULT_HOLD_FRAMES;
+  }
+
   setMuted(muted: boolean): void {
     this.audio.setMuted(muted);
   }
 
   isMuted(): boolean {
     return this.audio.isMuted();
+  }
+
+  isPlayingMacro(): boolean {
+    return this.macro !== null;
   }
 
   onFrame(listener: FrameListener): () => void {
@@ -235,6 +327,7 @@ export class Emulator {
   }
 
   stepFrame(): void {
+    this.advanceMacro();
     try {
       this.nes.frame();
       this.audio.flush();

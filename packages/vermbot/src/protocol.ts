@@ -40,6 +40,10 @@ export interface TurnRequest {
 export interface TurnResponse {
   command: GameCommand;
   reason?: string;
+  /** The rendered system + user prompts sent to the model (for UI inspection). */
+  prompt?: { system?: string; user?: string };
+  /** Raw text output from the model before parsing/coercion. */
+  raw?: string;
 }
 
 export interface ToolSpec {
@@ -60,6 +64,18 @@ export interface ToolResult {
   name: string;
   result: unknown;
   error?: string;
+}
+
+/** One persisted turn of the agent loop (mirrored in botdeck types.ts). */
+export interface StepRecord {
+  stepId: string;
+  ts: number;
+  request: TurnRequest;
+  response: TurnResponse;
+  command: GameCommand;
+  macro?: ButtonStep[];
+  stateBefore?: string;
+  stateAfter?: string;
 }
 
 /** Type guard: confirms a value is a well-formed TurnRequest. */

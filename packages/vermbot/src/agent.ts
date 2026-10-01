@@ -6,10 +6,11 @@
  * plugin owns the command -> button-sequence mapping.
  *
  * Transport is the linked @opencode-ai/llm OpenAICompatible provider talking to
- * the homelab vLLM (open-weights). The base URL is project-level
- * (packages/vermbot/config.json); the model comes from the play's config.json
- * "model" field; the prompt is assembled from games/<game>/prompts/ and
- * plays/<game>/<id>/prompts/ snippets via prompts.ts.
+ * the homelab vLLM (open-weights). The base URL is configured once at module
+ * load from project-level config (packages/vermbot/config.json); the model is
+ * selected per request from the resolved agent config, which merges the game's
+ * config.json and the play's config.json. The prompt is assembled from
+ * games/<game>/prompts/ and plays/<game>/<id>/prompts/ snippets via prompts.ts.
  */
 
 import { readFileSync } from "node:fs";
@@ -19,7 +20,7 @@ import { LLM, LLMClient, Auth, Message, ToolDefinition, ToolCallPart, type LLMRe
 import { RequestExecutor } from "@opencode-ai/llm/route";
 import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible";
 import type { CommandSpec, GameCommand, TurnRequest, TurnResponse } from "./protocol.ts";
-import { readPlayConfig, FileNotFoundError } from "./files.ts";
+import { resolveAgentConfig } from "./files.ts";
 import { renderPrompt } from "./prompts.ts";
 import { makeAgentTools, toolDefinitionsForRequest, executeTool } from "./tools.ts";
 
@@ -28,25 +29,13 @@ const PROJECT_CONFIG = JSON.parse(
   readFileSync(fileURLToPath(new URL("../config.json", import.meta.url)), "utf8"),
 ) as { baseUrl: string };
 
-// VERMBOT_PLAY selects which play (default ff1/0000_dev); the play config's
-// "model" field names the served model at the vLLM endpoint.
+// VERMBOT_PLAY selects which play (default ff1/0000_dev); used only as a fallback
+// when a turn request does not include a playId.
 const PLAY = process.env.VERMBOT_PLAY ?? "ff1/0000_dev";
 const [playGame, playId] = PLAY.split("/");
 if (!playGame || !playId) {
   throw new Error(`VERMBOT_PLAY must be game/id, got: ${PLAY}`);
 }
-
-function readModelFromConfig(game: string, id: string): string {
-  try {
-    const cfg = readPlayConfig(game, id);
-    if (typeof cfg["model"] === "string") return cfg["model"];
-  } catch (e) {
-    if (!(e instanceof FileNotFoundError)) throw e;
-  }
-  return "<set-model-in-config>";
-}
-
-const MODEL = readModelFromConfig(playGame, playId);
 
 const vllm = OpenAICompatible.configure({
   baseURL: PROJECT_CONFIG.baseUrl,
@@ -56,7 +45,6 @@ const vllm = OpenAICompatible.configure({
     "X-GoModel-User-Path": `/proj/vermbot-plays-games/${playGame}/${playId}`,
   },
 });
-const model = vllm.model(MODEL);
 
 const requestExecutorLayer = RequestExecutor.fetchLayer;
 const llmClientLayer = LLMClient.layer.pipe(Layer.provide(requestExecutorLayer));
@@ -77,7 +65,11 @@ function coerceCommand(value: unknown, options: CommandSpec[]): GameCommand {
   return options.length > 0 ? { name: options[0]!.name } : { name: "wait" };
 }
 
-function parseDecision(raw: string, options: CommandSpec[]): TurnResponse {
+function parseDecision(
+  raw: string,
+  options: CommandSpec[],
+  prompt?: { system?: string; user?: string },
+): TurnResponse {
   const jsonStart = raw.indexOf("{");
   const jsonEnd = raw.lastIndexOf("}");
   if (jsonStart >= 0 && jsonEnd > jsonStart) {
@@ -89,6 +81,8 @@ function parseDecision(raw: string, options: CommandSpec[]): TurnResponse {
       return {
         command: coerceCommand(obj.command, options),
         reason: typeof obj.reason === "string" ? obj.reason : undefined,
+        prompt,
+        raw,
       };
     } catch {
       // fall through to name-match below
@@ -98,6 +92,8 @@ function parseDecision(raw: string, options: CommandSpec[]): TurnResponse {
   return {
     command: found ? { name: found.name } : { name: "wait" },
     reason: raw.slice(0, 120),
+    prompt,
+    raw,
   };
 }
 
@@ -108,8 +104,6 @@ function parsePlayId(rawPlayId: string | undefined): { game: string; id: string 
   }
   return { game: playGame, id: rawPlayId ?? playId };
 }
-
-const MAX_TOOL_ROUNDS = 5;
 
 function toolCallsFromResponse(response: LLMResponse): Array<{
   id: string;
@@ -142,8 +136,10 @@ function parseToolCallsFromText(text: string): Array<{ id: string; name: string;
 
 export async function decide(req: TurnRequest): Promise<TurnResponse> {
   const { system, user } = renderPrompt(req);
+  const prompt = { system, user };
   const { game, id } = parsePlayId(req.playId);
-  const tools = makeAgentTools({ game, id });
+  const config = resolveAgentConfig(game, id);
+  const tools = makeAgentTools({ game, id, config });
   const toolDefinitions = toolDefinitionsForRequest(tools).map((t) =>
     ToolDefinition.make({
       name: t.name,
@@ -152,16 +148,18 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
     }),
   );
 
+  const model = vllm.model(config.model);
+
   let messages = [Message.user(user)];
   let request = LLM.request({
     model,
     system,
     messages,
     tools: toolDefinitions,
-    generation: { maxTokens: 1024 },
+    generation: { maxTokens: config.maxTokens },
   });
 
-  for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
+  for (let round = 0; round < config.maxToolRounds; round++) {
     const program = Effect.gen(function* () {
       const response = yield* LLM.generate(request);
       return response;
@@ -171,7 +169,7 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
     const calls = toolCallsFromResponse(response);
 
     if (calls.length === 0) {
-      return parseDecision(response.text, req.options);
+      return parseDecision(response.text, req.options, prompt);
     }
 
     const assistantContent = calls.map((call) =>
@@ -182,7 +180,7 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
       }),
     );
 
-    const toolResults = calls.map((call) => executeTool(tools, { game, id }, call));
+    const toolResults = calls.map((call) => executeTool(tools, { game, id, config }, call));
 
     messages = [
       ...messages,
@@ -202,9 +200,13 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
       system,
       messages,
       tools: toolDefinitions,
-      generation: { maxTokens: 1024 },
+      generation: { maxTokens: config.maxTokens },
     });
   }
 
-  return { command: { name: "wait" }, reason: "max tool rounds reached without a final command" };
+  return {
+    command: { name: "wait" },
+    reason: "max tool rounds reached without a final command",
+    prompt,
+  };
 }

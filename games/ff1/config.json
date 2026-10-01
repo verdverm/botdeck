@@ -1,5 +1,16 @@
 {
+  "agent": {
+    "model": "uranium-qwen-mini",
+    "maxToolRounds": 5,
+    "maxTokens": 1024,
+    "limits": {
+      "goals": 1024,
+      "memory": 2048,
+      "journal": 32768,
+      "memoryCount": 10
+    }
+  },
   "prompt": {
-    "snippets": ["system", "game-info", "commands", "state", "tools", "instructions"]
+    "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"]
   }
 }

@@ -10,6 +10,7 @@
  * onto a real repo folder.
  */
 
+import { Buffer } from "node:buffer";
 import {
   existsSync,
   mkdirSync,
@@ -26,6 +27,12 @@ import {
   type FF1GameState,
   type JsNesState,
 } from "@games/ff1-state";
+import type {
+  ButtonStep,
+  GameCommand,
+  TurnRequest,
+  TurnResponse,
+} from "./protocol.ts";
 
 // This file lives at <repo>/packages/vermbot/src, so the repo root is three up.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -121,6 +128,19 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function isGameCommand(value: unknown): value is GameCommand {
+  return isPlainObject(value) && typeof value.name === "string";
+}
+
+export function slugify(text: string): string {
+  return (
+    text
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "entry"
+  );
+}
+
 function extractPromptConfig(config: Record<string, unknown> | undefined): PromptConfig | undefined {
   if (!config) return undefined;
   const prompt = config["prompt"];
@@ -144,6 +164,79 @@ export function resolvePromptConfig(game: string, id?: string): PromptConfig {
   return { snippets: ["system", "commands", "state"] };
 }
 
+function numberOrDefault(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+export interface AgentLimits {
+  goals: number;
+  memory: number;
+  journal: number;
+  memoryCount: number;
+}
+
+export interface AgentConfig {
+  model: string;
+  maxToolRounds: number;
+  maxTokens: number;
+  limits: AgentLimits;
+}
+
+const DEFAULT_AGENT_CONFIG: AgentConfig = {
+  model: "uranium-qwen-mini",
+  maxToolRounds: 5,
+  maxTokens: 1024,
+  limits: { goals: 1024, memory: 2048, journal: 32768, memoryCount: 10 },
+};
+
+function extractAgentConfig(
+  config: Record<string, unknown> | undefined,
+): Partial<AgentConfig> | undefined {
+  if (!config) return undefined;
+  const agent = config["agent"];
+  if (!isPlainObject(agent)) return undefined;
+  const limitsRaw = agent["limits"];
+  const limits = isPlainObject(limitsRaw) ? limitsRaw : undefined;
+  const out: Partial<AgentConfig> = {};
+  if (typeof agent["model"] === "string") out.model = agent["model"];
+  if (typeof agent["maxToolRounds"] === "number") out.maxToolRounds = agent["maxToolRounds"];
+  if (typeof agent["maxTokens"] === "number") out.maxTokens = agent["maxTokens"];
+  if (limits) {
+    out.limits = {
+      goals: numberOrDefault(limits["goals"], DEFAULT_AGENT_CONFIG.limits.goals),
+      memory: numberOrDefault(limits["memory"], DEFAULT_AGENT_CONFIG.limits.memory),
+      journal: numberOrDefault(limits["journal"], DEFAULT_AGENT_CONFIG.limits.journal),
+      memoryCount: numberOrDefault(limits["memoryCount"], DEFAULT_AGENT_CONFIG.limits.memoryCount),
+    };
+  }
+  return out;
+}
+
+export function resolveAgentConfig(game: string, id?: string): AgentConfig {
+  const gameCfg = extractAgentConfig(readGameConfig(game));
+  let playCfg: Partial<AgentConfig> | undefined;
+  if (id) {
+    try {
+      playCfg = extractAgentConfig(readPlayConfig(game, id));
+    } catch (e) {
+      if (!(e instanceof FileNotFoundError)) throw e;
+    }
+  }
+  const mergeLimits = (base?: AgentLimits, override?: AgentLimits): AgentLimits => ({
+    goals: override?.goals ?? base?.goals ?? DEFAULT_AGENT_CONFIG.limits.goals,
+    memory: override?.memory ?? base?.memory ?? DEFAULT_AGENT_CONFIG.limits.memory,
+    journal: override?.journal ?? base?.journal ?? DEFAULT_AGENT_CONFIG.limits.journal,
+    memoryCount: override?.memoryCount ?? base?.memoryCount ?? DEFAULT_AGENT_CONFIG.limits.memoryCount,
+  });
+  const merged: Partial<AgentConfig> = { ...gameCfg, ...playCfg };
+  return {
+    model: merged.model ?? DEFAULT_AGENT_CONFIG.model,
+    maxToolRounds: merged.maxToolRounds ?? DEFAULT_AGENT_CONFIG.maxToolRounds,
+    maxTokens: merged.maxTokens ?? DEFAULT_AGENT_CONFIG.maxTokens,
+    limits: mergeLimits(gameCfg?.limits, playCfg?.limits),
+  };
+}
+
 function readPlayTextFile(game: string, id: string, ...segments: string[]): string {
   const file = join(playDir(game, id), ...segments);
   if (!existsSync(file)) return "";
@@ -151,24 +244,30 @@ function readPlayTextFile(game: string, id: string, ...segments: string[]): stri
 }
 
 export function readPlayMemory(game: string, id: string): string {
-  return readPlayTextFile(game, id, "memory", "memory.md");
+  const entries = listPlayMemory(game, id);
+  if (entries.length === 0) return "";
+  const dir = playDir(game, id);
+  return entries
+    .map((entry) => ({
+      ...entry,
+      mtime: statSync(join(dir, entry.path)).mtimeMs,
+    }))
+    .sort((a, b) => b.mtime - a.mtime)
+    .map((entry) => {
+      const slug = entry.name.replace(/\.md$/, "");
+      const content = readFileSync(join(dir, entry.path), "utf8");
+      return `## ${slug}\n\n${content}`;
+    })
+    .join("\n\n");
 }
 
-export function readPlayJournal(game: string, id: string): string {
-  return readPlayTextFile(game, id, "journal", "journal.md");
+export function readPlayJournal(game: string, id: string, name: string): string {
+  assertSegment("name", name);
+  return readPlayTextFile(game, id, "journal", `${name}.md`);
 }
 
 export function readPlayGoals(game: string, id: string): string {
   return readPlayTextFile(game, id, "goals", "goals.md");
-}
-
-function writePlayTextFile(
-  game: string,
-  id: string,
-  ...segments: string[]
-): void {
-  const file = join(playDir(game, id), ...segments);
-  mkdirSync(dirname(file), { recursive: true });
 }
 
 export interface WritePlayTextOptions {
@@ -179,48 +278,61 @@ export interface WritePlayTextOptions {
 export function writePlayMemory(
   game: string,
   id: string,
+  slug: string,
   options: WritePlayTextOptions,
 ): string {
-  const maxChars = options.maxChars ?? 2048;
+  assertSegment("slug", slug);
+  const cfg = resolveAgentConfig(game, id);
+  const maxChars = options.maxChars ?? cfg.limits.memory;
   if (options.content.length > maxChars) {
     throw new ValidationError(
-      `memory exceeds ${maxChars} characters (${options.content.length})`,
+      `memory entry exceeds ${maxChars} characters (${options.content.length})`,
     );
   }
-  writePlayTextFile(game, id, "memory", "memory.md");
-  const file = join(playDir(game, id), "memory", "memory.md");
+  const dir = join(playDir(game, id), "memory");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${slug}.md`);
   writeFileSync(file, options.content);
+  enforceMemoryCount(game, id, cfg.limits.memoryCount);
   return options.content;
 }
 
-export interface WriteJournalOptions extends WritePlayTextOptions {
-  mode?: "append" | "overwrite";
+function enforceMemoryCount(game: string, id: string, limit: number): void {
+  const entries = listPlayMemory(game, id);
+  if (entries.length <= limit) return;
+  const dir = playDir(game, id);
+  const withMtime = entries.map((entry) => ({
+    ...entry,
+    mtime: statSync(join(dir, entry.path)).mtimeMs,
+  }));
+  withMtime.sort((a, b) => a.mtime - b.mtime);
+  const toDelete = withMtime.slice(0, withMtime.length - limit);
+  for (const entry of toDelete) {
+    rmSync(join(dir, entry.path));
+  }
 }
+
+export interface WriteJournalOptions extends WritePlayTextOptions {}
 
 export function writePlayJournal(
   game: string,
   id: string,
+  name: string,
   options: WriteJournalOptions,
 ): string {
-  const maxChars = options.maxChars ?? 32768;
+  assertSegment("name", name);
+  const cfg = resolveAgentConfig(game, id);
+  const maxChars = options.maxChars ?? cfg.limits.journal;
   if (options.content.length > maxChars) {
     throw new ValidationError(
-      `journal exceeds ${maxChars} characters (${options.content.length})`,
+      `journal entry exceeds ${maxChars} characters (${options.content.length})`,
     );
   }
-  writePlayTextFile(game, id, "journal", "journal.md");
-  const file = join(playDir(game, id), "journal", "journal.md");
-  const existing = existsSync(file) ? readFileSync(file, "utf8") : "";
-  const mode = options.mode ?? "append";
-  if (mode === "overwrite") {
-    writeFileSync(file, options.content);
-    return options.content;
-  }
-  const separator = existing.length > 0 ? "\n\n---\n\n" : "";
-  const timestamp = new Date().toISOString();
-  const entry = `${separator}[${timestamp}]\n${options.content}`;
-  writeFileSync(file, existing + entry);
-  return existing + entry;
+  const dir = join(playDir(game, id), "journal");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}.md`);
+  writeFileSync(file, options.content);
+  return options.content;
 }
 
 export function writePlayGoals(
@@ -228,14 +340,16 @@ export function writePlayGoals(
   id: string,
   options: WritePlayTextOptions,
 ): string {
-  const maxChars = options.maxChars ?? 1024;
+  const cfg = resolveAgentConfig(game, id);
+  const maxChars = options.maxChars ?? cfg.limits.goals;
   if (options.content.length > maxChars) {
     throw new ValidationError(
       `goals exceeds ${maxChars} characters (${options.content.length})`,
     );
   }
-  writePlayTextFile(game, id, "goals", "goals.md");
-  const file = join(playDir(game, id), "goals", "goals.md");
+  const dir = join(playDir(game, id), "goals");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, "goals.md");
   writeFileSync(file, options.content);
   return options.content;
 }
@@ -268,6 +382,215 @@ export function listPlayJournal(game: string, id: string): ResourceEntry[] {
 
 export function listPlayGoals(game: string, id: string): ResourceEntry[] {
   return listPlayResourceDir(game, id, "goals");
+}
+
+export interface MemoryEntry {
+  slug: string;
+  mtime: number;
+  preview: string;
+  path: string;
+  url: string;
+}
+
+export function listPlayMemoryEntries(game: string, id: string): MemoryEntry[] {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = join(playDir(game, id), "memory");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith(".md"))
+    .map((d) => {
+      const slug = d.name.replace(/\.md$/, "");
+      const file = join(dir, d.name);
+      const mtime = statSync(file).mtimeMs;
+      const content = readFileSync(file, "utf8");
+      const preview = content.slice(0, 120).replace(/\s+/g, " ").trim();
+      return {
+        slug,
+        mtime,
+        preview,
+        path: `plays/${game}/${id}/memory/${d.name}`,
+        url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/memory/${encodeURIComponent(slug)}`,
+      };
+    })
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+export function readPlayMemoryEntry(game: string, id: string, slug: string): string {
+  assertSegment("slug", slug);
+  const file = join(playDir(game, id), "memory", `${slug}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return readFileSync(file, "utf8");
+}
+
+export function deletePlayMemory(game: string, id: string, slug: string): void {
+  assertSegment("slug", slug);
+  const file = join(playDir(game, id), "memory", `${slug}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  rmSync(file);
+}
+
+export interface JournalEntry {
+  name: string;
+  mtime: number;
+  preview: string;
+  path: string;
+  url: string;
+}
+
+export function listPlayJournalEntries(game: string, id: string): JournalEntry[] {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = join(playDir(game, id), "journal");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith(".md"))
+    .map((d) => {
+      const name = d.name.replace(/\.md$/, "");
+      const file = join(dir, d.name);
+      const mtime = statSync(file).mtimeMs;
+      const content = readFileSync(file, "utf8");
+      const preview = content.slice(0, 120).replace(/\s+/g, " ").trim();
+      return {
+        name,
+        mtime,
+        preview,
+        path: `plays/${game}/${id}/journal/${d.name}`,
+        url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/journal/${encodeURIComponent(name)}`,
+      };
+    })
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function deletePlayJournal(game: string, id: string, name: string): void {
+  assertSegment("name", name);
+  const file = join(playDir(game, id), "journal", `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  rmSync(file);
+}
+
+export interface StepRecord {
+  stepId: string;
+  ts: number;
+  request: TurnRequest;
+  response: TurnResponse;
+  command: GameCommand;
+  macro?: ButtonStep[];
+  stateBefore?: string;
+  stateAfter?: string;
+}
+
+export interface StepDescriptor {
+  stepId: string;
+  ts: number;
+  commandName: string;
+  path: string;
+  url: string;
+}
+
+const STEP_FILE_RE = /^(\w[\w.-]*)\.step\.json$/;
+
+export function assertStepRecord(body: unknown): StepRecord {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("body must be a JSON object");
+  }
+  const { stepId, ts, request, response, command, macro, stateBefore, stateAfter } = body;
+  if (typeof ts !== "number" || !Number.isFinite(ts)) {
+    throw new ValidationError("ts must be a number");
+  }
+  if (!isPlainObject(request)) {
+    throw new ValidationError("request must be an object");
+  }
+  if (!isPlainObject(response)) {
+    throw new ValidationError("response must be an object");
+  }
+  if (!isGameCommand(command)) {
+    throw new ValidationError("command must be an object with a string name");
+  }
+  if (typeof stepId !== "undefined" && typeof stepId !== "string") {
+    throw new ValidationError("stepId must be a string if provided");
+  }
+  if (typeof stateBefore !== "undefined" && typeof stateBefore !== "string") {
+    throw new ValidationError("stateBefore must be a string if provided");
+  }
+  if (typeof stateAfter !== "undefined" && typeof stateAfter !== "string") {
+    throw new ValidationError("stateAfter must be a string if provided");
+  }
+  if (typeof macro !== "undefined" && !Array.isArray(macro)) {
+    throw new ValidationError("macro must be an array if provided");
+  }
+  return body as unknown as StepRecord;
+}
+
+function nextStepId(dir: string): string {
+  let max = 0;
+  if (existsSync(dir)) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const m = entry.name.match(/^([\w.-]+)\.step\.json$/);
+      if (m) {
+        const prefix = m[1] ?? "";
+        const n = /^\d+$/.test(prefix) ? parseInt(prefix, 10) : 0;
+        if (n > max) max = n;
+      }
+    }
+  }
+  return String(max + 1).padStart(6, "0");
+}
+
+export function writePlayStep(game: string, id: string, input: StepRecord): StepRecord {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = join(playDir(game, id), "steps");
+  mkdirSync(dir, { recursive: true });
+  const stepId = input.stepId || nextStepId(dir);
+  assertSegment("stepId", stepId);
+  if (!STEP_FILE_RE.test(`${stepId}.step.json`)) {
+    throw new ValidationError(`invalid stepId: ${stepId}`);
+  }
+  const file = join(dir, `${stepId}.step.json`);
+  if (existsSync(file)) {
+    throw new AlreadyExistsError(file);
+  }
+  const record: StepRecord = { ...input, stepId };
+  writeFileSync(file, `${JSON.stringify(toJSONSafe(record), null, 2)}\n`);
+  return record;
+}
+
+export function listPlaySteps(game: string, id: string): StepDescriptor[] {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = join(playDir(game, id), "steps");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith(".step.json"))
+    .map((d) => {
+      const stepId = d.name.replace(/\.step\.json$/, "");
+      const file = join(dir, d.name);
+      const raw = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      const ts = isPlainObject(raw) && typeof raw.ts === "number" ? raw.ts : 0;
+      const commandName =
+        isPlainObject(raw) && isGameCommand(raw.command)
+          ? raw.command.name
+          : "unknown";
+      return {
+        stepId,
+        ts,
+        commandName,
+        path: `plays/${game}/${id}/steps/${d.name}`,
+        url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/steps/${encodeURIComponent(stepId)}`,
+      };
+    })
+    .sort((a, b) => a.stepId.localeCompare(b.stepId));
+}
+
+export function readPlayStep(game: string, id: string, stepId: string): StepRecord {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  assertSegment("stepId", stepId);
+  const file = join(playDir(game, id), "steps", `${stepId}.step.json`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return JSON.parse(readFileSync(file, "utf8")) as StepRecord;
 }
 
 export function readPlayConfig(game: string, id: string): Record<string, unknown> {
@@ -418,42 +741,83 @@ function toJSONSafe(value: unknown): unknown {
   return value;
 }
 
-function formatTimestamp(iso: string): string {
+export function formatTimestamp(iso: string): string {
   const d = new Date(iso);
   const date = isNaN(d.getTime()) ? new Date() : d;
   return date.toISOString().replace(/:/g, "-").replace(/\..+$/, "");
 }
 
-function makeSlug(rom: Record<string, unknown>): string {
-  const name = typeof rom.name === "string" ? rom.name : "state";
-  const base = name.replace(/\.[^.]+$/, "");
-  return base
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "") || "state";
-}
-
-function uniqueFile(dir: string, prefix: string, suffix: string): string {
-  let path = join(dir, `${prefix}${suffix}`);
-  if (!existsSync(path)) return path;
-  for (let i = 1; i < 1000; i++) {
-    path = join(dir, `${prefix}-${i}${suffix}`);
-    if (!existsSync(path)) return path;
-  }
-  throw new Error(`unable to find unique filename for ${prefix}${suffix}`);
-}
-
 export interface SaveStateInput {
-  state: CollectedState;
+  data: unknown;
   name?: string;
+}
+
+function looksLikeCollectedState(value: unknown): value is Record<string, unknown> {
+  return (
+    isPlainObject(value) &&
+    typeof value.capturedAt === "string" &&
+    isPlainObject(value.saveState)
+  );
+}
+
+function decodeStateData(data: unknown): unknown {
+  if (typeof data !== "string") return data;
+  const trimmed = data.trim();
+  // Try base64 first; if it decodes to valid JSON, use that.
+  try {
+    const decoded = Buffer.from(trimmed, "base64").toString("utf8");
+    return JSON.parse(decoded);
+  } catch {
+    // Otherwise treat the string as raw JSON text.
+    try {
+      return JSON.parse(trimmed);
+    } catch {
+      throw new ValidationError("data must be a base64 or JSON snapshot");
+    }
+  }
+}
+
+function normalizeToCollectedState(data: unknown): CollectedState {
+  const decoded = decodeStateData(data);
+  if (looksLikeCollectedState(decoded)) {
+    return assertCollectedState(decoded);
+  }
+  // Treat as a raw jsNES save-state snapshot.
+  return {
+    capturedAt: new Date().toISOString(),
+    rom: {},
+    saveRam: [],
+    saveState: decoded as JsNesState,
+  };
 }
 
 export function assertSaveStateBody(body: unknown): SaveStateInput {
   if (!isPlainObject(body)) {
     throw new ValidationError("body must be a JSON object");
   }
-  const { state, name } = body;
-  return { state: assertCollectedState(state), name: typeof name === "string" ? name : undefined };
+  const { data, name } = body;
+  if (data === undefined) {
+    throw new ValidationError("data is required");
+  }
+  return {
+    data,
+    name: typeof name === "string" ? name : undefined,
+  };
+}
+
+function nextStateId(dir: string): string {
+  let max = 0;
+  if (existsSync(dir)) {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile()) continue;
+      const m = entry.name.match(/^(\d{6})\b.*\.state\.json$/);
+      if (m) {
+        const n = parseInt(m[1]!, 10);
+        if (n > max) max = n;
+      }
+    }
+  }
+  return String(max + 1).padStart(6, "0");
 }
 
 export function savePlayState(
@@ -464,23 +828,26 @@ export function savePlayState(
   assertSegment("game", game);
   assertSegment("id", id);
 
-  const { state, name } = input;
+  const state = normalizeToCollectedState(input.data);
+  const name = input.name;
   const dir = join(playDir(game, id), "states");
   mkdirSync(dir, { recursive: true });
 
-  const prefix = `${formatTimestamp(state.capturedAt)}_${makeSlug(state.rom)}`;
+  const stateId = nextStateId(dir);
+  const nameSlug = name ? slugify(name) : "";
+  const prefix = nameSlug ? `${stateId}-${nameSlug}` : stateId;
 
-  const stateFile = uniqueFile(dir, prefix, ".state.json");
+  const stateFile = join(dir, `${prefix}.state.json`);
   writeFileSync(
     stateFile,
     `${JSON.stringify(toJSONSafe(state.saveState), null, 2)}\n`,
   );
 
   const ff1 = readFF1StateFromSaveState(state.saveState);
-  const extractedFile = uniqueFile(dir, prefix, ".ff1.json");
+  const extractedFile = join(dir, `${prefix}.ff1.json`);
   writeFileSync(extractedFile, `${JSON.stringify(toJSONSafe(ff1), null, 2)}\n`);
 
-  const metadataFile = uniqueFile(dir, prefix, ".metadata.json");
+  const metadataFile = join(dir, `${prefix}.metadata.json`);
   const metadata: PlayStateMetadata = {
     name: name ?? "",
     createdAt: state.capturedAt,
