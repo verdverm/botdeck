@@ -5,6 +5,8 @@ import type { CollectedState } from "@/emulator/collectState";
 interface StateViewerProps {
   data: CollectedState | null;
   saved?: { statePath?: string; extractedPath?: string } | null;
+  disabled?: boolean;
+  onRefresh?: () => void;
 }
 
 function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
@@ -111,7 +113,7 @@ function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
  * is present, a human-readable summary is shown first; the raw JSON view can
  * be toggled below it.
  */
-export function StateViewer({ data, saved }: StateViewerProps) {
+export function StateViewer({ data, saved, disabled, onRefresh }: StateViewerProps) {
   const [showRaw, setShowRaw] = useState(false);
 
   const basename = (path: string | undefined) => {
@@ -139,9 +141,20 @@ export function StateViewer({ data, saved }: StateViewerProps) {
             </span>
           )}
         </div>
-        {data && (
-          <span className="text-xs text-neutral-500">{data.capturedAt}</span>
-        )}
+        <div className="flex items-center gap-2">
+          {onRefresh && (
+            <button
+              onClick={onRefresh}
+              disabled={disabled}
+              className="rounded bg-neutral-700 px-3 py-1 text-xs font-medium text-neutral-200 hover:bg-neutral-600 disabled:opacity-50"
+            >
+              Refresh state
+            </button>
+          )}
+          {data && (
+            <span className="text-xs text-neutral-500">{data.capturedAt}</span>
+          )}
+        </div>
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-sm">

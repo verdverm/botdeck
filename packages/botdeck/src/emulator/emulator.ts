@@ -199,6 +199,14 @@ export class Emulator {
     this.nes.buttonUp(1, button as never);
   }
 
+  setMuted(muted: boolean): void {
+    this.audio.setMuted(muted);
+  }
+
+  isMuted(): boolean {
+    return this.audio.isMuted();
+  }
+
   onFrame(listener: FrameListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

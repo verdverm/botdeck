@@ -29,6 +29,7 @@ export interface UseEmulatorResult {
   hasRom: boolean;
   splashUrl: string;
   error?: string;
+  muted: boolean;
   buttonDown: (button: number) => void;
   buttonUp: (button: number) => void;
   loadRom: (data: ArrayBuffer, name?: string) => void;
@@ -36,6 +37,7 @@ export interface UseEmulatorResult {
   powerOn: () => void;
   powerOff: () => void;
   collect: () => CollectedState | null;
+  refreshState: () => CollectedState | null;
   saveStateToFile: () => void;
   saveStateToPlay: (targetPlayId: string) => Promise<{
     statePath?: string;
@@ -44,6 +46,7 @@ export interface UseEmulatorResult {
   }>;
   loadStateFromFile: (file: File) => Promise<CollectedState>;
   loadState: (state: object) => Promise<CollectedState>;
+  setMuted: (muted: boolean) => void;
 }
 
 /**
@@ -63,6 +66,7 @@ export function useEmulator(game: string): UseEmulatorResult {
   const [romName, setRomName] = useState<string | null>(null);
   const [hasRom, setHasRom] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [muted, setMutedState] = useState(false);
   const bootPromiseRef = useRef<Promise<void> | null>(null);
 
   // Render loop: draw each emulated frame onto the canvas.
@@ -203,6 +207,18 @@ export function useEmulator(game: string): UseEmulatorResult {
     return collectState(emulator);
   }, [emulator]);
 
+  const refreshState = useCallback((): CollectedState | null => {
+    return collectState(emulator);
+  }, [emulator]);
+
+  const setMuted = useCallback(
+    (value: boolean) => {
+      emulator.setMuted(value);
+      setMutedState(value);
+    },
+    [emulator],
+  );
+
   const saveStateToPlay = useCallback(
     async (targetPlayId: string) => {
       const collected = collectState(emulator);
@@ -290,6 +306,7 @@ export function useEmulator(game: string): UseEmulatorResult {
     hasRom,
     splashUrl: splashUrl(game),
     error,
+    muted,
     buttonDown,
     buttonUp,
     loadRom,
@@ -297,9 +314,11 @@ export function useEmulator(game: string): UseEmulatorResult {
     powerOn,
     powerOff,
     collect,
+    refreshState,
     saveStateToFile,
     saveStateToPlay,
     loadStateFromFile,
     loadState,
+    setMuted,
   };
 }

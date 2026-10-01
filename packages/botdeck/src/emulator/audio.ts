@@ -17,6 +17,7 @@ export class NesAudio {
   private totalConsumed = 0;
   private lastLogTime = 0;
   private resumeHandler: (() => void) | null = null;
+  private muted = false;
 
   private getOrCreateContext(): AudioContext {
     if (!this.ctx) {
@@ -58,10 +59,11 @@ export class NesAudio {
       this.totalConsumed += size;
       this.logStats();
 
+      const isMuted = this.muted;
       if (this.count < size) {
         for (let i = 0; i < this.count; i++) {
-          outL[i] = this.bufferL[this.readPos] ?? 0;
-          outR[i] = this.bufferR[this.readPos] ?? 0;
+          outL[i] = isMuted ? 0 : (this.bufferL[this.readPos] ?? 0);
+          outR[i] = isMuted ? 0 : (this.bufferR[this.readPos] ?? 0);
           this.readPos = (this.readPos + 1) % BUFFER_CAPACITY;
         }
         for (let i = this.count; i < size; i++) {
@@ -71,8 +73,8 @@ export class NesAudio {
         this.count = 0;
       } else {
         for (let i = 0; i < size; i++) {
-          outL[i] = this.bufferL[this.readPos] ?? 0;
-          outR[i] = this.bufferR[this.readPos] ?? 0;
+          outL[i] = isMuted ? 0 : (this.bufferL[this.readPos] ?? 0);
+          outR[i] = isMuted ? 0 : (this.bufferR[this.readPos] ?? 0);
           this.readPos = (this.readPos + 1) % BUFFER_CAPACITY;
         }
         this.count -= size;
@@ -181,5 +183,13 @@ export class NesAudio {
       );
       this.samplesThisFrame = 0;
     }
+  }
+
+  setMuted(muted: boolean): void {
+    this.muted = muted;
+  }
+
+  isMuted(): boolean {
+    return this.muted;
   }
 }

@@ -20,15 +20,18 @@ export function App() {
     hasRom,
     splashUrl,
     error,
+    muted,
     buttonDown,
     buttonUp,
     reset,
     powerOn,
     powerOff,
     collect,
+    refreshState,
     saveStateToPlay,
     loadStateFromFile,
     loadState,
+    setMuted,
   } = useEmulator(game);
 
   const [snapshot, setSnapshot] = useState<CollectedState | null>(null);
@@ -64,6 +67,11 @@ export function App() {
     },
     [loadState],
   );
+
+  const onRefreshState = useCallback(() => {
+    const collected = refreshState();
+    if (collected) setSnapshot(collected);
+  }, [refreshState]);
 
   const onLoadFile = useCallback(
     async (file: File) => {
@@ -116,6 +124,13 @@ export function App() {
             >
               Reset
             </button>
+            <button
+              onClick={() => setMuted(!muted)}
+              disabled={!power}
+              className="rounded bg-neutral-700 px-3 py-1.5 text-sm font-medium hover:bg-neutral-600 disabled:opacity-50"
+            >
+              {muted ? "Unmute" : "Mute"}
+            </button>
             <SaveControls
               disabled={!power || !hasRom}
               playId={playId}
@@ -146,7 +161,12 @@ export function App() {
 
         {/* Right: JSON view of the collected game state */}
         <div className="flex min-h-0 flex-col">
-          <StateViewer data={snapshot} saved={lastSaved} />
+          <StateViewer
+            data={snapshot}
+            saved={lastSaved}
+            disabled={!power || !hasRom}
+            onRefresh={onRefreshState}
+          />
         </div>
       </main>
     </div>
