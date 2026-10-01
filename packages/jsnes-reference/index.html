@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>jsnes reference player</title>
+    <style>
+      body { font-family: sans-serif; margin: 1em; }
+      #nes { width: 512px; height: 480px; background: #000; }
+      .controls { margin: 0.5em 0; }
+      input[type="text"] { width: 20em; }
+    </style>
+  </head>
+  <body>
+    <h1>jsnes reference player</h1>
+
+    <div class="controls">
+      <label>ROM path: <input id="rom-path" type="text" value="../../games/ff1/game.nes" /></label>
+      <button id="load">Load / Power on</button>
+      <button id="power-off">Power off</button>
+    </div>
+
+    <div id="nes"></div>
+
+    <p>
+      Controls: Arrow keys = D-Pad, X = A, Z = B, Enter = Start, Right Ctrl = Select
+    </p>
+
+    <script type="module" src="main.js"></script>
+  </body>
+</html>

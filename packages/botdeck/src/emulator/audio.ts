@@ -1,6 +1,7 @@
 const DEFAULT_SAMPLE_RATE = 48000;
 const BUFFER_CAPACITY = 8192;
 const SCRIPT_PROCESSOR_BUFFER_SIZE = 2048;
+const DEBUG_AUDIO = true;
 
 export class NesAudio {
   private ctx: AudioContext | null = null;
@@ -10,35 +11,52 @@ export class NesAudio {
   private readPos = 0;
   private writePos = 0;
   private count = 0;
+  private samplesThisFrame = 0;
+  private totalWritten = 0;
+  private processCount = 0;
+  private totalConsumed = 0;
+  private lastLogTime = 0;
   private resumeHandler: (() => void) | null = null;
+
+  private getOrCreateContext(): AudioContext {
+    if (!this.ctx) {
+      this.ctx = new window.AudioContext();
+    }
+    return this.ctx;
+  }
 
   getSampleRate(): number {
     if (typeof window === "undefined" || !window.AudioContext) {
       return DEFAULT_SAMPLE_RATE;
     }
-    if (!this.ctx) {
-      this.ctx = new window.AudioContext();
-    }
-    return this.ctx.sampleRate;
+    return this.getOrCreateContext().sampleRate;
   }
 
   start(): void {
     if (typeof window === "undefined" || !window.AudioContext) return;
 
-    if (!this.ctx) {
-      this.ctx = new window.AudioContext();
-    }
+    const ctx = this.getOrCreateContext();
 
-    this.scriptNode = this.ctx.createScriptProcessor(
+    this.scriptNode = ctx.createScriptProcessor(
       SCRIPT_PROCESSOR_BUFFER_SIZE,
       0,
       2,
     );
 
+    if (DEBUG_AUDIO) {
+      console.log(
+        `[NesAudio] start sampleRate=${ctx.sampleRate} bufferSize=${SCRIPT_PROCESSOR_BUFFER_SIZE}`,
+      );
+    }
+
     this.scriptNode.onaudioprocess = (e) => {
       const outL = e.outputBuffer.getChannelData(0);
       const outR = e.outputBuffer.getChannelData(1);
       const size = outL.length;
+
+      this.processCount++;
+      this.totalConsumed += size;
+      this.logStats();
 
       if (this.count < size) {
         for (let i = 0; i < this.count; i++) {
@@ -61,10 +79,10 @@ export class NesAudio {
       }
     };
 
-    this.scriptNode.connect(this.ctx.destination);
+    this.scriptNode.connect(ctx.destination);
 
-    if (this.ctx.state === "suspended") {
-      this.ctx.resume().catch(() => {});
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
       this.resumeHandler = () => {
         if (this.ctx) {
           this.ctx.resume().catch(() => {});
@@ -85,6 +103,24 @@ export class NesAudio {
     this.resumeHandler = null;
   }
 
+  private logStats(): void {
+    if (!DEBUG_AUDIO) return;
+    const now = performance.now();
+    if (now - this.lastLogTime < 1000) return;
+    const avg = this.processCount
+      ? (this.totalConsumed / this.processCount).toFixed(1)
+      : "0";
+    console.log(
+      `[NesAudio] fill=${this.count}/${BUFFER_CAPACITY} ` +
+        `writtenThisFrame=${this.samplesThisFrame} ` +
+        `processes=${this.processCount} avgConsumed=${avg} ` +
+        `totalConsumed=${this.totalConsumed}`,
+    );
+    this.processCount = 0;
+    this.totalConsumed = 0;
+    this.lastLogTime = now;
+  }
+
   stop(): void {
     this.removeResumeListeners();
     if (this.scriptNode) {
@@ -96,9 +132,17 @@ export class NesAudio {
       this.ctx.close().catch(() => {});
       this.ctx = null;
     }
+    if (DEBUG_AUDIO) {
+      console.log(`[NesAudio] stop totalWritten=${this.totalWritten}`);
+    }
     this.readPos = 0;
     this.writePos = 0;
     this.count = 0;
+    this.samplesThisFrame = 0;
+    this.totalWritten = 0;
+    this.processCount = 0;
+    this.totalConsumed = 0;
+    this.lastLogTime = 0;
   }
 
   writeSample = (left: number, right: number): void => {
@@ -114,10 +158,18 @@ export class NesAudio {
     this.bufferR[this.writePos] = right;
     this.writePos = (this.writePos + 1) % BUFFER_CAPACITY;
     this.count++;
+    this.samplesThisFrame++;
+    this.totalWritten++;
   };
 
   flush(): void {
     // Samples are written directly to the circular buffer, so no explicit
     // flush is required for ScriptProcessorNode playback.
+    if (DEBUG_AUDIO) {
+      console.log(
+        `[NesAudio] flush frameSamples=${this.samplesThisFrame} fill=${this.count}/${BUFFER_CAPACITY}`,
+      );
+      this.samplesThisFrame = 0;
+    }
   }
 }

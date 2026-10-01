@@ -64,6 +64,16 @@ importers:
         specifier: ^7.1.9
         version: 7.3.6(@types/node@24.19.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1)
 
+  packages/jsnes-reference:
+    dependencies:
+      jsnes:
+        specifier: link:../../.extern/jsnes
+        version: link:../../.extern/jsnes
+    devDependencies:
+      vite:
+        specifier: ^7.1.9
+        version: 7.3.6(@types/node@24.19.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.15)(yaml@2.9.1)
+
   packages/vermbot:
     dependencies:
       '@games/ff1-state':

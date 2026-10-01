@@ -1,0 +1,18 @@
+{
+  "name": "jsnes-reference",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Bare-bones browser reference player for the vendored jsnes package",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "jsnes": "link:../../.extern/jsnes"
+  },
+  "devDependencies": {
+    "vite": "^7.1.9"
+  }
+}

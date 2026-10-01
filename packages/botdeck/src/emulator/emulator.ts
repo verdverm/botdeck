@@ -3,7 +3,8 @@ import { NesAudio } from "./audio";
 
 export const SCREEN_WIDTH = 256;
 export const SCREEN_HEIGHT = 240;
-const NES_FPS = 60;
+const NES_FPS = 60.0988;
+const DEBUG_EMULATOR = true;
 
 // iNES battery save RAM is mapped into cpu.mem at $6000-$7FFF.
 export const SRAM_START = 0x6000;
@@ -70,6 +71,8 @@ export class Emulator {
   private running = false;
   private accumulator = 0;
   private lastTime = 0;
+  private frameCounter = 0;
+  private lastLogTime = 0;
   private listeners = new Set<FrameListener>();
   private batteryListeners = new Set<BatteryWriteListener>();
   private errorListeners = new Set<ErrorListener>();
@@ -79,9 +82,10 @@ export class Emulator {
   private audio = new NesAudio();
 
   constructor() {
+    const audioSampleRate = this.audio.getSampleRate();
     const opts = {
       emulateSound: true,
-      sampleRate: this.audio.getSampleRate(),
+      sampleRate: audioSampleRate,
       onFrame: (buffer: Uint32Array) => {
         for (const listener of this.listeners) listener(buffer);
       },
@@ -90,6 +94,11 @@ export class Emulator {
         for (const listener of this.batteryListeners) listener(address, value);
       },
     };
+    if (DEBUG_EMULATOR) {
+      console.log(
+        `[Emulator] NES sampleRate=${opts.sampleRate} audioCtx.sampleRate=${audioSampleRate}`,
+      );
+    }
     this.nes = new NES(opts as never) as InstanceType<typeof NES>;
   }
 
@@ -116,6 +125,8 @@ export class Emulator {
     this.running = true;
     this.lastTime = performance.now();
     this.accumulator = 0;
+    this.frameCounter = 0;
+    this.lastLogTime = performance.now();
     try {
       this.audio.start();
     } catch (e) {
@@ -136,6 +147,16 @@ export class Emulator {
         frames += 1;
       }
       if (this.accumulator > frameMs * 3) this.accumulator = 0;
+      if (frames > 0) {
+        this.frameCounter += frames;
+        if (DEBUG_EMULATOR && now - this.lastLogTime >= 1000) {
+          console.log(
+            `[Emulator] actualFPS=${this.frameCounter} framesThisTick=${frames} accumulator=${this.accumulator.toFixed(2)}`,
+          );
+          this.frameCounter = 0;
+          this.lastLogTime = now;
+        }
+      }
       this.raf = requestAnimationFrame(loop);
     };
     this.raf = requestAnimationFrame(loop);
