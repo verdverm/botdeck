@@ -1,12 +1,3 @@
-# 0. easy / quick
-
-### Enhance the snapshot/load button
-
-- user able to set name, default and index/id/timestamp remain
-- add a snapshot metadata.json file, put name field there, use that in list if available
-- sort snapshot by timestamp by default, also support by name
-- options menu on load list items for [rename,delete]
-
 # game state inspection - game playing automation loop
 
 ideally, we will iterate over 1-3 in a self improving loop
@@ -28,39 +19,44 @@ ideally, we will iterate over 1-3 in a self improving loop
 
 ### 2. agent integration
 
-- for the initial implementation
+1. render template into dynamic agent prompt
+    - static ./prompts dir for both games and plays - dir of prompt snippets, each a template rendered
+    - data / context for prompt rendering
+      - game info in human readable (basically our calculated value from the snapshot state)
+      - memory/journal/goals
+    - options for prompt construction from play config, well want to control snippets of markdown (static&dynamic) and their order, default in game config file, play overrides, make it a list of prompt snippets
+2. for the initial game integration
     - button for making agent step: [snapshot->assemble prompt/tools->call llm->take action]
     - show the agent prompt and response, these should be included in the snapshot directory, the entire agent interaction actually, keep saving at each agent response event, so we (in theory) do not lose an entire session if it dies in the middle or something
-- render template into dynamic agent prompt
-    - game state in human readable / markdown form for agent
-    - memory/journal/goals/historian/reflection
-    - options for prompt construction, well want to control snippets of markdown (static&dynamic) and their order
-- integrate agent chat into UI, make it a tab under the game state
-- server vs client / both options / which used through what control?
+3. integrate agent chat into UI, make it a tab under the game state (we have this now, so maybe we just need a input box for user injecting messages?)
+4. server vs client / both options / which used through what control?
     - want to stream game play live, youtube, but also webrtc too
     - also want users to be able to play themselves if they have local llms or api keys
 
 ### 3. agent tools
 
-- some basic tools
-- macro system so these can be changed without rebuilding the server, as json?
-- menu navigation
+1. macro system so these can be changed without rebuilding the server, as json?
+2. menu navigation
     - party settings / items / equipment change
     - stores
     - battles
-- query possible / walk to location (A* algo)
+3. query possible / walk to location (A* algo)
     - do we have map info about walkable vs not (mountains, water before getting boat)
     - can we get a list of all reachable points from current location?
-- (sub)agents - usable by main agent
+    - maybe this is even in the game state so we don't have to determine on the query side?
+4. (sub)agents - usable by main agent
     - specialized agents like battles, buying/upgrading equipment/
     - reflection/planning/historian/summarize
     - let the main agent eventually decide if/when to use/create these - depending on play
     - like tools, the agents exposed should be configure through/with the play, global defaults for the game if play doesn't set
 
-- memory/journal/goals
+5. hint/question tool
+6. memory/journal/goals
     - files/dirs the agent uses through tools (not generic read/edit, still need CRUD, but more intentional/semantic)
-    - memory: short-term/important/minimal - always included, limited in count and size, cache-like
-    - journal: long-term/for anything - record learnings about game, nested dir-like
+    - goals: a single short (1k chars default)
+    - memory: short-term/important/minimal (2k chars default)- always included, limited in count and size, cache-like
+    - journal: long-term/for anything (32k default default)- record learnings about game, nested dir-like
+    - these should be stored under the play dir as separate subdirs, metadata/config about them in the play config file
 
 
 ----
@@ -83,6 +79,10 @@ ideally, we will iterate over 1-3 in a self improving loop
     - games / plays simpler browser, gear towards finding and loading
     - plays/snapshots browser / detailed / table with accordion rows?
     - evals / analysis
+- botdeck specific
+    - make game screen smaller, buttons to the left/right, less text
+    - creative background / button style to look more like an actual game pad
+    - refactor layout to be top-left game pad, bot-left current brief, rhs full height as we have now - eventually we want to primarily show the agent activities / messages / etc
 
 
 ### rom changing

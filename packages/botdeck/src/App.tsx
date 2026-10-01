@@ -38,21 +38,26 @@ export function App() {
   const [lastSaved, setLastSaved] = useState<{
     statePath?: string;
     extractedPath?: string;
+    metadataPath?: string;
   } | null>(null);
 
-  const onSnapshot = useCallback(async () => {
-    const collected = collect();
-    if (!collected) throw new Error("no ROM loaded");
-    setSnapshot(collected);
-    const result = await saveStateToPlay(playId);
-    if (result.ff1) {
-      setSnapshot({ ...collected, ff1: result.ff1 as CollectedState["ff1"] });
-    }
-    setLastSaved({
-      statePath: result.statePath,
-      extractedPath: result.extractedPath,
-    });
-  }, [collect, saveStateToPlay, playId]);
+  const onSnapshot = useCallback(
+    async (name?: string) => {
+      const collected = collect();
+      if (!collected) throw new Error("no ROM loaded");
+      setSnapshot(collected);
+      const result = await saveStateToPlay(playId, name);
+      if (result.ff1) {
+        setSnapshot({ ...collected, ff1: result.ff1 as CollectedState["ff1"] });
+      }
+      setLastSaved({
+        statePath: result.statePath,
+        extractedPath: result.extractedPath,
+        metadataPath: result.metadataPath,
+      });
+    },
+    [collect, saveStateToPlay, playId],
+  );
 
   const onLoadSaved = useCallback(
     async (stateUrl: string) => {
@@ -88,7 +93,7 @@ export function App() {
         <h1 className="text-lg font-semibold text-neutral-100">botdeck</h1>
         <div className="flex items-center gap-3">
           <span className="text-xs text-neutral-500">
-            {romName ?? "no ROM"} · {fps} fps
+            {romName ?? "no ROM"} · {Math.round(fps)} fps
           </span>
           <span
             className={`rounded-full px-2 py-0.5 text-xs ${

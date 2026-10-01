@@ -1,16 +1,12 @@
 import { useRef, useState, type ChangeEvent } from "react";
-import { statesUrl } from "@/play";
-
-interface PlayStateEntry {
-  stateUrl: string;
-  extractedUrl?: string;
-  name: string;
-}
+import { statesUrl, updateStateMetadata, deleteState } from "@/play";
+import type { PlayStateEntry, PlayStateSort } from "@/types";
+import { LoadMenu } from "@/components/LoadMenu";
 
 interface SaveControlsProps {
   disabled: boolean;
   playId: string;
-  onSnapshot: () => Promise<void>;
+  onSnapshot: (name?: string) => Promise<void>;
   onLoadFile: (file: File) => Promise<void>;
   onLoadSaved: (stateUrl: string) => Promise<void>;
 }
@@ -27,11 +23,14 @@ export function SaveControls({
   const [showLoad, setShowLoad] = useState(false);
   const [states, setStates] = useState<PlayStateEntry[] | null>(null);
   const [loadingStates, setLoadingStates] = useState(false);
+  const [sort, setSort] = useState<PlayStateSort>("newest");
 
   const handleSnapshot = async () => {
     setError(null);
+    const name = window.prompt("Snapshot name (optional)");
+    if (name === null) return;
     try {
-      await onSnapshot();
+      await onSnapshot(name);
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       setError(`save failed: ${message}`);
@@ -39,26 +38,40 @@ export function SaveControls({
     }
   };
 
+  const fetchStates = async (nextSort: PlayStateSort) => {
+    setError(null);
+    setLoadingStates(true);
+    try {
+      const res = await fetch(statesUrl(playId, nextSort));
+      if (!res.ok) throw new Error(`list failed (${res.status})`);
+      const list = (await res.json()) as PlayStateEntry[];
+      setStates(list);
+    } catch (e) {
+      setError(
+        `load list failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    } finally {
+      setLoadingStates(false);
+    }
+  };
+
   const openLoadMenu = async () => {
     const next = !showLoad;
     setShowLoad(next);
     if (!next) return;
-    setError(null);
     if (states === null && !loadingStates) {
-      setLoadingStates(true);
-      try {
-        const res = await fetch(statesUrl(playId));
-        if (!res.ok) throw new Error(`list failed (${res.status})`);
-        const list = (await res.json()) as PlayStateEntry[];
-        setStates(list);
-      } catch (e) {
-        setError(
-          `load list failed: ${e instanceof Error ? e.message : String(e)}`,
-        );
-      } finally {
-        setLoadingStates(false);
-      }
+      await fetchStates(sort);
     }
+  };
+
+  const closeLoadMenu = () => {
+    setShowLoad(false);
+    handleLoadFile();
+  };
+
+  const handleSortChange = async (next: PlayStateSort) => {
+    setSort(next);
+    await fetchStates(next);
   };
 
   const handleLoadSaved = async (entry: PlayStateEntry) => {
@@ -68,6 +81,53 @@ export function SaveControls({
       await onLoadSaved(entry.stateUrl);
     } catch (e) {
       setError(`load failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(e);
+    }
+  };
+
+  const handleRename = async (entry: PlayStateEntry, name: string) => {
+    setError(null);
+    try {
+      await updateStateMetadata(playId, entry.filename, { name });
+      await fetchStates(sort);
+    } catch (e) {
+      setError(`rename failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(e);
+    }
+  };
+
+  const handleBookmark = async (entry: PlayStateEntry) => {
+    setError(null);
+    const next = !entry.bookmarked;
+    setStates((prev) =>
+      prev
+        ? prev.map((s) =>
+            s.filename === entry.filename ? { ...s, bookmarked: next } : s,
+          )
+        : prev,
+    );
+    try {
+      await updateStateMetadata(playId, entry.filename, { bookmarked: next });
+    } catch (e) {
+      setStates((prev) =>
+        prev
+          ? prev.map((s) =>
+              s.filename === entry.filename ? { ...s, bookmarked: entry.bookmarked } : s,
+            )
+          : prev,
+      );
+      setError(`bookmark failed: ${e instanceof Error ? e.message : String(e)}`);
+      console.error(e);
+    }
+  };
+
+  const handleDelete = async (entry: PlayStateEntry) => {
+    setError(null);
+    try {
+      await deleteState(playId, entry.filename);
+      await fetchStates(sort);
+    } catch (e) {
+      setError(`delete failed: ${e instanceof Error ? e.message : String(e)}`);
       console.error(e);
     }
   };
@@ -109,33 +169,17 @@ export function SaveControls({
             Load ▼
           </button>
           {showLoad && (
-            <div className="absolute z-10 mt-1 w-64 rounded border border-neutral-700 bg-neutral-800 p-1 shadow-lg">
-              <button
-                onClick={handleLoadFile}
-                className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-neutral-700"
-              >
-                Load from file...
-              </button>
-              <div className="my-1 border-t border-neutral-700" />
-              {states && states.length === 0 ? (
-                <p className="px-2 py-1.5 text-xs text-neutral-500">
-                  no saved states
-                </p>
-              ) : states ? (
-                <div className="max-h-48 overflow-auto">
-                  {states.map((s) => (
-                    <button
-                      key={s.stateUrl}
-                      onClick={() => handleLoadSaved(s)}
-                      className="w-full rounded px-2 py-1.5 text-left text-sm hover:bg-neutral-700"
-                      title={s.extractedUrl ? "has extracted view" : undefined}
-                    >
-                      {s.name}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
+            <LoadMenu
+              states={states}
+              loading={loadingStates}
+              onLoad={handleLoadSaved}
+              onRename={handleRename}
+              onDelete={handleDelete}
+              onBookmark={handleBookmark}
+              sort={sort}
+              onSortChange={handleSortChange}
+              onClose={closeLoadMenu}
+            />
           )}
         </div>
         <input

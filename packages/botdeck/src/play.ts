@@ -60,6 +60,9 @@ export async function loadRomBytes(game: string): Promise<ArrayBuffer> {
 
 // --- plays / config (separate concern, not the ROM boot) -------------------
 
+import type { PlayStateSort } from "@/types";
+export type { PlayStateSort } from "@/types";
+
 export interface PlayConfig {
   id?: string;
   game?: string;
@@ -96,8 +99,37 @@ export function playsUrl(game?: string): string {
     : "/api/plays";
 }
 
-export function statesUrl(playId: string): string {
-  return `${playBase(playId)}/states`;
+export function statesUrl(playId: string, sort?: PlayStateSort): string {
+  const base = `${playBase(playId)}/states`;
+  return sort ? `${base}?sort=${encodeURIComponent(sort)}` : base;
+}
+
+export function stateUrl(playId: string, filename: string): string {
+  return `${playBase(playId)}/states/${encodeURIComponent(filename)}`;
+}
+
+export async function updateStateMetadata(
+  playId: string,
+  filename: string,
+  patch: { name?: string; bookmarked?: boolean },
+): Promise<void> {
+  const res = await fetch(stateUrl(playId, filename), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    throw new Error(`update failed (${res.status})`);
+  }
+}
+
+export async function deleteState(playId: string, filename: string): Promise<void> {
+  const res = await fetch(stateUrl(playId, filename), {
+    method: "DELETE",
+  });
+  if (!res.ok) {
+    throw new Error(`delete failed (${res.status})`);
+  }
 }
 
 export function stepsUrl(playId: string): string {

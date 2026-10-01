@@ -39,9 +39,10 @@ export interface UseEmulatorResult {
   collect: () => CollectedState | null;
   refreshState: () => CollectedState | null;
   saveStateToFile: () => void;
-  saveStateToPlay: (targetPlayId: string) => Promise<{
+  saveStateToPlay: (targetPlayId: string, name?: string) => Promise<{
     statePath?: string;
     extractedPath?: string;
+    metadataPath?: string;
     ff1?: unknown;
   }>;
   loadStateFromFile: (file: File) => Promise<CollectedState>;
@@ -220,7 +221,7 @@ export function useEmulator(game: string): UseEmulatorResult {
   );
 
   const saveStateToPlay = useCallback(
-    async (targetPlayId: string) => {
+    async (targetPlayId: string, name?: string) => {
       const collected = collectState(emulator);
       if (!collected) {
         throw new Error("no ROM loaded");
@@ -228,7 +229,7 @@ export function useEmulator(game: string): UseEmulatorResult {
       const res = await fetch(statesUrl(targetPlayId), {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(collected),
+        body: JSON.stringify({ state: collected, name }),
       });
       if (!res.ok) {
         const body = await res.text();
@@ -237,6 +238,7 @@ export function useEmulator(game: string): UseEmulatorResult {
       return (await res.json()) as {
         statePath?: string;
         extractedPath?: string;
+        metadataPath?: string;
         ff1?: unknown;
       };
     },

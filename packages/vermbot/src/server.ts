@@ -14,7 +14,11 @@
  *   GET    /api/plays/:game/:id/config      - read config.json
  *   PUT    /api/plays/:game/:id/config      - write config.json
  *   POST   /api/plays/:game/:id/states      - save state + extract FF1 state
- *   GET    /health
+ *   GET    /api/plays/:game/:id/states       - list states (sort=newest|oldest|name (a-z)|name (z-a))
+ *   GET    /api/plays/:game/:id/states/:file - read state / ff1 / metadata
+ *   PATCH  /api/plays/:game/:id/states/:file - update metadata (name, bookmarked)
+ *   DELETE /api/plays/:game/:id/states/:file - delete state + sidecars
+ *   GET    /api/health
  *
  * Node built-in http keeps the sketch free of deps; swap once the shape settles.
  */
@@ -34,11 +38,14 @@ import {
   savePlayState,
   listPlayStates,
   readPlayState,
-  assertCollectedState,
+  deletePlayState,
+  updatePlayStateMetadata,
+  assertSaveStateBody,
   FileNotFoundError,
   PathEscapeError,
   AlreadyExistsError,
   ValidationError,
+  type PlayStateSort,
 } from "./files.ts";
 
 const PORT = Number(process.env.VERMBOT_PORT ?? 8787);
@@ -267,7 +274,12 @@ async function handlePlays(
 
     if (req.method === "GET") {
       try {
-        json(res, 200, listPlayStates(game, id));
+        const raw = url.searchParams.get("sort");
+        const sort: PlayStateSort =
+          raw === "newest" || raw === "oldest" || raw === "name (a-z)" || raw === "name (z-a)"
+            ? raw
+            : "newest";
+        json(res, 200, listPlayStates(game, id, sort));
       } catch (err) {
         sendError(err);
       }
@@ -277,8 +289,8 @@ async function handlePlays(
     if (req.method === "POST") {
       try {
         const body = await readBody(req);
-        const collected = assertCollectedState(JSON.parse(body));
-        const result = savePlayState(game, id, collected);
+        const input = assertSaveStateBody(JSON.parse(body));
+        const result = savePlayState(game, id, input);
         json(res, 201, result);
       } catch (err) {
         if (err instanceof ValidationError) json(res, 400, { error: String(err) });
@@ -290,17 +302,44 @@ async function handlePlays(
     return false;
   }
 
-  // /api/plays/:game/:id/states/:filename (GET)
-  if (segments.length === 6 && segments[4] === "states" && req.method === "GET") {
+  // /api/plays/:game/:id/states/:filename (GET | PATCH | DELETE)
+  if (segments.length === 6 && segments[4] === "states") {
     const game = segments[2]!;
     const id = segments[3]!;
     const filename = segments[5]!;
-    try {
-      json(res, 200, readPlayState(game, id, filename));
-    } catch (err) {
-      sendError(err);
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, readPlayState(game, id, filename));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
     }
-    return true;
+
+    if (req.method === "PATCH") {
+      try {
+        const body = await readBody(req);
+        const patch = JSON.parse(body) as { name?: string; bookmarked?: boolean };
+        const updated = updatePlayStateMetadata(game, id, filename, patch);
+        json(res, 200, updated);
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "DELETE") {
+      try {
+        deletePlayState(game, id, filename);
+        json(res, 204, { ok: true });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
   }
 
   return false;

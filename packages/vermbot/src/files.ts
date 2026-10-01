@@ -188,15 +188,27 @@ export interface CollectedState {
 export interface SavedStateResult {
   statePath: string;
   extractedPath: string;
+  metadataPath: string;
   ff1: FF1GameState;
 }
 
+export interface PlayStateMetadata {
+  name: string;
+  createdAt: string;
+  bookmarked: boolean;
+}
+
 export interface PlayStateEntry {
+  filename: string;
   statePath: string;
   extractedPath?: string;
+  metadataPath?: string;
   stateUrl: string;
   extractedUrl?: string;
+  metadataUrl?: string;
   name: string;
+  createdAt: string;
+  bookmarked: boolean;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -276,14 +288,28 @@ function uniqueFile(dir: string, prefix: string, suffix: string): string {
   throw new Error(`unable to find unique filename for ${prefix}${suffix}`);
 }
 
+export interface SaveStateInput {
+  state: CollectedState;
+  name?: string;
+}
+
+export function assertSaveStateBody(body: unknown): SaveStateInput {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("body must be a JSON object");
+  }
+  const { state, name } = body;
+  return { state: assertCollectedState(state), name: typeof name === "string" ? name : undefined };
+}
+
 export function savePlayState(
   game: string,
   id: string,
-  state: CollectedState,
+  input: SaveStateInput,
 ): SavedStateResult {
   assertSegment("game", game);
   assertSegment("id", id);
 
+  const { state, name } = input;
   const dir = join(playDir(game, id), "states");
   mkdirSync(dir, { recursive: true });
 
@@ -299,6 +325,14 @@ export function savePlayState(
   const extractedFile = uniqueFile(dir, prefix, ".ff1.json");
   writeFileSync(extractedFile, `${JSON.stringify(toJSONSafe(ff1), null, 2)}\n`);
 
+  const metadataFile = uniqueFile(dir, prefix, ".metadata.json");
+  const metadata: PlayStateMetadata = {
+    name: name ?? "",
+    createdAt: state.capturedAt,
+    bookmarked: false,
+  };
+  writeFileSync(metadataFile, `${JSON.stringify(toJSONSafe(metadata), null, 2)}\n`);
+
   const repoRelative = (abs: string): string => {
     const rel = abs.slice(REPO_ROOT.length);
     return rel.startsWith("/") ? rel.slice(1) : rel;
@@ -307,45 +341,182 @@ export function savePlayState(
   return {
     statePath: repoRelative(stateFile),
     extractedPath: repoRelative(extractedFile),
+    metadataPath: repoRelative(metadataFile),
     ff1,
   };
 }
 
-export function listPlayStates(game: string, id: string): PlayStateEntry[] {
+export type PlayStateSort = "newest" | "oldest" | "name (a-z)" | "name (z-a)";
+
+function readMetadata(dir: string, base: string): PlayStateMetadata | undefined {
+  const file = join(dir, `${base}.metadata.json`);
+  if (!existsSync(file)) return undefined;
+  try {
+    const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+    if (
+      isPlainObject(parsed) &&
+      typeof parsed.name === "string" &&
+      typeof parsed.createdAt === "string"
+    ) {
+      return {
+        name: parsed.name,
+        createdAt: parsed.createdAt,
+        bookmarked: parsed.bookmarked === true,
+      };
+    }
+  } catch {
+    // ignore malformed metadata
+  }
+  return undefined;
+}
+
+function parseTimestampFromFilename(name: string): number {
+  // Filenames are built from formatTimestamp: 2026-10-01T02-19-44_ff1
+  const isoLike = name.split("_")[0] ?? name;
+  // Convert only the time portion's '-' to ':' while keeping the date '-'.
+  const iso = isoLike.replace(/T(\d{2})-(\d{2})-(\d{2})$/, "T$1:$2:$3");
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+export function listPlayStates(
+  game: string,
+  id: string,
+  sort: PlayStateSort = "newest",
+): PlayStateEntry[] {
   assertSegment("game", game);
   assertSegment("id", id);
   const dir = join(playDir(game, id), "states");
   if (!existsSync(dir)) return [];
-  return readdirSync(dir, { withFileTypes: true })
+  const entries = readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isFile() && d.name.endsWith(".state.json"))
     .map((d) => {
-      const name = d.name.replace(/\.state\.json$/, "");
-      const extractedName = `${name}.ff1.json`;
+      const base = d.name.replace(/\.state\.json$/, "");
+      const extractedName = `${base}.ff1.json`;
+      const metadataName = `${base}.metadata.json`;
       const hasExtracted = existsSync(join(dir, extractedName));
+      const hasMetadata = existsSync(join(dir, metadataName));
+      const metadata = readMetadata(dir, base);
+      const createdAt = metadata?.createdAt ?? new Date(parseTimestampFromFilename(base)).toISOString();
+      const displayName = metadata?.name ?? base;
+      const bookmarked = metadata?.bookmarked ?? false;
       const statePath = `plays/${game}/${id}/states/${d.name}`;
       const extractedPath = hasExtracted
         ? `plays/${game}/${id}/states/${extractedName}`
         : undefined;
+      const metadataPath = hasMetadata
+        ? `plays/${game}/${id}/states/${metadataName}`
+        : undefined;
       return {
+        filename: d.name,
         statePath,
         extractedPath,
+        metadataPath,
         stateUrl: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/states/${encodeURIComponent(d.name)}`,
         extractedUrl: hasExtracted
           ? `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/states/${encodeURIComponent(extractedName)}`
           : undefined,
-        name,
+        metadataUrl: hasMetadata
+          ? `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/states/${encodeURIComponent(metadataName)}`
+          : undefined,
+        name: displayName,
+        createdAt,
+        bookmarked,
       };
-    })
-    .sort((a, b) => b.name.localeCompare(a.name));
+    });
+
+  switch (sort) {
+    case "name (a-z)":
+      return entries.sort((a, b) => a.name.localeCompare(b.name));
+    case "name (z-a)":
+      return entries.sort((a, b) => b.name.localeCompare(a.name));
+    case "oldest":
+      return entries.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    case "newest":
+    default:
+      return entries.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
 }
+
+const STATE_FILE_RE = /[\w.-]+\.(state|ff1|metadata)\.json$/;
 
 export function readPlayState(game: string, id: string, filename: string): unknown {
   assertSegment("game", game);
   assertSegment("id", id);
-  if (!/[\w.-]+\.(state|ff1)\.json$/.test(filename)) {
+  if (!STATE_FILE_RE.test(filename)) {
     throw new PathEscapeError(filename);
   }
   const file = join(playDir(game, id), "states", filename);
   if (!existsSync(file)) throw new FileNotFoundError(file);
   return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function stateBaseFromFilename(filename: string): string | undefined {
+  const m = filename.match(/^([\w.-]+)\.state\.json$/);
+  return m?.[1];
+}
+
+export function deletePlayState(game: string, id: string, filename: string): void {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const base = stateBaseFromFilename(filename);
+  if (!base) throw new PathEscapeError(filename);
+  const dir = join(playDir(game, id), "states");
+  const suffixes = [".state.json", ".ff1.json", ".metadata.json"];
+  let removed = 0;
+  for (const suffix of suffixes) {
+    const file = join(dir, `${base}${suffix}`);
+    if (existsSync(file)) {
+      rmSync(file);
+      removed++;
+    }
+  }
+  if (removed === 0) throw new FileNotFoundError(join(dir, `${base}.state.json`));
+}
+
+export function updatePlayStateMetadata(
+  game: string,
+  id: string,
+  filename: string,
+  patch: { name?: string; bookmarked?: boolean },
+): PlayStateMetadata {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const base = stateBaseFromFilename(filename);
+  if (!base) throw new PathEscapeError(filename);
+  const dir = join(playDir(game, id), "states");
+  const stateFile = join(dir, `${base}.state.json`);
+  if (!existsSync(stateFile)) throw new FileNotFoundError(stateFile);
+
+  const metadataFile = join(dir, `${base}.metadata.json`);
+  let existing: PlayStateMetadata = {
+    name: "",
+    createdAt: new Date().toISOString(),
+    bookmarked: false,
+  };
+  if (existsSync(metadataFile)) {
+    const parsed = JSON.parse(readFileSync(metadataFile, "utf8")) as unknown;
+    if (
+      isPlainObject(parsed) &&
+      typeof parsed.name === "string" &&
+      typeof parsed.createdAt === "string"
+    ) {
+      existing = {
+        name: parsed.name,
+        createdAt: parsed.createdAt,
+        bookmarked: parsed.bookmarked === true,
+      };
+    }
+  } else {
+    existing.createdAt = new Date(parseTimestampFromFilename(base)).toISOString();
+  }
+
+  const updated: PlayStateMetadata = {
+    name: typeof patch.name === "string" ? patch.name : existing.name,
+    createdAt: existing.createdAt,
+    bookmarked:
+      typeof patch.bookmarked === "boolean" ? patch.bookmarked : existing.bookmarked,
+  };
+  writeFileSync(metadataFile, `${JSON.stringify(toJSONSafe(updated), null, 2)}\n`);
+  return updated;
 }
