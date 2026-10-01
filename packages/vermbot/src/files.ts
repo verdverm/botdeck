@@ -21,6 +21,11 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  readFF1StateFromSaveState,
+  type FF1GameState,
+  type JsNesState,
+} from "@games/ff1-state";
 
 // This file lives at <repo>/packages/vermbot/src, so the repo root is three up.
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -171,4 +176,176 @@ export class AlreadyExistsError extends Error {
     super(`already exists: ${path}`);
     this.name = "AlreadyExistsError";
   }
+}
+
+export interface CollectedState {
+  capturedAt: string;
+  rom: Record<string, unknown>;
+  saveRam: number[];
+  saveState: JsNesState;
+}
+
+export interface SavedStateResult {
+  statePath: string;
+  extractedPath: string;
+  ff1: FF1GameState;
+}
+
+export interface PlayStateEntry {
+  statePath: string;
+  extractedPath?: string;
+  stateUrl: string;
+  extractedUrl?: string;
+  name: string;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNumberArray(value: unknown): value is number[] {
+  return Array.isArray(value) && value.every((v) => typeof v === "number");
+}
+
+export function assertCollectedState(body: unknown): CollectedState {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("body must be a JSON object");
+  }
+  const { capturedAt, rom, saveRam, saveState } = body;
+  if (typeof capturedAt !== "string" || capturedAt === "") {
+    throw new ValidationError("capturedAt must be a non-empty string");
+  }
+  if (!isPlainObject(rom)) {
+    throw new ValidationError("rom must be an object");
+  }
+  if (!isNumberArray(saveRam)) {
+    throw new ValidationError("saveRam must be an array of numbers");
+  }
+  if (!isPlainObject(saveState)) {
+    throw new ValidationError("saveState must be an object");
+  }
+  return { capturedAt, rom, saveRam, saveState: saveState as unknown as JsNesState };
+}
+
+export class ValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ValidationError";
+  }
+}
+
+function toJSONSafe(value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    return Array.from(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(toJSONSafe);
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = toJSONSafe(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function formatTimestamp(iso: string): string {
+  const d = new Date(iso);
+  const date = isNaN(d.getTime()) ? new Date() : d;
+  return date.toISOString().replace(/:/g, "-").replace(/\..+$/, "");
+}
+
+function makeSlug(rom: Record<string, unknown>): string {
+  const name = typeof rom.name === "string" ? rom.name : "state";
+  const base = name.replace(/\.[^.]+$/, "");
+  return base
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "state";
+}
+
+function uniqueFile(dir: string, prefix: string, suffix: string): string {
+  let path = join(dir, `${prefix}${suffix}`);
+  if (!existsSync(path)) return path;
+  for (let i = 1; i < 1000; i++) {
+    path = join(dir, `${prefix}-${i}${suffix}`);
+    if (!existsSync(path)) return path;
+  }
+  throw new Error(`unable to find unique filename for ${prefix}${suffix}`);
+}
+
+export function savePlayState(
+  game: string,
+  id: string,
+  state: CollectedState,
+): SavedStateResult {
+  assertSegment("game", game);
+  assertSegment("id", id);
+
+  const dir = join(playDir(game, id), "states");
+  mkdirSync(dir, { recursive: true });
+
+  const prefix = `${formatTimestamp(state.capturedAt)}_${makeSlug(state.rom)}`;
+
+  const stateFile = uniqueFile(dir, prefix, ".state.json");
+  writeFileSync(
+    stateFile,
+    `${JSON.stringify(toJSONSafe(state.saveState), null, 2)}\n`,
+  );
+
+  const ff1 = readFF1StateFromSaveState(state.saveState);
+  const extractedFile = uniqueFile(dir, prefix, ".ff1.json");
+  writeFileSync(extractedFile, `${JSON.stringify(toJSONSafe(ff1), null, 2)}\n`);
+
+  const repoRelative = (abs: string): string => {
+    const rel = abs.slice(REPO_ROOT.length);
+    return rel.startsWith("/") ? rel.slice(1) : rel;
+  };
+
+  return {
+    statePath: repoRelative(stateFile),
+    extractedPath: repoRelative(extractedFile),
+    ff1,
+  };
+}
+
+export function listPlayStates(game: string, id: string): PlayStateEntry[] {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = join(playDir(game, id), "states");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith(".state.json"))
+    .map((d) => {
+      const name = d.name.replace(/\.state\.json$/, "");
+      const extractedName = `${name}.ff1.json`;
+      const hasExtracted = existsSync(join(dir, extractedName));
+      const statePath = `plays/${game}/${id}/states/${d.name}`;
+      const extractedPath = hasExtracted
+        ? `plays/${game}/${id}/states/${extractedName}`
+        : undefined;
+      return {
+        statePath,
+        extractedPath,
+        stateUrl: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/states/${encodeURIComponent(d.name)}`,
+        extractedUrl: hasExtracted
+          ? `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/states/${encodeURIComponent(extractedName)}`
+          : undefined,
+        name,
+      };
+    })
+    .sort((a, b) => b.name.localeCompare(a.name));
+}
+
+export function readPlayState(game: string, id: string, filename: string): unknown {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  if (!/[\w.-]+\.(state|ff1)\.json$/.test(filename)) {
+    throw new PathEscapeError(filename);
+  }
+  const file = join(playDir(game, id), "states", filename);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return JSON.parse(readFileSync(file, "utf8"));
 }

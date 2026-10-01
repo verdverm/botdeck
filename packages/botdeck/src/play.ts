@@ -11,12 +11,21 @@
 // game-scoped, not play-scoped.
 
 export const DEFAULT_GAME = "ff1";
+export const DEFAULT_PLAY_ID = "0000_dev";
 
 /** Read the active game id from the ?game= query param (dev-time selector). */
 export function readGameId(): string {
   if (typeof window === "undefined") return DEFAULT_GAME;
   const fromQuery = new URLSearchParams(window.location.search).get("game");
   return fromQuery && fromQuery.length > 0 ? fromQuery : DEFAULT_GAME;
+}
+
+/** Read the active play id from the ?play= query param, defaulting to game/default. */
+export function readPlayId(game: string): string {
+  if (typeof window === "undefined") return `${game}/${DEFAULT_PLAY_ID}`;
+  const fromQuery = new URLSearchParams(window.location.search).get("play");
+  if (fromQuery && fromQuery.length > 0) return fromQuery;
+  return `${game}/${DEFAULT_PLAY_ID}`;
 }
 
 export function gamesUrl(): string {

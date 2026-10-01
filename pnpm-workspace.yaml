@@ -2,6 +2,7 @@ packages:
   - "packages/*"
   - "packages/games/*"
   - "packages/plays/*"
+  - "games/ff1/state"
 
 allowBuilds:
   esbuild: true

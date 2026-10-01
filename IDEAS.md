@@ -1,0 +1,3 @@
+- load button doesn't work, going to need UI affordances for this
+- playwrite setup, better testing / iteration harness
+- show raw json should not be the state file, it should be our refined json

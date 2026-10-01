@@ -12,3 +12,4 @@ sessions/
 *.nes
 games/ff1/guide/main/
 games/ff1/guide/raw/
+/plays/*/*/states/*

@@ -8,12 +8,27 @@ importers:
 
   .:
     devDependencies:
+      tsx:
+        specifier: ^4.20.7
+        version: 4.23.15
+      typescript:
+        specifier: ^5.9.2
+        version: 5.9.3
+
+  games/ff1/state:
+    devDependencies:
+      tsx:
+        specifier: ^4.20.7
+        version: 4.23.15
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
 
   packages/botdeck:
     dependencies:
+      '@games/ff1-state':
+        specifier: workspace:*
+        version: link:../../games/ff1/state
       jsnes:
         specifier: link:../../.extern/jsnes
         version: link:../../.extern/jsnes
@@ -51,6 +66,9 @@ importers:
 
   packages/vermbot:
     dependencies:
+      '@games/ff1-state':
+        specifier: link:../../games/ff1/state
+        version: link:../../games/ff1/state
       '@opencode-ai/llm':
         specifier: link:../../.extern/opencode/packages/llm
         version: link:../../.extern/opencode/packages/llm

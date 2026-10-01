@@ -7,10 +7,12 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
+    "dev": "pnpm --parallel --filter botdeck --filter vermbot dev",
     "dev:botdeck": "pnpm --filter botdeck dev",
     "dev:vermbot": "pnpm --filter vermbot dev"
   },
   "devDependencies": {
+    "tsx": "^4.20.7",
     "typescript": "^5.9.2"
   }
 }

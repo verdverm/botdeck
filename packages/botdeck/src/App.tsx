@@ -5,10 +5,13 @@ import { RomPicker } from "@/components/RomPicker";
 import { SaveControls } from "@/components/SaveControls";
 import { StateViewer } from "@/components/StateViewer";
 import { useEmulator } from "@/hooks/useEmulator";
-import { readGameId } from "@/play";
+import { readGameId, readPlayId } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
 
 export function App() {
+  const game = readGameId();
+  const playId = readPlayId(game);
+
   const {
     canvasRef,
     fps,
@@ -23,16 +26,53 @@ export function App() {
     powerOn,
     powerOff,
     collect,
-    saveStateToFile,
+    saveStateToPlay,
     loadStateFromFile,
-  } = useEmulator(readGameId());
+    loadState,
+  } = useEmulator(game);
 
   const [snapshot, setSnapshot] = useState<CollectedState | null>(null);
+  const [lastSaved, setLastSaved] = useState<{
+    statePath?: string;
+    extractedPath?: string;
+  } | null>(null);
 
-  const onCollect = useCallback(() => {
-    const s = collect();
-    if (s) setSnapshot(s);
-  }, [collect]);
+  const onSnapshot = useCallback(async () => {
+    const collected = collect();
+    if (!collected) throw new Error("no ROM loaded");
+    setSnapshot(collected);
+    const result = await saveStateToPlay(playId);
+    if (result.ff1) {
+      setSnapshot({ ...collected, ff1: result.ff1 as CollectedState["ff1"] });
+    }
+    setLastSaved({
+      statePath: result.statePath,
+      extractedPath: result.extractedPath,
+    });
+  }, [collect, saveStateToPlay, playId]);
+
+  const onLoadSaved = useCallback(
+    async (stateUrl: string) => {
+      const res = await fetch(stateUrl);
+      if (!res.ok) {
+        throw new Error(`state download failed (${res.status})`);
+      }
+      const json = (await res.json()) as object;
+      const collected = await loadState(json);
+      setSnapshot(collected);
+      setLastSaved(null);
+    },
+    [loadState],
+  );
+
+  const onLoadFile = useCallback(
+    async (file: File) => {
+      const collected = await loadStateFromFile(file);
+      setSnapshot(collected);
+      setLastSaved(null);
+    },
+    [loadStateFromFile],
+  );
 
   return (
     <div className="flex h-screen flex-col bg-neutral-950 text-neutral-100">
@@ -78,16 +118,11 @@ export function App() {
             </button>
             <SaveControls
               disabled={!power || !hasRom}
-              onSaveFile={saveStateToFile}
-              onLoadFile={loadStateFromFile}
+              playId={playId}
+              onSnapshot={onSnapshot}
+              onLoadFile={onLoadFile}
+              onLoadSaved={onLoadSaved}
             />
-            <button
-              onClick={onCollect}
-              disabled={!hasRom}
-              className="rounded bg-sky-600 px-3 py-1.5 text-sm font-medium hover:bg-sky-500 disabled:opacity-50"
-            >
-              Collect state
-            </button>
             {error ? (
               <p className="text-xs text-rose-400">{error}</p>
             ) : (
@@ -111,7 +146,7 @@ export function App() {
 
         {/* Right: JSON view of the collected game state */}
         <div className="flex min-h-0 flex-col">
-          <StateViewer data={snapshot} />
+          <StateViewer data={snapshot} saved={lastSaved} />
         </div>
       </main>
     </div>

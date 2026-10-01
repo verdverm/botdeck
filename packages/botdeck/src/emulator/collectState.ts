@@ -3,17 +3,49 @@ import {
   SRAM_SIZE,
   type Emulator,
 } from "@/emulator/emulator";
+import {
+  readFF1StateFromSaveState,
+  type FF1GameState,
+  type JsNesState,
+} from "@games/ff1-state";
 
 /**
  * Snapshot a running NES into a plain, JSON-safe object: the full jsnes save
- * state, the parsed iNES header / ROM info, and the battery-backed save RAM
- * window ($6000-$7FFF).
+ * state, the parsed iNES header / ROM info, the battery-backed save RAM
+ * window ($6000-$7FFF), and - for FF1 - the extracted game state.
  */
 export interface CollectedState {
   capturedAt: string;
   rom: Record<string, unknown>;
   saveRam: number[];
   saveState: unknown;
+  ff1?: FF1GameState;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toJSONSafe(value: unknown): unknown {
+  if (value instanceof Uint8Array) {
+    return Array.from(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(toJSONSafe);
+  }
+  if (isPlainObject(value)) {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[k] = toJSONSafe(v);
+    }
+    return out;
+  }
+  return value;
+}
+
+function looksLikeFF1(rom: Record<string, unknown>): boolean {
+  const name = String(rom.name ?? "").toLowerCase();
+  return name.includes("ff1") || name.includes("final fantasy");
 }
 
 export function collectState(em: Emulator | null): CollectedState | null {
@@ -27,10 +59,24 @@ export function collectState(em: Emulator | null): CollectedState | null {
     }
   }
 
-  return {
+  const rom = em.romInfo ?? {};
+  const saveState = em.toJSON();
+
+  const collected: CollectedState = {
     capturedAt: new Date().toISOString(),
-    rom: em.romInfo ?? {},
+    rom,
     saveRam,
-    saveState: em.toJSON(),
+    saveState,
   };
+
+  if (looksLikeFF1(rom)) {
+    try {
+      const ff1 = readFF1StateFromSaveState(saveState as JsNesState);
+      collected.ff1 = toJSONSafe(ff1) as FF1GameState;
+    } catch {
+      // Leave ff1 undefined if the save state cannot be parsed as FF1.
+    }
+  }
+
+  return collected;
 }

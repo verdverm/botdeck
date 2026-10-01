@@ -15,7 +15,8 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   optimizeDeps: {
     // jsnes ships untranspiled ESM source; let Vite consume it directly.
-    exclude: ["jsnes"],
+    // @games/ff1-state is a local TS workspace package; keep it unbundled too.
+    exclude: ["jsnes", "@games/ff1-state"],
   },
   server: {
     port: 5173,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Emulator, SCREEN_WIDTH, SCREEN_HEIGHT } from "@/emulator/emulator";
 import { collectState, type CollectedState } from "@/emulator/collectState";
-import { loadRomBytes, splashUrl } from "@/play";
+import { loadRomBytes, splashUrl, statesUrl } from "@/play";
 
 // NES buttons keyed by KeyboardEvent.code; jsnes indices (see types.ts).
 const KEY_BUTTONS: Record<string, number> = {
@@ -16,6 +16,10 @@ const KEY_BUTTONS: Record<string, number> = {
 };
 
 const KEY_DEBOUNCE_MS = 50;
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export interface UseEmulatorResult {
   canvasRef: React.RefObject<HTMLCanvasElement | null>;
@@ -33,7 +37,13 @@ export interface UseEmulatorResult {
   powerOff: () => void;
   collect: () => CollectedState | null;
   saveStateToFile: () => void;
-  loadStateFromFile: (file: File) => void;
+  saveStateToPlay: (targetPlayId: string) => Promise<{
+    statePath?: string;
+    extractedPath?: string;
+    ff1?: unknown;
+  }>;
+  loadStateFromFile: (file: File) => Promise<CollectedState>;
+  loadState: (state: object) => Promise<CollectedState>;
 }
 
 /**
@@ -53,6 +63,7 @@ export function useEmulator(game: string): UseEmulatorResult {
   const [romName, setRomName] = useState<string | null>(null);
   const [hasRom, setHasRom] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const bootPromiseRef = useRef<Promise<void> | null>(null);
 
   // Render loop: draw each emulated frame onto the canvas.
   useEffect(() => {
@@ -83,14 +94,17 @@ export function useEmulator(game: string): UseEmulatorResult {
 
     const fpsTimer = window.setInterval(() => setFps(emulator.getFps()), 1000);
 
-    loadRomBytes(game)
+    bootPromiseRef.current = loadRomBytes(game)
       .then((buf) => {
         emulator.loadROM(buf, `${game}.nes`);
         setRomName(emulator.getRomName());
         setHasRom(true);
         setError(undefined);
       })
-      .catch((e) => setError(String(e)));
+      .catch((e) => {
+        setError(String(e));
+        throw e;
+      });
 
     return () => {
       window.clearInterval(fpsTimer);
@@ -167,9 +181,51 @@ export function useEmulator(game: string): UseEmulatorResult {
     setPower(false);
   }, [emulator]);
 
+  const ensureRomAndPower = useCallback(async () => {
+    if (!emulator.hasRomLoaded()) {
+      if (bootPromiseRef.current) {
+        await bootPromiseRef.current;
+      } else {
+        const buf = await loadRomBytes(game);
+        emulator.loadROM(buf, `${game}.nes`);
+        setRomName(emulator.getRomName());
+        setHasRom(true);
+        setError(undefined);
+      }
+    }
+    if (!emulator.isRunning()) {
+      emulator.start();
+      setPower(true);
+    }
+  }, [emulator, game]);
+
   const collect = useCallback((): CollectedState | null => {
     return collectState(emulator);
   }, [emulator]);
+
+  const saveStateToPlay = useCallback(
+    async (targetPlayId: string) => {
+      const collected = collectState(emulator);
+      if (!collected) {
+        throw new Error("no ROM loaded");
+      }
+      const res = await fetch(statesUrl(targetPlayId), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(collected),
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        throw new Error(`save failed (${res.status}): ${body}`);
+      }
+      return (await res.json()) as {
+        statePath?: string;
+        extractedPath?: string;
+        ff1?: unknown;
+      };
+    },
+    [emulator],
+  );
 
   const saveStateToFile = useCallback(() => {
     if (!hasRom) return;
@@ -184,19 +240,46 @@ export function useEmulator(game: string): UseEmulatorResult {
     URL.revokeObjectURL(url);
   }, [emulator, hasRom, romName]);
 
-  const loadStateFromFile = useCallback(
-    (file: File) => {
-      if (!hasRom) return;
-      file
-        .text()
-        .then((text) => {
-          const parsed = JSON.parse(text) as { state: unknown };
-          if (!parsed.state) throw new Error("no state in file");
-          emulator.fromJSON(parsed.state as object);
-        })
-        .catch((e) => setError(`state load failed: ${String(e)}`));
+  const doLoadState = useCallback(
+    (parsed: unknown) => {
+      if (!isPlainObject(parsed)) {
+        throw new Error("state file is not an object");
+      }
+      let state: unknown;
+      if (isPlainObject(parsed.saveState)) {
+        state = parsed.saveState;
+      } else if ("romName" in parsed && isPlainObject(parsed.state)) {
+        state = parsed.state;
+      } else {
+        state = parsed;
+      }
+      emulator.fromJSON(state as object);
     },
-    [emulator, hasRom],
+    [emulator],
+  );
+
+  const loadStateFromFile = useCallback(
+    async (file: File): Promise<CollectedState> => {
+      const text = await file.text();
+      const parsed = JSON.parse(text) as unknown;
+      await ensureRomAndPower();
+      doLoadState(parsed);
+      const collected = collectState(emulator);
+      if (!collected) throw new Error("state collection failed");
+      return collected;
+    },
+    [emulator, ensureRomAndPower, doLoadState],
+  );
+
+  const loadState = useCallback(
+    async (state: object): Promise<CollectedState> => {
+      await ensureRomAndPower();
+      doLoadState(state);
+      const collected = collectState(emulator);
+      if (!collected) throw new Error("state collection failed");
+      return collected;
+    },
+    [emulator, ensureRomAndPower, doLoadState],
   );
 
   return {
@@ -215,6 +298,8 @@ export function useEmulator(game: string): UseEmulatorResult {
     powerOff,
     collect,
     saveStateToFile,
+    saveStateToPlay,
     loadStateFromFile,
+    loadState,
   };
 }

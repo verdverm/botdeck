@@ -13,6 +13,7 @@
  *   DELETE /api/plays/:game/:id             - remove play
  *   GET    /api/plays/:game/:id/config      - read config.json
  *   PUT    /api/plays/:game/:id/config      - write config.json
+ *   POST   /api/plays/:game/:id/states      - save state + extract FF1 state
  *   GET    /health
  *
  * Node built-in http keeps the sketch free of deps; swap once the shape settles.
@@ -30,9 +31,14 @@ import {
   writePlayConfig,
   createPlay,
   deletePlay,
+  savePlayState,
+  listPlayStates,
+  readPlayState,
+  assertCollectedState,
   FileNotFoundError,
   PathEscapeError,
   AlreadyExistsError,
+  ValidationError,
 } from "./files.ts";
 
 const PORT = Number(process.env.VERMBOT_PORT ?? 8787);
@@ -58,7 +64,9 @@ function readBody(req: IncomingMessage): Promise<string> {
 }
 
 function json(res: ServerResponse, status: number, body: unknown): void {
-  const payload = JSON.stringify(body);
+  const payload = JSON.stringify(body, (_key, value) =>
+    value instanceof Uint8Array ? Array.from(value) : value,
+  );
   res.writeHead(status, {
     "content-type": "application/json",
     "access-control-allow-origin": "*",
@@ -250,6 +258,49 @@ async function handlePlays(
     }
 
     return false;
+  }
+
+  // /api/plays/:game/:id/states (GET | POST)
+  if (segments.length === 5 && segments[4] === "states") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlayStates(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const collected = assertCollectedState(JSON.parse(body));
+        const result = savePlayState(game, id, collected);
+        json(res, 201, result);
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/states/:filename (GET)
+  if (segments.length === 6 && segments[4] === "states" && req.method === "GET") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const filename = segments[5]!;
+    try {
+      json(res, 200, readPlayState(game, id, filename));
+    } catch (err) {
+      sendError(err);
+    }
+    return true;
   }
 
   return false;
