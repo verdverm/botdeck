@@ -117,6 +117,31 @@ export function snippetUrl(playId: string, snippetId: string): string {
   return `${playBase(playId)}/snippets/${encodeURIComponent(snippetId)}`;
 }
 
+export async function saveSnippet(
+  playId: string,
+  snippetId: string,
+  snippet: import("@/types").PlaySnippet,
+): Promise<import("@/types").PlaySnippet> {
+  const res = await fetch(snippetUrl(playId, snippetId), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(snippet),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`save snippet failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as import("@/types").PlaySnippet;
+}
+
+export async function deleteSnippet(playId: string, snippetId: string): Promise<void> {
+  const res = await fetch(snippetUrl(playId, snippetId), { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`delete snippet failed (${res.status}): ${body}`);
+  }
+}
+
 export async function updateStateMetadata(
   playId: string,
   filename: string,

@@ -158,6 +158,7 @@ function readCharacterStats(bytes: Uint8Array): CharacterStats {
     vitality: bytes[CHAR_VIT_OFFSET],
     luck: bytes[CHAR_LUCK_OFFSET],
     experience: readUint24LEFromBytes(bytes, CHAR_EXP_OFFSET),
+    expToNext: readUint16LEFromBytes(bytes, CHAR_EXPTONEXT_OFFSET),
     damage: bytes[CHAR_DMG_OFFSET],
     hitRate: bytes[CHAR_HITRATE_OFFSET],
     absorb: bytes[CHAR_ABSORB_OFFSET],
@@ -598,13 +599,22 @@ export function readBattleState(view: MemoryView, party: PartyCharacter[]): Batt
   };
 }
 
+function classifyStandardMap(mapId: number): "town" | "castle" | "dungeon" | "unknown" {
+  // Standard-map IDs 0x00-0x07 are towns, 0x08-0x0A are castles,
+  // 0x0B-0x0C are dungeons/temples. Anything else is unclassified.
+  if (mapId >= 0x00 && mapId <= 0x07) return "town";
+  if (mapId >= 0x08 && mapId <= 0x0a) return "castle";
+  if (mapId >= 0x0b && mapId <= 0x0c) return "dungeon";
+  return "unknown";
+}
+
 function inferMenuContext(world: WorldState, battle: BattleState): MenuContext {
   if (battle.inBattle) return "battle";
   if (!world.isStandardMap) return "field";
   // Without a real menu-open flag we cannot tell whether the party is standing
-  // in a shop, at the inn counter, or just walking around. Return "unknown"
-  // for standard maps so callers can fall back to map-specific location data.
-  return "unknown";
+  // in a shop, at the inn counter, or just walking around. Fall back to the
+  // map class so town/castle/dungeon are at least distinguishable.
+  return classifyStandardMap(world.mapId);
 }
 
 /**
@@ -639,11 +649,16 @@ const KNOWN_LOCATIONS: Readonly<Record<number, KnownLocation[]>> = {
     { id: "coneria_item_shop", name: "Coneria Item Shop", mapId: 0x00, type: "shop" },
     { id: "coneria_clinic", name: "Coneria Clinic", mapId: 0x00, type: "clinic" },
     { id: "coneria_inn", name: "Coneria Inn", mapId: 0x00, type: "inn" },
+    { id: "coneria_castle_exit", name: "Coneria Castle Exit", mapId: 0x00, type: "point" },
     { id: "coneria_north_exit", name: "Coneria North Exit", mapId: 0x00, type: "point" },
     { id: "coneria_east_exit", name: "Coneria East Exit", mapId: 0x00, type: "point" },
     { id: "coneria_south_exit", name: "Coneria South Exit", mapId: 0x00, type: "point" },
     { id: "coneria_fountain", name: "Coneria Fountain", mapId: 0x00, type: "npc" },
     { id: "coneria_well", name: "Coneria Well", mapId: 0x00, type: "npc" },
+  ],
+  0x08: [
+    { id: "coneria_castle_throne", name: "Coneria Castle Throne Room", mapId: 0x08, type: "point" },
+    { id: "coneria_castle_exit", name: "Coneria Castle Exit", mapId: 0x08, type: "point" },
   ],
 };
 
@@ -663,6 +678,7 @@ export function getAvailableLocations(world: WorldState): KnownLocation[] {
   } else if (world.isOverworld) {
     list.push(
       { id: "coneria", name: "Coneria", type: "town" },
+      { id: "coneria_castle", name: "Coneria Castle", type: "castle" },
       { id: "temple_of_fiends", name: "Temple of Fiends", type: "dungeon" },
       { id: "matoyas_cave", name: "Matoya's Cave", type: "dungeon" },
       { id: "marsh_cave", name: "Marsh Cave", type: "dungeon" },

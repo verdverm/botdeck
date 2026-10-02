@@ -154,8 +154,13 @@ export class FF1GamePlugin implements GamePlugin {
       },
       {
         name: "use_item",
-        description: `${base} Use a consumable item in battle.`,
+        description: `${base} Drink/use a consumable item in battle (maps to the DRINK menu entry).`,
         args: '{ "actor": "string", "item": "string", "target": "string" }',
+      },
+      {
+        name: "equip",
+        description: `${base} Open the EQUIP menu for this actor in battle.`,
+        args: '{ "actor": "string" }',
       },
       {
         name: "run",
@@ -212,6 +217,7 @@ export class FF1GamePlugin implements GamePlugin {
         return this.compileMenuConfirm();
       case "fight":
       case "magic":
+      case "equip":
       case "run":
         return this.compileBattleAction(command);
       default:

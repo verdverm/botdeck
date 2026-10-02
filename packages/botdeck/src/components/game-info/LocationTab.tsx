@@ -12,18 +12,29 @@ function describeLocation(loc: KnownLocation): string {
   return `${loc.name} (${loc.id})`;
 }
 
-function menuActions(menu: MenuContext): string[] {
+function isExit(loc: KnownLocation): boolean {
+  return loc.type === "point" && loc.name.toLowerCase().includes("exit");
+}
+
+function menuActionLabels(menu: MenuContext): string[] {
   switch (menu) {
     case "shop":
-      return ["buy", "sell"];
+      return ["Buy", "Sell"];
     case "inn":
-      return ["stay"];
+      return ["Stay"];
     case "clinic":
-      return ["heal"];
+      return ["Heal"];
     case "main_menu":
-      return ["use_item"];
+      return ["Use item"];
     case "battle":
-      return ["fight", "magic", "use_item", "run"];
+      // The FF1 battle menu has five entries per actor: FIGHT, MAGIC, DRINK,
+      // EQUIP, RUN. The agent command for "drink" is currently `use_item`.
+      return ["Fight", "Magic", "Drink (use_item)", "Equip", "Run"];
+    case "field":
+    case "town":
+    case "castle":
+    case "dungeon":
+      return ["Travel (goto)", "Talk", "Interact", "Cancel", "Menu"];
     default:
       return [];
   }
@@ -71,7 +82,9 @@ export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
       </section>
 
       <section>
-        <SectionTitle>Available Locations</SectionTitle>
+        <SectionTitle>
+          {world?.isOverworld ? "Travel Destinations" : "Places on This Map"}
+        </SectionTitle>
         {locations.length === 0 ? (
           <p className="text-neutral-500">No known locations for this map.</p>
         ) : (
@@ -79,6 +92,9 @@ export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
             {locations.map((loc) => (
               <li key={loc.id} className="text-neutral-300">
                 <span className="text-xs text-neutral-500">[{loc.type}]</span>{" "}
+                {isExit(loc) && (
+                  <span className="mr-1 text-xs text-emerald-400">[exit]</span>
+                )}
                 {describeLocation(loc)}
               </li>
             ))}
@@ -92,8 +108,8 @@ export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
         {context ? (
           <p className="text-neutral-200">
             Context <span className="text-neutral-500">{context.menu}</span>
-            {menuActions(context.menu).length > 0 && (
-              <> - available: {menuActions(context.menu).join(", ")}</>
+            {menuActionLabels(context.menu).length > 0 && (
+              <> - available: {menuActionLabels(context.menu).join(", ")}</>
             )}
           </p>
         ) : (

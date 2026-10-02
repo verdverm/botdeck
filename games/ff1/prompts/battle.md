@@ -5,7 +5,8 @@ You are in a turn-based fight. Each party member takes an action in order. The c
 Available battle actions per actor:
 - `fight({ actor, target })` - physical attack an enemy.
 - `magic({ actor, spell, target })` - cast a learned spell if the actor has charges.
-- `use_item({ actor, item, target })` - use a consumable item.
+- `use_item({ actor, item, target })` - drink/use a consumable item.
+- `equip({ actor })` - open the EQUIP menu for the actor.
 - `run({ actor })` - attempt to flee.
 - `wait` - wait for animations or the enemy turn.
 

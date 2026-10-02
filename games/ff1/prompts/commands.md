@@ -35,7 +35,8 @@ In battle, each command names an `actor` (the party member taking the action) an
 
 - `fight({ "actor": "string", "target": "enemy_1 | enemy_2 | ..." })` - Attack an enemy.
 - `magic({ "actor": "string", "spell": "string", "target": "enemy_1 | enemy_2 | ... | ally_name" })` - Cast a learned spell.
-- `use_item({ "actor": "string", "item": "string", "target": "string" })` - Use a consumable item in battle.
+- `use_item({ "actor": "string", "item": "string", "target": "string" })` - Drink/use a consumable item in battle (DRINK menu entry).
+- `equip({ "actor": "string" })` - Open the EQUIP menu for the actor.
 - `run({ "actor": "string" })` - Attempt to flee.
 - `wait` - Wait for animations or the enemy turn to resolve.
 

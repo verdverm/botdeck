@@ -26,6 +26,7 @@ function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
               <th className="py-1 pr-2">Lv</th>
               <th className="py-1 pr-2">HP</th>
               <th className="py-1 pr-2">MP</th>
+              <th className="py-1 pr-2">EXP to Next</th>
             </tr>
           </thead>
           <tbody>
@@ -40,6 +41,7 @@ function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
                   {c.hp ?? "-"} / {c.maxHp ?? "-"}
                 </td>
                 <td className="py-1 pr-2">{mpSummary(c.spellCharges?.levels)}</td>
+                <td className="py-1 pr-2">{c.stats?.expToNext ?? "-"}</td>
               </tr>
             ))}
           </tbody>

@@ -7,6 +7,7 @@ export interface CharacterStats {
   vitality: number | undefined;
   luck: number | undefined;
   experience: number | undefined;
+  expToNext: number | undefined;
   damage: number | undefined;
   hitRate: number | undefined;
   absorb: number | undefined;
@@ -174,6 +175,9 @@ export type MenuContext =
   | "clinic"
   | "dialog"
   | "battle"
+  | "town"
+  | "castle"
+  | "dungeon"
   | "unknown";
 
 export interface GameContext {
@@ -188,7 +192,7 @@ export interface KnownLocation {
   mapId?: number;
   mapName?: string;
   position?: { x: number; y: number };
-  type: "town" | "shop" | "inn" | "clinic" | "npc" | "dungeon" | "point";
+  type: "town" | "shop" | "inn" | "clinic" | "npc" | "dungeon" | "castle" | "point";
   note?: string;
 }
 

@@ -13,6 +13,8 @@ import {
   diffPlayStates,
   listPlaySnippets,
   readPlaySnippet,
+  writePlaySnippet,
+  deletePlaySnippet,
   PathEscapeError,
   FileNotFoundError,
   ValidationError,
@@ -328,6 +330,27 @@ describe("play snippets", () => {
         JSON.stringify({ name: "Bad", steps: "not-an-array" }),
       );
       expect(() => readPlaySnippet(TEST_GAME, id, "bad")).toThrow(ValidationError);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("writes and deletes snippets", () => {
+    const id = tmpPlayId("snippets_write");
+    createPlay(TEST_GAME, id);
+    try {
+      const snippet = writePlaySnippet(TEST_GAME, id, "new", {
+        name: "New Snippet",
+        description: "A new snippet",
+        startState: "000001-start",
+        steps: [{ kind: "command", command: { name: "interact" } }],
+      });
+      expect(snippet.id).toBe("new");
+      expect(snippet.name).toBe("New Snippet");
+      expect(listPlaySnippets(TEST_GAME, id).some((s) => s.id === "new")).toBe(true);
+
+      deletePlaySnippet(TEST_GAME, id, "new");
+      expect(listPlaySnippets(TEST_GAME, id).some((s) => s.id === "new")).toBe(false);
     } finally {
       deletePlay(TEST_GAME, id);
     }

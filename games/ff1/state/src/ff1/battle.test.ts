@@ -50,6 +50,21 @@ describe("readFF1State battle and context shape", () => {
     const ids = state.availableLocations.map((loc) => loc.id);
     expect(ids).toContain("coneria_inn");
     expect(ids).toContain("coneria_weapon_shop");
+    expect(ids).toContain("coneria_castle_exit");
+  });
+
+  it("classifies the context menu by standard map type", () => {
+    const mem = new Uint8Array(0x10000);
+    mem[0x002d] = 0x01;
+    mem[0x0048] = 0x00;
+    const view = createCpuMemoryView(mem);
+    expect(readFF1State(view).context.menu).toBe("town");
+
+    mem[0x0048] = 0x08;
+    expect(readFF1State(view).context.menu).toBe("castle");
+
+    mem[0x0048] = 0x0c;
+    expect(readFF1State(view).context.menu).toBe("dungeon");
   });
 });
 

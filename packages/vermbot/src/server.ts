@@ -72,6 +72,8 @@ import {
   diffPlayStates,
   listPlaySnippets,
   readPlaySnippet,
+  writePlaySnippet,
+  deletePlaySnippet,
   slugify,
   formatTimestamp,
   FileNotFoundError,
@@ -376,7 +378,7 @@ async function handlePlays(
     return false;
   }
 
-  // /api/plays/:game/:id/snippets/:snippetId (GET)
+  // /api/plays/:game/:id/snippets/:snippetId (GET | PUT | DELETE)
   if (segments.length === 6 && segments[4] === "snippets") {
     const game = segments[2]!;
     const id = segments[3]!;
@@ -385,6 +387,28 @@ async function handlePlays(
     if (req.method === "GET") {
       try {
         json(res, 200, readPlaySnippet(game, id, snippetId));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "PUT") {
+      try {
+        const body = await readBody(req);
+        const snippet = writePlaySnippet(game, id, snippetId, JSON.parse(body));
+        json(res, 200, snippet);
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "DELETE") {
+      try {
+        deletePlaySnippet(game, id, snippetId);
+        json(res, 204, undefined);
       } catch (err) {
         sendError(err);
       }

@@ -21,6 +21,10 @@ export function CharacterDetail({ character }: { character: PartyCharacter }) {
             Lv {character.level ?? "-"} — {character.hp ?? "-"} / {character.maxHp ?? "-"} HP
           </p>
         </div>
+        <div>
+          <SectionTitle>Experience to Next</SectionTitle>
+          <p className="text-neutral-200">{character.stats?.expToNext ?? "-"} EXP</p>
+        </div>
       </section>
 
       <section>

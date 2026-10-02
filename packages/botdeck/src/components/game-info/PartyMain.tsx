@@ -11,6 +11,7 @@ export function PartyMainTable({ party }: { party: PartyCharacter[] }) {
           <th className="py-1 pr-2">Lv</th>
           <th className="py-1 pr-2">HP</th>
           <th className="py-1 pr-2">MP</th>
+          <th className="py-1 pr-2">EXP to Next</th>
           <th className="py-1 pr-2">Status</th>
         </tr>
       </thead>
@@ -24,6 +25,7 @@ export function PartyMainTable({ party }: { party: PartyCharacter[] }) {
               {c.hp ?? "-"} / {c.maxHp ?? "-"}
             </td>
             <td className="py-1 pr-2">{mpSummary(c.spellCharges?.levels)}</td>
+            <td className="py-1 pr-2">{c.stats?.expToNext ?? "-"}</td>
             <td className="py-1 pr-2">
               {c.status?.ailments.length
                 ? c.status.ailments.map((a) => a.name).join(", ")

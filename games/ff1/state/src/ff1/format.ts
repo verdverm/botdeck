@@ -46,9 +46,10 @@ function formatBattle(state: FF1GameState): string {
 
 function formatCharacter(c: PartyCharacter): string {
   const eq = c.equipment ?? {};
+  const stats = c.stats;
   const lines: string[] = [
     `- ${c.name ?? "Unknown"} (${c.classInfo?.name ?? `Class ${c.classId ?? "?"}`}) Lv ${c.level ?? "-"}`,
-    `  HP: ${c.hp ?? "-"} / ${c.maxHp ?? "-"} | MP: ${mpSummary(c.spellCharges?.levels)}`,
+    `  HP: ${c.hp ?? "-"} / ${c.maxHp ?? "-"} | MP: ${mpSummary(c.spellCharges?.levels)} | Next: ${stats?.expToNext ?? "-"} EXP`,
   ];
   const ailments = c.status?.ailments?.map((s) => s.name).join(", ");
   if (ailments) lines.push(`  Status: ${ailments}`);

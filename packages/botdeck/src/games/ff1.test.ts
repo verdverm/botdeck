@@ -58,6 +58,7 @@ describe("FF1GamePlugin", () => {
     expect(names).toContain("fight");
     expect(names).toContain("magic");
     expect(names).toContain("use_item");
+    expect(names).toContain("equip");
     expect(names).toContain("run");
     expect(names).not.toContain("goto");
     expect(names).not.toContain("talk_to");

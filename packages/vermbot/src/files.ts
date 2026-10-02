@@ -1018,6 +1018,38 @@ export function readPlaySnippet(game: string, id: string, snippetId: string): Pl
   return assertSnippet(body, snippetId, game, id);
 }
 
+export function writePlaySnippet(
+  game: string,
+  id: string,
+  snippetId: string,
+  body: unknown,
+): PlaySnippet {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  assertSegment("snippetId", snippetId);
+  if (!SNIPPET_FILE_RE.test(`${snippetId}.snippet.json`)) {
+    throw new PathEscapeError(snippetId);
+  }
+  const snippet = assertSnippet(body, snippetId, game, id);
+  const dir = join(playDir(game, id), "snippets");
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${snippetId}.snippet.json`);
+  writeFileSync(file, JSON.stringify(snippet, null, 2));
+  return snippet;
+}
+
+export function deletePlaySnippet(game: string, id: string, snippetId: string): void {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  assertSegment("snippetId", snippetId);
+  if (!SNIPPET_FILE_RE.test(`${snippetId}.snippet.json`)) {
+    throw new PathEscapeError(snippetId);
+  }
+  const file = join(playDir(game, id), "snippets", `${snippetId}.snippet.json`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  rmSync(file);
+}
+
 function readMetadata(dir: string, base: string): PlayStateMetadata | undefined {
   const file = join(dir, `${base}.metadata.json`);
   if (!existsSync(file)) return undefined;
