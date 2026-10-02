@@ -183,7 +183,7 @@ export interface AgentConfig {
 }
 
 const DEFAULT_AGENT_CONFIG: AgentConfig = {
-  model: "uranium-qwen-mini",
+  model: "small",
   maxToolRounds: 5,
   maxTokens: 1024,
   limits: { goals: 1024, memory: 2048, journal: 32768, memoryCount: 10 },
@@ -312,7 +312,7 @@ function enforceMemoryCount(game: string, id: string, limit: number): void {
   }
 }
 
-export interface WriteJournalOptions extends WritePlayTextOptions {}
+export type WriteJournalOptions = WritePlayTextOptions;
 
 export function writePlayJournal(
   game: string,

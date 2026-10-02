@@ -3,7 +3,7 @@
   "game": "ff1",
   "label": "Final Fantasy - dev run",
   "agent": {
-    "model": "uranium-qwen-mini",
+    "model": "small",
     "maxToolRounds": 5,
     "maxTokens": 1024,
     "limits": {

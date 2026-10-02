@@ -1,9 +1,16 @@
 # 0. next
 
-- hook up to homelab little model
-- create available actions, incorp into prompts
+Goal: close the loop to self-play so agents can iterate on game state & info
+- create available actions, incorporate into prompts
 - take_action tool that should be the final tool call, this breaks the agent loop and runs macros
 - macro system for game input, a* for navigation
+
+Gaps: we wish to close
+
+- map / location information & navigation with A* or similar
+- menu navigation through macros, ideally multiple in a single llm response
+- fights / battles - info & menu actions (full round trip across all parts of system)
+
 
 # game state inspection - game playing automation loop
 

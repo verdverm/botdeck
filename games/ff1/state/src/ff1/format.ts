@@ -14,6 +14,7 @@ function formatPosition(world: WorldState | undefined): string {
 }
 
 function formatInventory(state: FF1GameState): string {
+  if (!Array.isArray(state.inventory)) return "None";
   const items = state.inventory
     .filter((item) => item.quantity > 0 && item.itemInfo)
     .slice(0, 20)
@@ -23,13 +24,13 @@ function formatInventory(state: FF1GameState): string {
 }
 
 function formatCharacter(c: PartyCharacter): string {
+  const eq = c.equipment ?? {};
   const lines: string[] = [
-    `- ${c.name} (${c.classInfo?.name ?? `Class ${c.classId}`}) Lv ${c.level ?? "-"}`,
+    `- ${c.name ?? "Unknown"} (${c.classInfo?.name ?? `Class ${c.classId ?? "?"}`}) Lv ${c.level ?? "-"}`,
     `  HP: ${c.hp ?? "-"} / ${c.maxHp ?? "-"} | MP: ${mpSummary(c.spellCharges?.levels)}`,
   ];
-  const ailments = c.status?.ailments.map((s) => s.name).join(", ");
+  const ailments = c.status?.ailments?.map((s) => s.name).join(", ");
   if (ailments) lines.push(`  Status: ${ailments}`);
-  const eq = c.equipment;
   const gear = [
     eq.weapon?.name,
     eq.armor?.name,
@@ -44,21 +45,25 @@ function formatCharacter(c: PartyCharacter): string {
 export function formatFF1GameInfo(state: FF1GameState | undefined): string {
   if (!state) return "No FF1 state available.";
 
-  const party = state.party.map(formatCharacter).join("\n") || "No party data.";
-  const vehicles = state.world.ownedVehicles.length > 0
-    ? state.world.ownedVehicles.join(", ")
+  const party = Array.isArray(state.party)
+    ? state.party.map(formatCharacter).join("\n") || "No party data."
+    : "No party data.";
+  const world = state.world;
+  const vehicles = world && Array.isArray(world.ownedVehicles) && world.ownedVehicles.length > 0
+    ? world.ownedVehicles.join(", ")
     : "None";
-  const currentVehicle = state.world.currentVehicle
-    ? ` (riding ${state.world.currentVehicle})`
+  const currentVehicle = world && world.currentVehicle
+    ? ` (riding ${world.currentVehicle})`
     : "";
+  const gold = typeof state.gold === "number" ? state.gold.toLocaleString() : "?";
 
   return [
     "## Party",
     party,
     "",
     "## Resources",
-    `- Gold: ${state.gold.toLocaleString()}`,
-    `- Position: ${formatPosition(state.world)}`,
+    `- Gold: ${gold}`,
+    `- Position: ${formatPosition(world)}`,
     `- Vehicles: ${vehicles}${currentVehicle}`,
     "",
     "## Inventory",

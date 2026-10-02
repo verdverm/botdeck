@@ -18,6 +18,7 @@ export default defineConfig({
     benchmark: {
       suppressExportGetterWarnings: true,
     },
+    exclude: ["**/node_modules/**", "**/dist/**", "**/*.integration.test.ts"],
   },
   resolve: {
     alias: {

@@ -12,6 +12,7 @@
     "test": "vitest",
     "test:watch": "vitest --watch",
     "test:coverage": "vitest --coverage --run",
+    "test:integration": "vitest --run --config vitest.integration.config.ts **/*.integration.test.ts",
     "bench": "vitest bench --run --reporter=verbose",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
