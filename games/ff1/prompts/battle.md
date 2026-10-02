@@ -16,4 +16,8 @@ Tactics:
 - Conserve MP outside of obvious threats.
 - Flee only when the fight looks hopeless.
 
-STUB: Battle state reading is stubbed. Enemy identities, HP, and the active party index are inferred/heuristic and may be wrong. The agent loop will ask once per reported active index, but actual menu cursor navigation for actor/target/spell is not yet implemented, so commands compile to a generic confirm sequence.
+Battle state now reads the live enemy roster from RAM. Enemy names, slots, and HP are shown in the state. The active party index and battle cursor positions are also exposed.
+
+When choosing targets, prefer the enemy name or slot label from the state (e.g., `Goblin`, `Goblin Guard`). If no name is available, use the slot label `Enemy N`.
+
+STUB: Menu cursor navigation for actor/target/spell is not yet implemented, so commands compile to a generic confirm sequence. Cursor positions are reported so future iterations can navigate menus precisely.

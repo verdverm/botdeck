@@ -1,8 +1,39 @@
 import { useState } from "react";
 import { JsonEditor, githubDarkTheme } from "json-edit-react";
 import type { CollectedState } from "@/emulator/collectState";
-import { formatPosition, mpSummary } from "./helpers";
+import { getKeyItemById } from "@games/ff1-state";
+import { formatContext, formatPosition, mpSummary } from "./helpers";
 import { SectionTitle } from "./shared";
+
+const KEY_ITEM_FLAGS: { key: string; offset: number }[] = [
+  { key: "hasLute", offset: 0x00 },
+  { key: "hasCrown", offset: 0x01 },
+  { key: "hasCrystal", offset: 0x02 },
+  { key: "hasHerb", offset: 0x03 },
+  { key: "hasMysticKey", offset: 0x04 },
+  { key: "hasTnt", offset: 0x05 },
+  { key: "hasAdamant", offset: 0x06 },
+  { key: "hasSlab", offset: 0x07 },
+  { key: "hasRuby", offset: 0x08 },
+  { key: "hasRod", offset: 0x09 },
+  { key: "hasFloater", offset: 0x0a },
+  { key: "hasChime", offset: 0x0b },
+  { key: "hasTail", offset: 0x0c },
+  { key: "hasCube", offset: 0x0d },
+  { key: "hasBottle", offset: 0x0e },
+  { key: "hasOxyale", offset: 0x0f },
+  { key: "hasCanoe", offset: 0x10 },
+  { key: "hasFireOrb", offset: 0x11 },
+  { key: "hasWaterOrb", offset: 0x12 },
+  { key: "hasAirOrb", offset: 0x13 },
+  { key: "hasEarthOrb", offset: 0x14 },
+];
+
+function keyItemSummary(flags: Record<string, unknown>): string {
+  const owned = KEY_ITEM_FLAGS.filter(({ key }) => flags[key] === true)
+    .map(({ offset }) => getKeyItemById(offset)?.name ?? `Flag ${offset}`);
+  return owned.length > 0 ? owned.join(", ") : "None";
+}
 
 function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
   const inventorySummary = (ff1: NonNullable<CollectedState["ff1"]>) => {
@@ -62,9 +93,7 @@ function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
       <section className="grid grid-cols-2 gap-3">
         <div>
           <SectionTitle>Context</SectionTitle>
-          <p className="text-neutral-200">
-            {ff1.context ? `${ff1.context.mode} / ${ff1.context.menu}` : "Unknown"}
-          </p>
+          <p className="text-neutral-200">{formatContext(ff1.context)}</p>
         </div>
         <div>
           <SectionTitle>Battle</SectionTitle>
@@ -90,6 +119,11 @@ function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
       <section>
         <SectionTitle>Inventory</SectionTitle>
         <p className="text-neutral-200">{inventorySummary(ff1)}</p>
+      </section>
+
+      <section>
+        <SectionTitle>Key Items & Orbs</SectionTitle>
+        <p className="text-neutral-200">{keyItemSummary(ff1.flags as unknown as Record<string, unknown>)}</p>
       </section>
     </div>
   );

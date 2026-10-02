@@ -36,7 +36,11 @@ test.describe("watch", () => {
     await expect(snippetsTab).toBeVisible();
     await snippetsTab.click();
 
-    const runButton = page.getByRole("button", { name: "Run snippet" }).first();
+    // Expand the first snippet so its Run button is rendered.
+    const firstRow = page.locator("li").first();
+    await firstRow.locator("button").first().click();
+
+    const runButton = page.getByRole("button", { name: "Run", exact: true }).first();
     await expect(runButton).toBeVisible();
 
     // In watch mode the user is expected to click Run manually; we just verify

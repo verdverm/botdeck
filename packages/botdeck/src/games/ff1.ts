@@ -19,6 +19,13 @@ const HOLD_FRAMES = 4;
 const GAP_FRAMES = 4;
 const MENU_GAP_FRAMES = 12;
 
+const DIRECTION_BUTTONS: Readonly<Record<string, number>> = {
+  up: NES_BUTTONS.UP,
+  down: NES_BUTTONS.DOWN,
+  left: NES_BUTTONS.LEFT,
+  right: NES_BUTTONS.RIGHT,
+};
+
 function isInventoryItem(value: unknown): value is InventoryItem {
   return (
     typeof value === "object" &&
@@ -63,6 +70,7 @@ export class FF1GamePlugin implements GamePlugin {
     const menu = getMenuContext(state);
     if (menu === "shop") return "shop";
     if (menu === "inn") return "inn";
+    if (menu === "clinic") return "clinic";
     return "field";
   }
 
@@ -117,7 +125,15 @@ export class FF1GamePlugin implements GamePlugin {
       });
     }
 
-    if (menu === "main_menu" || menu === "field") {
+    if (menu === "clinic") {
+      commands.push({
+        name: "heal",
+        description: "Confirm healing at the clinic (revive/cure poison/stone).",
+      });
+    }
+
+    // field/overworld/town/castle/dungeon all support using consumable items.
+    if (menu === "field" || menu === "town" || menu === "castle" || menu === "dungeon") {
       if (this.hasConsumable(state)) {
         commands.push({
           name: "use_item",
@@ -201,6 +217,12 @@ export class FF1GamePlugin implements GamePlugin {
         return this.compileGoto(command);
       case "talk_to":
         return [{ button: NES_BUTTONS.A, holdFrames: HOLD_FRAMES, gapFrames: GAP_FRAMES }];
+      case "move": {
+        const direction = String(command.args?.direction ?? "down").toLowerCase();
+        const button = DIRECTION_BUTTONS[direction];
+        if (button === undefined) return [];
+        return [{ button, holdFrames: HOLD_FRAMES * 2, gapFrames: GAP_FRAMES * 2 }];
+      }
       case "interact":
         return [{ button: NES_BUTTONS.A, holdFrames: HOLD_FRAMES, gapFrames: GAP_FRAMES }];
       case "cancel":
@@ -214,6 +236,7 @@ export class FF1GamePlugin implements GamePlugin {
       case "buy":
       case "sell":
       case "stay":
+      case "heal":
         return this.compileMenuConfirm();
       case "fight":
       case "magic":
@@ -226,11 +249,10 @@ export class FF1GamePlugin implements GamePlugin {
   }
 
   private compileGoto(command: GameCommand): ButtonStep[] {
-    const location = String(command.args?.location ?? "");
-    void location;
     // First pass: goto is compiled as a single A press. The agent should use it
     // when already standing in front of a door, exit, or NPC that leads to the
     // named location. Real A* pathfinding is future work.
+    void command;
     return [{ button: NES_BUTTONS.A, holdFrames: HOLD_FRAMES, gapFrames: GAP_FRAMES }];
   }
 
@@ -251,10 +273,10 @@ export class FF1GamePlugin implements GamePlugin {
       holdFrames: hold,
       gapFrames: gap,
     });
-    void command;
     // First pass: battle actions are stubbed as a short menu navigation
     // sequence. The actor/target/spell arguments are accepted for the agent's
     // benefit but are not yet translated into cursor movement.
+    void command;
     return [press(NES_BUTTONS.A), press(NES_BUTTONS.A), press(NES_BUTTONS.A)];
   }
 

@@ -1,11 +1,12 @@
 import type { FF1GameState, KnownLocation, MapObject, MenuContext } from "@games/ff1-state";
-import { formatPosition } from "./helpers";
+import { getNpcNameById } from "@games/ff1-state";
+import { formatContext, formatPosition } from "./helpers";
 import { SectionTitle } from "./shared";
 
 function describeObject(obj: MapObject): string {
-  // Object IDs are global NPC indexes from the ROM object table; their role
-  // (shopkeeper, quest giver, etc.) cannot be determined from RAM alone.
-  return `Object ${obj.id}`;
+  const name = getNpcNameById(obj.id);
+  if (name) return `${name} (id 0x${obj.id.toString(16).padStart(2, "0")})`;
+  return `Object ${obj.id} (raw 0x${obj.rawId.toString(16).padStart(2, "0")})`;
 }
 
 function describeLocation(loc: KnownLocation): string {
@@ -16,6 +17,17 @@ function isExit(loc: KnownLocation): boolean {
   return loc.type === "point" && loc.name.toLowerCase().includes("exit");
 }
 
+function reachabilityColor(reachable: KnownLocation["reachable"]): string {
+  switch (reachable) {
+    case "same-map":
+      return "text-emerald-400";
+    case "reachable":
+      return "text-blue-400";
+    default:
+      return "text-neutral-500";
+  }
+}
+
 function menuActionLabels(menu: MenuContext): string[] {
   switch (menu) {
     case "shop":
@@ -24,8 +36,6 @@ function menuActionLabels(menu: MenuContext): string[] {
       return ["Stay"];
     case "clinic":
       return ["Heal"];
-    case "main_menu":
-      return ["Use item"];
     case "battle":
       // The FF1 battle menu has five entries per actor: FIGHT, MAGIC, DRINK,
       // EQUIP, RUN. The agent command for "drink" is currently `use_item`.
@@ -34,7 +44,7 @@ function menuActionLabels(menu: MenuContext): string[] {
     case "town":
     case "castle":
     case "dungeon":
-      return ["Travel (goto)", "Talk", "Interact", "Cancel", "Menu"];
+      return ["Travel (goto)", "Talk", "Interact", "Cancel", "Menu", "Use item (if consumable)"];
     default:
       return [];
   }
@@ -63,10 +73,8 @@ export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
 
       <section className="grid grid-cols-2 gap-3">
         <div>
-          <SectionTitle>Context Mode</SectionTitle>
-          <p className="text-neutral-200">
-            {context ? `${context.mode} / ${context.menu}` : "Unknown"}
-          </p>
+          <SectionTitle>Context</SectionTitle>
+          <p className="text-neutral-200">{formatContext(context)}</p>
         </div>
         <div>
           <SectionTitle>Vehicles</SectionTitle>
@@ -92,6 +100,11 @@ export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
             {locations.map((loc) => (
               <li key={loc.id} className="text-neutral-300">
                 <span className="text-xs text-neutral-500">[{loc.type}]</span>{" "}
+                {loc.reachable && (
+                  <span className={`mr-1 text-xs ${reachabilityColor(loc.reachable)}`}>
+                    [{loc.reachable}]
+                  </span>
+                )}
                 {isExit(loc) && (
                   <span className="mr-1 text-xs text-emerald-400">[exit]</span>
                 )}

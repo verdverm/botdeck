@@ -3,6 +3,7 @@ import { AgentTab } from "./AgentTab";
 import { BattleTab } from "./BattleTab";
 import { LocationTab } from "./LocationTab";
 import { MarkdownTab } from "./MarkdownTab";
+import { MenuTab } from "./MenuTab";
 import { OverviewTab } from "./OverviewTab";
 import { PartyTab } from "./PartyTab";
 import { SnippetsTab } from "./SnippetsTab";
@@ -154,7 +155,7 @@ export function GameInfoPanel({
       </div>
 
       <div className="flex flex-wrap gap-1 border-b border-neutral-800 pb-2">
-        {(["overview", "party", "location", "battle", "agent", "snippets", "markdown"] as Tab[]).map(
+        {(["overview", "party", "location", "battle", "menu", "agent", "snippets", "markdown"] as Tab[]).map(
           (t) => (
             <TabButton key={t} active={tab === t} label={t} onClick={() => setTab(t)} />
           ),
@@ -166,6 +167,7 @@ export function GameInfoPanel({
         {tab === "party" && <PartyTab ff1={data?.ff1} />}
         {tab === "location" && <LocationTab ff1={data?.ff1} />}
         {tab === "battle" && <BattleTab ff1={data?.ff1} />}
+        {tab === "menu" && <MenuTab ff1={data?.ff1} />}
         {tab === "agent" && (
           <AgentTab
             isThinking={agent?.isThinking}

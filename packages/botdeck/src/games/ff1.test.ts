@@ -19,14 +19,16 @@ function baseState(context: "field" | "battle" | "menu" = "field", menu: string 
       battle: {
         inBattle: context === "battle",
         enemyCount: context === "battle" ? 2 : 0,
-        enemies: context === "battle" ? [{ slot: 0, name: "enemy_1" }] : [],
+        enemies: context === "battle" ? [{ slot: 0, name: "enemy_1", position: { row: 0, col: 0 } }] : [],
         party: [
-          { index: 0, name: "Stu", canAct: true },
-          { index: 1, name: "Rias", canAct: true },
-          { index: 2, name: "Zing", canAct: true },
-          { index: 3, name: "Jaki", canAct: true },
+          { index: 0, name: "Stu", canAct: true, position: { row: 0, col: 0 } },
+          { index: 1, name: "Rias", canAct: true, position: { row: 0, col: 1 } },
+          { index: 2, name: "Zing", canAct: true, position: { row: 1, col: 0 } },
+          { index: 3, name: "Jaki", canAct: true, position: { row: 1, col: 1 } },
         ],
         activePartyIndex: 0,
+        cursorX: undefined,
+        cursorY: undefined,
       },
       availableLocations: context === "battle"
         ? []
@@ -82,6 +84,16 @@ describe("FF1GamePlugin", () => {
     expect(names).toContain("stay");
     expect(names).not.toContain("buy");
     expect(names).not.toContain("sell");
+  });
+
+  it("advertises clinic heal when at a clinic", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const options = plugin.availableCommands(baseState("menu", "clinic"));
+    const names = options.map((o) => o.name);
+
+    expect(names).toContain("heal");
+    expect(names).not.toContain("buy");
+    expect(names).not.toContain("stay");
   });
 
   it("compiles goto to a single A press (first pass)", () => {

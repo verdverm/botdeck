@@ -37,6 +37,12 @@
         "label": "Inn",
         "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "inn"],
         "autoAdvance": false
+      },
+      {
+        "id": "clinic",
+        "label": "Clinic",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "clinic"],
+        "autoAdvance": false
       }
     ]
   }

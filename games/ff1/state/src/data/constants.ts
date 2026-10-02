@@ -227,35 +227,60 @@ export const MAPOBJ_GFX_Y_OFFSET = 0x05;
 export const MAPOBJ_FACE_OFFSET = 0x0c;
 /** Offset of palette/property byte within a map object record. */
 export const MAPOBJ_PL_OFFSET = 0x0d;
+/** Offset of raw object ID (from ROM object table) within a map object record. */
+export const MAPOBJ_RAWID_OFFSET = 0x0a;
 
 // Progression / event flags (VERIFIED location, INFERRED bit meanings)
 export const ADDR_WORLD_FLAGS = 0x6200;
 export const WORLD_FLAGS_SIZE = 0x100;
 
 // ===========================================================================
-// Battle / menu state (INFERRED / TODO)
-// These offsets are taken from community documentation and need verification
-// against the disassembly or known-good save states. They are wired into the
-// reader so the UI and agent can consume battle/menu context as soon as the
-// real offsets are confirmed.
+// Battle state (VERIFIED against FF1Disassembly variables.inc)
+// btl_enemystats starts at $6BD3 and has 9 records of $14 bytes each.
+// btl_result ($6B86) is 0 while battle is active, nonzero when ending.
 // ===========================================================================
 
-/** TODO: battle flag / in-battle indicator. */
-export const ADDR_BATTLE_FLAG = 0x6a00;
-/** TODO: number of active enemies in the current encounter. */
-export const ADDR_BATTLE_ENEMY_COUNT = 0x6a01;
-/** TODO: start of enemy roster data. */
-export const ADDR_BATTLE_ENEMIES = 0x6a10;
-/** TODO: stride of one enemy record. */
-export const BATTLE_ENEMY_STRIDE = 0x10;
-/** TODO: index of the party member whose action is being selected. */
-export const ADDR_BATTLE_ACTIVE_INDEX = 0x6a80;
-/** TODO: cursor X position for menu navigation. */
-export const ADDR_MENU_CURSOR_X = 0x6b00;
-/** TODO: cursor Y position for menu navigation. */
-export const ADDR_MENU_CURSOR_Y = 0x6b01;
-/** TODO: open menu / dialog flag. */
-export const ADDR_MENU_OPEN = 0x6b02;
+/** Battle result / in-battle indicator. 0 = active, nonzero = ending. */
+export const ADDR_BATTLE_RESULT = 0x6b86;
+/** Number of enemies generated for the current battle. */
+export const ADDR_BATTLE_ENEMY_COUNT = 0x6c93;
+/** Start of live enemy stat records ($6BD3). */
+export const ADDR_BATTLE_ENEMIES = 0x6bd3;
+/** Stride of one live enemy record. */
+export const BATTLE_ENEMY_STRIDE = 0x14;
+/** Offset of the enemy ID within a live enemy record. */
+export const BATTLE_ENEMY_ID_OFFSET = 0x11;
+/** Offset of current HP within a live enemy record. */
+export const BATTLE_ENEMY_HP_OFFSET = 0x02;
+/** Index of the party member currently selecting a battle command. */
+export const ADDR_BATTLE_ACTIVE_INDEX = 0x6b7a;
+/** Battle menu cursor X (menu position). */
+export const ADDR_BATTLE_CURSOR_X = 0x6aaa;
+/** Battle menu cursor Y (menu position). */
+export const ADDR_BATTLE_CURSOR_Y = 0x6aab;
+
+// ===========================================================================
+// Menu / shop state (VERIFIED against FF1Disassembly variables.inc)
+// entering_shop ($50), shop_id ($51), and shop_type ($66) are set when the
+// party is in a shop/inn/clinic/caravan.  The generic menu cursor lives at $62.
+// ===========================================================================
+
+/** Nonzero when the party is about to enter / is inside a shop menu. */
+export const ADDR_ENTERING_SHOP = 0x50;
+/** Shop ID being entered. */
+export const ADDR_SHOP_ID = 0x51;
+/** Shop type: 0=weapon,1=armor,2=white magic,3=black magic,4=clinic,5=inn,6=item,7=caravan. */
+export const ADDR_SHOP_TYPE = 0x66;
+/** Generic menu cursor position ($62, shared by main/item/equip menus). */
+export const ADDR_MENU_CURSOR = 0x62;
+/** Shop cursor X ($64). */
+export const ADDR_SHOP_CURSOR_X = 0x64;
+/** Shop cursor Y ($65). */
+export const ADDR_SHOP_CURSOR_Y = 0x65;
+/** Object index currently being talked to on a standard map ($67). */
+export const ADDR_TALK_OBJECT = 0x67;
+/** Nonzero when a description/item dialog box is open ($7F). */
+export const ADDR_DIALOG_OPEN = 0x7f;
 
 // ===========================================================================
 // DEPRECATED / INCORRECT offsets kept out of the active reader.

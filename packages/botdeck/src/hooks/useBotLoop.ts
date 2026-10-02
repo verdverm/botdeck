@@ -298,18 +298,23 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   );
 
   const runBattleRound = useCallback(async (): Promise<void> => {
-    // STUB: battle-state reading is stubbed. activePartyIndex and enemy roster are
-    // inferred/heuristic; see @games/ff1-state reader.ts TODO_BATTLE_NOTE.
+    // Battle-state offsets are VERIFIED (see @games/ff1-state reader.ts
+    // VERIFIED_BATTLE_NOTE). The remaining limitation is the compile stub for
+    // battle actions: they do not yet navigate the actor/target/spell menus.
     // This loop trusts the state reader enough to call the agent once per active
-    // party member index reported, but it will not navigate menus for the actor.
+    // party member index reported, and it guards against re-asking for the same
+    // actor if the stub macro fails to advance the game's cursor.
     let state = plugin.readState();
     let guard = 0;
+    let lastActorIndex: number | undefined;
     while (guard++ < 4) {
       const ff1 = state.ff1 as { battle?: { inBattle?: boolean; activePartyIndex?: number; party?: { name: string; canAct?: boolean }[] } } | undefined;
       if (!ff1?.battle?.inBattle) break;
       const activeIndex = ff1.battle.activePartyIndex;
+      if (activeIndex === lastActorIndex) break;
       const actor = activeIndex !== undefined ? ff1.battle.party?.[activeIndex]?.name : undefined;
       if (!actor) break;
+      lastActorIndex = activeIndex;
 
       const result = await decideAndMaybeExecute(state, "battle", actor);
       if ("macro" in result) {
@@ -375,7 +380,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       );
       // If we were in the middle of a battle round, continue it.
       const state = plugin.readState();
-      if (plugin.getMode(state) === "battle" && autoRunRef.current) {
+      if (plugin.getMode(state) === "battle") {
         await runBattleRound();
       }
     } catch (err) {
@@ -419,12 +424,13 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       const seq = (seqRef.current += 1);
       const ts = Date.now();
       const stateBefore = collectStates ? await saveStepState(seq, "before") : undefined;
+      const snapshot = plugin.readState();
       const request: TurnRequest = {
         gameId: game,
         playId,
-        state: plugin.readState(),
+        state: snapshot,
         screenshot: getScreenshot?.(),
-        options: plugin.availableCommands(plugin.readState()),
+        options: plugin.availableCommands(snapshot),
       };
       const response: TurnResponse = { command, reason: "manual injection" };
       await executeCommand(seq, ts, request, response, stateBefore);

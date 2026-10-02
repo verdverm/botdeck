@@ -2,9 +2,9 @@ import type { FF1GameState } from "@games/ff1-state";
 import { SectionTitle } from "./shared";
 
 export function BattleTab({ ff1 }: { ff1: FF1GameState | undefined }) {
-  const battle = ff1 && "battle" in ff1 ? (ff1.battle as { inBattle?: boolean; note?: string; enemies?: { slot: number; name?: string }[]; party?: { name: string; canAct?: boolean }[]; activePartyIndex?: number }) : undefined;
+  const battle = ff1?.battle;
   const inBattle = battle?.inBattle ?? false;
-  const activeName = inBattle && battle?.activePartyIndex !== undefined
+  const activeName = battle?.activePartyIndex !== undefined
     ? ff1?.party[battle.activePartyIndex]?.name
     : undefined;
 
@@ -21,19 +21,19 @@ export function BattleTab({ ff1 }: { ff1: FF1GameState | undefined }) {
         </div>
       </section>
 
-      {inBattle && (
+      {battle?.inBattle && (
         <section>
           <SectionTitle>Enemy Roster</SectionTitle>
-          {battle?.enemies && battle.enemies.length > 0 ? (
+          {battle.enemies.length > 0 ? (
             <ul className="space-y-1">
               {battle.enemies.map((e) => (
                 <li key={e.slot} className="text-xs text-neutral-300">
-                  {e.name ?? `Enemy ${e.slot + 1}`}
+                  {e.name ?? `Enemy ${e.slot + 1}`} (slot {e.slot}, HP {e.hp ?? "?"})
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-neutral-500">Enemy roster unread (offsets TODO).</p>
+            <p className="text-neutral-500">No active enemies detected.</p>
           )}
         </section>
       )}
@@ -51,22 +51,20 @@ export function BattleTab({ ff1 }: { ff1: FF1GameState | undefined }) {
         </section>
       )}
 
-      {inBattle && battle?.party && (
+      {battle?.inBattle && battle.party.length > 0 && (
         <section>
           <SectionTitle>Party Action State</SectionTitle>
           <ul className="space-y-1">
-            {battle.party.map((m, i) => (
-              <li key={i} className="text-xs text-neutral-300">
-                {m.name}: {m.canAct ? "can act" : "cannot act"}
+            {battle.party.map((m) => (
+              <li key={m.index} className="text-xs text-neutral-300">
+                {m.name}: {m.canAct ? "can act" : "cannot act"} (row {m.position.row})
               </li>
             ))}
           </ul>
         </section>
       )}
 
-      {battle?.note && (
-        <p className="text-xs text-neutral-500">{battle.note}</p>
-      )}
+      {battle?.note && <p className="text-xs text-neutral-500">{battle.note}</p>}
     </div>
   );
 }

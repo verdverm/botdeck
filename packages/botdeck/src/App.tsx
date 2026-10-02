@@ -152,6 +152,9 @@ export function App() {
       switch (step.kind) {
         case "command": {
           const macro = plugin.compile(step.command);
+          if (macro.length === 0 && step.command.name !== "wait") {
+            throw new Error(`unknown or unsupported snippet command: ${step.command.name}`);
+          }
           if (macro.length > 0) {
             await emulator.runMacro(macro);
           }
@@ -216,8 +219,6 @@ export function App() {
 
         const final = collect();
         if (final) setSnapshot(final);
-      } catch (e) {
-        console.error("snippet failed:", e);
       } finally {
         snippetAbortRef.current = null;
         setSnippetPaused(false);

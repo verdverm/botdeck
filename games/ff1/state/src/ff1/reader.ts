@@ -75,14 +75,28 @@ import {
   MAPOBJ_GFX_Y_OFFSET,
   MAPOBJ_FACE_OFFSET,
   MAPOBJ_PL_OFFSET,
-  ADDR_BATTLE_FLAG,
+  MAPOBJ_RAWID_OFFSET,
+  ADDR_BATTLE_RESULT,
   ADDR_BATTLE_ENEMY_COUNT,
+  ADDR_BATTLE_ENEMIES,
+  BATTLE_ENEMY_STRIDE,
+  BATTLE_ENEMY_ID_OFFSET,
+  BATTLE_ENEMY_HP_OFFSET,
   ADDR_BATTLE_ACTIVE_INDEX,
-  ADDR_MENU_OPEN,
-  ADDR_MENU_CURSOR_X,
-  ADDR_MENU_CURSOR_Y,
+  ADDR_BATTLE_CURSOR_X,
+  ADDR_BATTLE_CURSOR_Y,
+  ADDR_ENTERING_SHOP,
+  ADDR_SHOP_ID,
+  ADDR_SHOP_TYPE,
+  ADDR_MENU_CURSOR,
+  ADDR_SHOP_CURSOR_X,
+  ADDR_SHOP_CURSOR_Y,
+  ADDR_TALK_OBJECT,
+  ADDR_DIALOG_OPEN,
 } from "../data/constants.js";
 import { getClassById } from "../data/classes.js";
+import { getEnemyNameById } from "../data/enemies.js";
+import { getNpcNameById } from "../data/npcs.js";
 import {
   getWeaponById,
   getArmorById,
@@ -111,7 +125,9 @@ import type {
   BattlePartyMember,
   GameContext,
   MenuContext,
+  MenuState,
   KnownLocation,
+  Reachability,
   CharacterStats,
   SpellCharges,
   CharacterStatus,
@@ -127,8 +143,8 @@ const INFERRED_EQUIPMENT_NOTE =
 const INFERRED_WORLD_NOTE =
   "Overworld position is at $27/$28; standard-map position is scroll $29/$2A plus collision coords $68/$69. Map context is controlled by mapflags ($2D) bit 0; cur_map ($48) is only meaningful inside standard maps. NPC/object RAM is at $6F00 (16 objects x 16 bytes).";
 
-const TODO_FLAGS_NOTE =
-  "Progression-flag offsets are TODO/INFERRED. Decoded booleans are left undefined until bit positions are verified; the raw $6200 flag page is returned.";
+const VERIFIED_KEY_ITEMS_NOTE =
+  "Key-item and orb offsets are VERIFIED against variables.inc (items at $6021-$6035). The $6200 progression/event flag page is raw and its bit meanings are TODO/INFERRED.";
 
 function readUint24LE(view: MemoryView, addr: number): number {
   const b0 = view.u8(addr);
@@ -448,6 +464,7 @@ export function readMapObjects(view: MemoryView): MapObject[] {
     objects.push({
       index: i,
       id,
+      rawId: view.u8(base + MAPOBJ_RAWID_OFFSET),
       flags: view.u8(base + MAPOBJ_FLAGS_OFFSET),
       physicalX: view.u8(base + MAPOBJ_PHYS_X_OFFSET),
       physicalY: view.u8(base + MAPOBJ_PHYS_Y_OFFSET),
@@ -513,52 +530,71 @@ export function readWorldState(view: MemoryView): WorldState {
  * @param view - A MemoryView backed by the full NES CPU address space.
  * @returns Raw flag bytes plus named progression placeholders.
  */
+function hasKeyItem(view: MemoryView, offset: number): boolean {
+  return view.u8(ADDR_KEY_ITEM_START + offset) !== 0;
+}
+
 export function readGameFlags(view: MemoryView): GameFlags {
   const raw = view.bytes(ADDR_WORLD_FLAGS, WORLD_FLAGS_SIZE);
   return {
     raw: new Uint8Array(raw),
-    hasLute: undefined,
-    hasCrown: undefined,
-    hasCrystal: undefined,
-    hasHerb: undefined,
-    hasMysticKey: undefined,
-    hasTnt: undefined,
-    hasAdamant: undefined,
-    hasSlab: undefined,
-    hasRuby: undefined,
-    hasRod: undefined,
-    hasFloater: undefined,
-    hasChime: undefined,
-    hasTail: undefined,
-    hasCube: undefined,
-    hasBottle: undefined,
-    hasOxyale: undefined,
-    hasEarthOrb: undefined,
-    hasFireOrb: undefined,
-    hasWaterOrb: undefined,
-    hasAirOrb: undefined,
-    _note: TODO_FLAGS_NOTE,
+    hasLute: hasKeyItem(view, 0x00),
+    hasCrown: hasKeyItem(view, 0x01),
+    hasCrystal: hasKeyItem(view, 0x02),
+    hasHerb: hasKeyItem(view, 0x03),
+    hasMysticKey: hasKeyItem(view, 0x04),
+    hasTnt: hasKeyItem(view, 0x05),
+    hasAdamant: hasKeyItem(view, 0x06),
+    hasSlab: hasKeyItem(view, 0x07),
+    hasRuby: hasKeyItem(view, 0x08),
+    hasRod: hasKeyItem(view, 0x09),
+    hasFloater: hasKeyItem(view, 0x0a),
+    hasChime: hasKeyItem(view, 0x0b),
+    hasTail: hasKeyItem(view, 0x0c),
+    hasCube: hasKeyItem(view, 0x0d),
+    hasBottle: hasKeyItem(view, 0x0e),
+    hasOxyale: hasKeyItem(view, 0x0f),
+    hasCanoe: hasKeyItem(view, 0x10),
+    hasEarthOrb: hasKeyItem(view, 0x14),
+    hasFireOrb: hasKeyItem(view, 0x11),
+    hasWaterOrb: hasKeyItem(view, 0x12),
+    hasAirOrb: hasKeyItem(view, 0x13),
+    _note: VERIFIED_KEY_ITEMS_NOTE,
   };
 }
 
-const TODO_BATTLE_NOTE =
-  "Battle-state RAM offsets are TODO/INFERRED. inBattle is currently derived from the placeholder ADDR_BATTLE_FLAG and may be wrong; enemy roster and active party index are not yet read.";
+const VERIFIED_BATTLE_NOTE =
+  "Battle-state offsets are VERIFIED against FF1Disassembly variables.inc: btl_result ($6B86), btl_enemycount ($6C93), btl_enemystats ($6BD3 x $14), btlcmd_curchar ($6B7A), btlcurs ($6AAA/$6AAB). Enemy names come from the NES bestiary table.";
 
-const TODO_MENU_NOTE =
-  "Menu-state RAM offsets are TODO/INFERRED. The menu context is currently a heuristic (battle > standard-map shops/inn > field) and not read from live menu RAM.";
+const VERIFIED_MENU_NOTE =
+  "Menu/shop offsets are VERIFIED against FF1Disassembly variables.inc: entering_shop ($50), shop_id ($51), shop_type ($66), cursor ($62), shopcurs ($64/$65), talkobj ($67), descboxopen ($7F).";
 
 const TODO_LOCATION_NOTE =
-  "Available locations are a static lookup keyed by map ID. They are not validated against live collision or quest state.";
+  "Available locations are a static lookup keyed by map ID. Reachability indicators are preliminary: same-map/exits are reliable, but overworld barriers (water/mountains/quest state) are not modeled yet.";
+
+function enemySlotPosition(slot: number): { row: number; col: number } {
+  // Nine small-enemy slots are arranged in three rows of three.
+  return { row: Math.floor(slot / 3), col: slot % 3 };
+}
+
+function partySlotPosition(index: number): { row: number; col: number } {
+  // Party is shown in two rows of two (front row = 0,1; back row = 2,3).
+  return { row: index < 2 ? 0 : 1, col: index % 2 };
+}
 
 function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
   const enemies: BattleEnemy[] = [];
   for (let i = 0; i < count; i++) {
+    const base = ADDR_BATTLE_ENEMIES + i * BATTLE_ENEMY_STRIDE;
+    const id = view.u8(base + BATTLE_ENEMY_ID_OFFSET);
+    const hp = view.u16(base + BATTLE_ENEMY_HP_OFFSET);
     enemies.push({
       slot: i,
-      id: undefined,
-      name: `enemy_${i + 1}`,
-      hp: undefined,
+      id,
+      name: getEnemyNameById(id),
+      hp,
       maxHp: undefined,
+      position: enemySlotPosition(i),
     });
   }
   return enemies;
@@ -572,6 +608,7 @@ function readBattleParty(party: PartyCharacter[]): BattlePartyMember[] {
       ? true
       : undefined,
     pendingAction: undefined,
+    position: partySlotPosition(c.index),
   }));
 }
 
@@ -580,22 +617,22 @@ function readBattleParty(party: PartyCharacter[]): BattlePartyMember[] {
  *
  * @param view - A MemoryView backed by the full NES CPU address space.
  * @param party - Current party state, used to populate the battle party view.
- * @returns Battle detection stub with the full expected shape. Offsets are TODO.
+ * @returns Battle state with live enemy roster and cursor positions.
  */
 export function readBattleState(view: MemoryView, party: PartyCharacter[]): BattleState {
-  const rawFlag = view.u8(ADDR_BATTLE_FLAG);
-  const enemyCountRaw = view.u8(ADDR_BATTLE_ENEMY_COUNT);
+  const enemyCount = view.u8(ADDR_BATTLE_ENEMY_COUNT);
   const activeIndex = view.u8(ADDR_BATTLE_ACTIVE_INDEX);
-  const inBattle = rawFlag !== 0;
-  const enemyCount = inBattle ? (enemyCountRaw > 0 ? enemyCountRaw : undefined) : 0;
+  const inBattle = view.u8(ADDR_BATTLE_RESULT) === 0 && enemyCount > 0;
 
   return {
     inBattle,
-    enemyCount,
-    enemies: inBattle ? readBattleEnemies(view, enemyCount ?? 0) : [],
+    enemyCount: inBattle ? enemyCount : 0,
+    enemies: inBattle ? readBattleEnemies(view, enemyCount) : [],
     party: readBattleParty(party),
     activePartyIndex: inBattle ? (activeIndex < PARTY_SIZE ? activeIndex : undefined) : undefined,
-    note: TODO_BATTLE_NOTE,
+    cursorX: inBattle ? view.u8(ADDR_BATTLE_CURSOR_X) : undefined,
+    cursorY: inBattle ? view.u8(ADDR_BATTLE_CURSOR_Y) : undefined,
+    note: VERIFIED_BATTLE_NOTE,
   };
 }
 
@@ -608,13 +645,25 @@ function classifyStandardMap(mapId: number): "town" | "castle" | "dungeon" | "un
   return "unknown";
 }
 
-function inferMenuContext(world: WorldState, battle: BattleState): MenuContext {
-  if (battle.inBattle) return "battle";
-  if (!world.isStandardMap) return "field";
-  // Without a real menu-open flag we cannot tell whether the party is standing
-  // in a shop, at the inn counter, or just walking around. Fall back to the
-  // map class so town/castle/dungeon are at least distinguishable.
-  return classifyStandardMap(world.mapId);
+const SHOP_TYPE_NAMES: Readonly<Record<number, string>> = {
+  0: "weapon",
+  1: "armor",
+  2: "white magic",
+  3: "black magic",
+  4: "clinic",
+  5: "inn",
+  6: "item",
+  7: "caravan",
+};
+
+function shopTypeName(shopType: number): string | undefined {
+  return SHOP_TYPE_NAMES[shopType];
+}
+
+function shopMenuContext(shopType: number): MenuContext {
+  if (shopType === 5) return "inn";
+  if (shopType === 4) return "clinic";
+  return "shop";
 }
 
 /**
@@ -623,20 +672,67 @@ function inferMenuContext(world: WorldState, battle: BattleState): MenuContext {
  * @param view - A MemoryView backed by the full NES CPU address space.
  * @param world - Current world state.
  * @param battle - Current battle state.
- * @returns Mode/menu context stub with a note about inferred offsets.
+ * @returns Mode/menu context, including shop/inn/clinic detection.
  */
 export function readGameContext(view: MemoryView, world: WorldState, battle: BattleState): GameContext {
-  const menuOpen = view.u8(ADDR_MENU_OPEN) !== 0;
-  const cursorX = view.u8(ADDR_MENU_CURSOR_X);
-  const cursorY = view.u8(ADDR_MENU_CURSOR_Y);
-  const menu = inferMenuContext(world, battle);
-  const mode = battle.inBattle ? "battle" : menuOpen ? "menu" : "field";
-  void cursorX;
-  void cursorY;
+  const enteringShop = view.u8(ADDR_ENTERING_SHOP) !== 0;
+  const shopTypeRaw = view.u8(ADDR_SHOP_TYPE);
+  const shopId = view.u8(ADDR_SHOP_ID);
+
+  if (battle.inBattle) {
+    return { mode: "battle", menu: "battle", note: VERIFIED_BATTLE_NOTE };
+  }
+
+  // entering_shop ($50) is set while the party is in a shop/inn/clinic/caravan.
+  // It should clear on exit, but if it retains a nonzero value on the field we
+  // avoid misreporting shop mode by requiring a standard-map context.
+  if (enteringShop && world.isStandardMap) {
+    const menu = shopMenuContext(shopTypeRaw);
+    return {
+      mode: "menu",
+      menu,
+      shopType: shopTypeName(shopTypeRaw),
+      shopId,
+      note: VERIFIED_MENU_NOTE,
+    };
+  }
+
+  if (view.u8(ADDR_DIALOG_OPEN) !== 0) {
+    return { mode: "field", menu: "dialog", note: VERIFIED_MENU_NOTE };
+  }
+
+  if (!world.isStandardMap) {
+    return { mode: "field", menu: "field", note: VERIFIED_MENU_NOTE };
+  }
+
   return {
-    mode,
-    menu,
-    note: TODO_MENU_NOTE,
+    mode: "field",
+    menu: classifyStandardMap(world.mapId),
+    note: VERIFIED_MENU_NOTE,
+  };
+}
+
+/**
+ * Read the current menu/shop/dialog state.
+ *
+ * @param view - A MemoryView backed by the full NES CPU address space.
+ * @param context - Current game context.
+ * @returns Menu cursor, shop state, and dialog state.
+ */
+export function readMenuState(view: MemoryView, context: GameContext): MenuState {
+  const enteringShop = view.u8(ADDR_ENTERING_SHOP) !== 0;
+  const shopTypeRaw = view.u8(ADDR_SHOP_TYPE);
+  return {
+    inMenu: context.mode === "menu" || view.u8(ADDR_DIALOG_OPEN) !== 0,
+    cursor: view.u8(ADDR_MENU_CURSOR),
+    enteringShop,
+    shopId: enteringShop ? view.u8(ADDR_SHOP_ID) : undefined,
+    shopType: enteringShop ? shopTypeName(shopTypeRaw) : undefined,
+    shopCursorX: enteringShop ? view.u8(ADDR_SHOP_CURSOR_X) : undefined,
+    shopCursorY: enteringShop ? view.u8(ADDR_SHOP_CURSOR_Y) : undefined,
+    talkObject: view.u8(ADDR_TALK_OBJECT),
+    dialogOpen: view.u8(ADDR_DIALOG_OPEN) !== 0,
+    note: VERIFIED_MENU_NOTE,
   };
 }
 
@@ -662,6 +758,19 @@ const KNOWN_LOCATIONS: Readonly<Record<number, KnownLocation[]>> = {
   ],
 };
 
+function reachability(loc: KnownLocation, world: WorldState): Reachability {
+  if (world.isStandardMap) {
+    if (loc.mapId === world.mapId) return "same-map";
+    if (loc.type === "point" && loc.id.toLowerCase().includes("exit")) return "reachable";
+    return "unknown";
+  }
+  // Overworld: without a walkability/collision model we can only make broad
+  // statements.  Airship makes everything reachable; otherwise flag unknown so
+  // the UI does not lie about water/mountain barriers.
+  if (world.currentVehicle === "Airship") return "reachable";
+  return "unknown";
+}
+
 /**
  * Return the list of locations that can be targeted by `goto` for the current
  * map. This is a static lookup keyed by standard-map ID; the overworld returns
@@ -686,17 +795,19 @@ export function getAvailableLocations(world: WorldState): KnownLocation[] {
       { id: "elfheim", name: "Elfheim", type: "town" },
     );
   }
-  list.forEach((loc) => {
-    loc.mapName = world.mapName ?? undefined;
-  });
-  return list.map((loc) => ({ ...loc, note: TODO_LOCATION_NOTE }));
+  return list.map((loc) => ({
+    ...loc,
+    mapName: world.mapName ?? undefined,
+    reachable: reachability(loc, world),
+    note: TODO_LOCATION_NOTE,
+  }));
 }
 
 /**
  * Read the full FF1 game state from CPU RAM.
  *
  * @param view - A MemoryView backed by the full NES CPU address space.
- * @returns Complete game snapshot including party, gold, inventory, world, flags, battle state, context, and locations.
+ * @returns Complete game snapshot including party, gold, inventory, world, flags, battle, context, menu, and locations.
  */
 export function readFF1State(view: MemoryView): FF1GameState {
   const party = readParty(view);
@@ -711,6 +822,7 @@ export function readFF1State(view: MemoryView): FF1GameState {
     flags: readGameFlags(view),
     battle,
     context,
+    menu: readMenuState(view, context),
     availableLocations: getAvailableLocations(world),
   };
 }

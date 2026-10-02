@@ -80,19 +80,6 @@ export interface InventoryItem {
   _note?: string;
 }
 
-export interface MapObject {
-  index: number;
-  id: number;
-  flags: number;
-  physicalX: number;
-  physicalY: number;
-  graphicX: number;
-  graphicY: number;
-  facing: number;
-  pl: number;
-  rawBytes: Uint8Array;
-}
-
 export interface WorldState {
   mapId: number;
   mapName: string | undefined;
@@ -136,6 +123,7 @@ export interface GameFlags {
   hasCube: boolean | undefined;
   hasBottle: boolean | undefined;
   hasOxyale: boolean | undefined;
+  hasCanoe: boolean | undefined;
   hasEarthOrb: boolean | undefined;
   hasFireOrb: boolean | undefined;
   hasWaterOrb: boolean | undefined;
@@ -148,7 +136,9 @@ export interface BattleEnemy {
   id: number | undefined;
   name: string | undefined;
   hp: number | undefined;
+  /** Max HP is not yet read from a verified offset; undefined until verified. */
   maxHp: number | undefined;
+  position: { row: number; col: number };
 }
 
 export interface BattlePartyMember {
@@ -156,6 +146,7 @@ export interface BattlePartyMember {
   name: string;
   canAct: boolean | undefined;
   pendingAction: Record<string, unknown> | undefined;
+  position: { row: number; col: number };
 }
 
 export interface BattleState {
@@ -164,12 +155,14 @@ export interface BattleState {
   enemies: BattleEnemy[];
   party: BattlePartyMember[];
   activePartyIndex: number | undefined;
+  cursorX: number | undefined;
+  cursorY: number | undefined;
   note: string;
 }
 
 export type MenuContext =
   | "field"
-  | "main_menu"
+  | "main_menu" // reserved for future main-menu-open detection; currently not produced by the reader
   | "shop"
   | "inn"
   | "clinic"
@@ -180,11 +173,28 @@ export type MenuContext =
   | "dungeon"
   | "unknown";
 
+export interface MenuState {
+  inMenu: boolean;
+  cursor: number | undefined;
+  enteringShop: boolean;
+  shopId: number | undefined;
+  shopType: string | undefined;
+  shopCursorX: number | undefined;
+  shopCursorY: number | undefined;
+  talkObject: number | undefined;
+  dialogOpen: boolean;
+  note: string;
+}
+
 export interface GameContext {
   mode: "field" | "battle" | "menu";
   menu: MenuContext;
+  shopType?: string;
+  shopId?: number;
   note: string;
 }
+
+export type Reachability = "same-map" | "reachable" | "unknown";
 
 export interface KnownLocation {
   id: string;
@@ -193,7 +203,22 @@ export interface KnownLocation {
   mapName?: string;
   position?: { x: number; y: number };
   type: "town" | "shop" | "inn" | "clinic" | "npc" | "dungeon" | "castle" | "point";
+  reachable?: Reachability;
   note?: string;
+}
+
+export interface MapObject {
+  index: number;
+  id: number;
+  rawId: number;
+  flags: number;
+  physicalX: number;
+  physicalY: number;
+  graphicX: number;
+  graphicY: number;
+  facing: number;
+  pl: number;
+  rawBytes: Uint8Array;
 }
 
 export interface FF1GameState {
@@ -204,5 +229,6 @@ export interface FF1GameState {
   flags: GameFlags;
   battle: BattleState;
   context: GameContext;
+  menu: MenuState;
   availableLocations: KnownLocation[];
 }

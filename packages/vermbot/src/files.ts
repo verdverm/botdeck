@@ -922,11 +922,21 @@ export type SnippetStep =
 
 const SNIPPET_FILE_RE = /^[\w.-]+\.snippet\.json$/;
 
+function isButtonStep(value: unknown): value is ButtonStep {
+  if (!isPlainObject(value)) return false;
+  if (!Number.isInteger(value.button)) return false;
+  if (value.holdFrames !== undefined && typeof value.holdFrames !== "number") return false;
+  if (value.gapFrames !== undefined && typeof value.gapFrames !== "number") return false;
+  return true;
+}
+
 function isSnippetStep(value: unknown): value is SnippetStep {
   if (!isPlainObject(value)) return false;
   const kind = value.kind;
   if (kind === "wait") return typeof value.frames === "number";
-  if (kind === "macro") return Array.isArray(value.buttonSteps);
+  if (kind === "macro") {
+    return Array.isArray(value.buttonSteps) && value.buttonSteps.every(isButtonStep);
+  }
   if (kind === "command" || kind === undefined) {
     return isGameCommand(value.command);
   }

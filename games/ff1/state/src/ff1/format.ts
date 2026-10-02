@@ -1,11 +1,11 @@
-import type { FF1GameState, KnownLocation, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
+import type { FF1GameState, GameContext, KnownLocation, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
 
-function mpSummary(charges: SpellChargeLevel[] | undefined): string {
+export function mpSummary(charges: SpellChargeLevel[] | undefined): string {
   if (!charges || charges.length === 0) return "-";
   return charges.map((l) => `${l.current ?? 0}/${l.max ?? 0}`).join(", ");
 }
 
-function formatPosition(world: WorldState | undefined): string {
+export function formatPosition(world: WorldState | undefined): string {
   if (!world) return "Unknown";
   if (world.isOverworld) {
     return `Overworld (${world.overworldX}, ${world.overworldY})`;
@@ -25,16 +25,25 @@ function formatInventory(state: FF1GameState): string {
 
 function formatLocations(locations: KnownLocation[] | undefined): string {
   if (!locations || locations.length === 0) return "None";
-  return locations.map((loc) => `- ${loc.name} (${loc.id})`).join("\n");
+  return locations
+    .map((loc) => {
+      const badge = loc.reachable ? `[${loc.reachable}] ` : "";
+      return `- ${badge}${loc.name} (${loc.id})`;
+    })
+    .join("\n");
 }
 
 function formatBattle(state: FF1GameState): string {
   const battle = state.battle;
   if (!battle?.inBattle) return "Not in battle.";
   const enemies = battle.enemies.length > 0
-    ? battle.enemies.map((e) => `- ${e.name}`).join("\n")
+    ? battle.enemies
+        .map((e) => `- ${e.name ?? `Enemy ${e.slot + 1}`} (slot ${e.slot}, HP ${e.hp ?? "?"})`)
+        .join("\n")
     : "- Enemy roster unread (offsets TODO)";
-  const party = battle.party.map((m) => `- ${m.name}: ${m.canAct ? "can act" : "cannot act"}`).join("\n");
+  const party = battle.party
+    .map((m) => `- ${m.name}: ${m.canAct ? "can act" : "cannot act"} (row ${m.position.row})`)
+    .join("\n");
   return [
     `Active actor: ${battle.activePartyIndex !== undefined ? state.party[battle.activePartyIndex]?.name ?? "?" : "unknown"}`,
     "Enemies:",
@@ -42,6 +51,21 @@ function formatBattle(state: FF1GameState): string {
     "Party:",
     party,
   ].join("\n");
+}
+
+export function formatContext(context: GameContext | undefined): string {
+  const ctx = context ?? { mode: "unknown", menu: "unknown" };
+  if (ctx.mode === "battle" && ctx.menu !== "battle") {
+    return `battle / ${ctx.menu}`;
+  }
+  if (ctx.mode === "menu") {
+    const extra = ctx.shopType ? ` (${ctx.shopType}${ctx.shopId !== undefined ? ` #${ctx.shopId}` : ""})` : "";
+    return `${ctx.menu}${extra}`;
+  }
+  if (ctx.mode === "field" && ctx.menu !== "field" && ctx.menu !== "unknown") {
+    return ctx.menu;
+  }
+  return ctx.mode;
 }
 
 function formatCharacter(c: PartyCharacter): string {
@@ -78,8 +102,6 @@ export function formatFF1GameInfo(state: FF1GameState | undefined): string {
     ? ` (riding ${world.currentVehicle})`
     : "";
   const gold = typeof state.gold === "number" ? state.gold.toLocaleString() : "?";
-  const context = state.context ?? { mode: "unknown", menu: "unknown" };
-
   return [
     "## Party",
     party,
@@ -88,7 +110,7 @@ export function formatFF1GameInfo(state: FF1GameState | undefined): string {
     `- Gold: ${gold}`,
     `- Position: ${formatPosition(world)}`,
     `- Vehicles: ${vehicles}${currentVehicle}`,
-    `- Context: ${context.mode} / menu: ${context.menu}`,
+    `- Context: ${formatContext(state.context)}`,
     "",
     "## Battle",
     formatBattle(state),

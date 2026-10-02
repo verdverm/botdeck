@@ -24,17 +24,18 @@ The command set changes based on the current **context** reported in the game st
 
 ## Menu commands (only advertised when in a menu)
 
-- `buy({ "item": "string", "quantity": number })` - Buy an item from the current shop. First pass: the cursor must already be on the desired item.
+- `buy({ "item": "string", "quantity": number })` - Buy an item from the current shop. The state includes the shop type (weapon/armor/magic/item/caravan) and cursor positions.
 - `sell({ "item": "string" })` - Sell an item to the current shop.
 - `stay` - Confirm a stay at the inn to restore the party.
+- `heal` - Confirm healing at the clinic (revive/cure poison/stone).
 - `use_item({ "item": "string", "target": "string" })` - Use a consumable item on the named target. Only advertised when the party has a usable consumable.
 
 ## Battle commands (only advertised while in battle)
 
 In battle, each command names an `actor` (the party member taking the action) and, when needed, a `target`.
 
-- `fight({ "actor": "string", "target": "enemy_1 | enemy_2 | ..." })` - Attack an enemy.
-- `magic({ "actor": "string", "spell": "string", "target": "enemy_1 | enemy_2 | ... | ally_name" })` - Cast a learned spell.
+- `fight({ "actor": "string", "target": "string" })` - Attack an enemy. Use the enemy name or slot label from the battle state.
+- `magic({ "actor": "string", "spell": "string", "target": "string" })` - Cast a learned spell if the actor has charges.
 - `use_item({ "actor": "string", "item": "string", "target": "string" })` - Drink/use a consumable item in battle (DRINK menu entry).
 - `equip({ "actor": "string" })` - Open the EQUIP menu for the actor.
 - `run({ "actor": "string" })` - Attempt to flee.

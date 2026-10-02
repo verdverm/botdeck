@@ -39,7 +39,7 @@ export interface AgentMode {
 export interface TurnRequest {
   gameId: string;
   playId?: string;
-  /** Active agent mode (field/battle/shop/inn); drives prompt snippet selection. */
+  /** Active agent mode (field/battle/shop/inn/clinic); drives prompt snippet selection. */
   mode?: string;
   state: Record<string, unknown>;
   screenshot?: string;

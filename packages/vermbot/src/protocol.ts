@@ -29,7 +29,7 @@ export interface TurnRequest {
   gameId: string;
   /** Optional play id (game/id) used to resolve prompt config and snippets. */
   playId?: string;
-  /** Active agent mode (field/battle/shop/inn); drives prompt snippet selection. */
+  /** Active agent mode (field/battle/shop/inn/clinic); drives prompt snippet selection. */
   mode?: string;
   /** Structured game state prepared by the plugin. */
   state: Record<string, unknown>;

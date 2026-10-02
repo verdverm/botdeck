@@ -396,7 +396,14 @@ async function handlePlays(
     if (req.method === "PUT") {
       try {
         const body = await readBody(req);
-        const snippet = writePlaySnippet(game, id, snippetId, JSON.parse(body));
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(body);
+        } catch {
+          json(res, 400, { error: "snippet body is not valid JSON" });
+          return true;
+        }
+        const snippet = writePlaySnippet(game, id, snippetId, parsed);
         json(res, 200, snippet);
       } catch (err) {
         if (err instanceof ValidationError) json(res, 400, { error: String(err) });

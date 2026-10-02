@@ -1,7 +1,8 @@
 import type { CollectedState } from "@/emulator/collectState";
 import type { UseBotLoopResult } from "@/hooks/useBotLoop";
+import type { GameCommand, PlaySnippet } from "@/types";
 
-export type Tab = "overview" | "party" | "location" | "battle" | "agent" | "snippets" | "markdown";
+export type Tab = "overview" | "party" | "location" | "battle" | "menu" | "agent" | "snippets" | "markdown";
 export type PartySubTab = "main" | number;
 
 export interface GameInfoPanelProps {

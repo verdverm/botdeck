@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { PendingDecision, TurnLogEntry } from "@/hooks/useBotLoop";
 import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse } from "@/types";
+import { parsePlayId, snippetUrl } from "@/play";
 import { SectionTitle } from "./shared";
 
 interface AgentTabProps {
@@ -153,8 +154,8 @@ function SnippetDropdown({
       return;
     }
     setLoading(true);
-    const [game, id] = playId.split("/");
-    fetch(`/api/plays/${encodeURIComponent(game!)}/${encodeURIComponent(id!)}/snippets`)
+    const { game, id } = parsePlayId(playId);
+    fetch(`/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/snippets`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`list snippets failed: ${r.status}`);
         return (await r.json()) as { id: string; name: string }[];
@@ -170,8 +171,7 @@ function SnippetDropdown({
 
   const selectSnippet = (id: string) => {
     setSelected(id);
-    const [game, play] = playId!.split("/");
-    fetch(`/api/plays/${encodeURIComponent(game!)}/${encodeURIComponent(play!)}/snippets/${encodeURIComponent(id)}`)
+    fetch(snippetUrl(playId!, id))
       .then(async (r) => {
         if (!r.ok) throw new Error(`read snippet failed: ${r.status}`);
         return (await r.json()) as PlaySnippet;

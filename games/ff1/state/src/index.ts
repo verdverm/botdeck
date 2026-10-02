@@ -72,6 +72,14 @@ export {
   decodeName,
 } from "./data/text.js";
 
+export { ENEMIES, ENEMIES_BY_ID, getEnemyById, getEnemyNameById } from "./data/enemies.js";
+
+export type { EnemyInfo } from "./data/enemies.js";
+
+export { NPCS_BY_ID, getNpcById, getNpcNameById } from "./data/npcs.js";
+
+export type { NpcInfo } from "./data/npcs.js";
+
 export * from "./data/constants.js";
 
 export type {

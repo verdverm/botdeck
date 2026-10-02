@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { JsonEditor, githubDarkTheme } from "json-edit-react";
-import { deleteSnippet, parsePlayId, saveSnippet, snippetsUrl } from "@/play";
+import { deleteSnippet, parsePlayId, saveSnippet, snippetUrl, snippetsUrl } from "@/play";
 import type { PlaySnippet } from "@/types";
 import { SectionTitle } from "./shared";
 
@@ -14,7 +14,7 @@ type EditableSnippet = Omit<PlaySnippet, "id" | "game" | "play">;
 interface SnippetsTabProps {
   playId: string;
   disabled?: boolean;
-  onRun: (snippet: PlaySnippet) => void;
+  onRun: (snippet: PlaySnippet) => Promise<void> | void;
 }
 
 const NEW_KEY = "__new__";
@@ -48,11 +48,32 @@ function defaultSnippet(game: string, play: string, id: string): PlaySnippet {
   };
 }
 
+function stepCount(snippet: PlaySnippet | undefined): number {
+  return snippet?.steps?.length ?? 0;
+}
+
+function SummaryView({ snippet }: { snippet: PlaySnippet }) {
+  return (
+    <div className="space-y-1 text-neutral-300">
+      {snippet.description && <p className="text-xs">{snippet.description}</p>}
+      <p className="text-xs text-neutral-500">
+        {stepCount(snippet)} step{stepCount(snippet) === 1 ? "" : "s"}
+        {snippet.startState ? ` · start: ${snippet.startState}` : ""}
+        {snippet.expectedEndState ? ` · end: ${snippet.expectedEndState}` : ""}
+      </p>
+      {snippet.tags && snippet.tags.length > 0 && (
+        <p className="text-xs text-neutral-500">Tags: {snippet.tags.join(", ")}</p>
+      )}
+    </div>
+  );
+}
+
 export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
   const [snippets, setSnippets] = useState<SnippetDescriptor[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, PlaySnippet>>({});
   const [drafts, setDrafts] = useState<Record<string, PlaySnippet>>({});
+  const [editing, setEditing] = useState<Set<string>>(new Set());
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | undefined>();
@@ -85,7 +106,7 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
 
   const loadDetail = (snippetId: string) => {
     if (details[snippetId]) return;
-    fetch(`/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(play)}/snippets/${encodeURIComponent(snippetId)}`)
+    fetch(snippetUrl(playId, snippetId))
       .then(async (r) => {
         if (!r.ok) throw new Error(`read snippet failed: ${r.status}`);
         return (await r.json()) as PlaySnippet;
@@ -119,6 +140,23 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
       const next = new Set(prev);
       next.delete(snippetId);
       return next;
+    });
+  };
+
+  const startEdit = (snippetId: string) => {
+    setEditing((prev) => new Set(prev).add(snippetId));
+  };
+
+  const cancelEdit = (snippetId: string) => {
+    setEditing((prev) => {
+      const next = new Set(prev);
+      next.delete(snippetId);
+      return next;
+    });
+    setDrafts((prev) => {
+      const saved = details[snippetId];
+      if (!saved) return prev;
+      return { ...prev, [snippetId]: saved };
     });
   };
 
@@ -165,6 +203,12 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
         if (snippetId === NEW_KEY) delete next[NEW_KEY];
         return next;
       });
+      setEditing((prev) => {
+        const next = new Set(prev);
+        next.delete(snippetId);
+        next.delete(targetId);
+        return next;
+      });
       setSnippets((prev) => {
         const existing = prev.find((s) => s.id === targetId);
         let next;
@@ -205,9 +249,26 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
         delete next[snippetId];
         return next;
       });
+      setEditing((prev) => {
+        const next = new Set(prev);
+        next.delete(snippetId);
+        return next;
+      });
       close(snippetId);
     } catch (e) {
       setErrors((prev) => ({ ...prev, [snippetId]: String(e) }));
+    }
+  };
+
+  const handleRun = async (snippetId: string) => {
+    const draft = drafts[snippetId] ?? details[snippetId];
+    if (!draft) return;
+    setErrors((prev) => ({ ...prev, [snippetId]: undefined }));
+    try {
+      await onRun(draft);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setErrors((prev) => ({ ...prev, [snippetId]: msg }));
     }
   };
 
@@ -216,6 +277,7 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
       ...prev,
       [NEW_KEY]: defaultSnippet(game, play, ""),
     }));
+    setEditing((prev) => new Set(prev).add(NEW_KEY));
     setOpen((prev) => {
       const next = new Set(prev);
       next.add(NEW_KEY);
@@ -242,8 +304,9 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
         </button>
       </div>
       <p className="text-xs text-neutral-400">
-        Reproducible button sequences that start from a saved snapshot. Expand snippets to edit
-        them inline with the JSON editor, then save.
+        Reproducible button sequences that start from a saved snapshot. Expand a snippet to view
+        its summary; click Edit to change it with the JSON editor. Run always executes the current
+        content.
       </p>
 
       {listError && <p className="text-xs text-rose-400">{listError}</p>}
@@ -254,66 +317,88 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
         <p className="text-xs text-neutral-500">No snippets found for this play.</p>
       ) : (
         <ul className="flex flex-col gap-2">
-          {snippets.map((s) => (
-            <li
-              key={s.id}
-              className="rounded border border-neutral-700 bg-neutral-800"
-            >
-              <button
-                onClick={() => toggle(s.id)}
-                className="flex w-full items-center justify-between px-2 py-1 text-left"
-              >
-                <span className="text-xs font-medium text-neutral-200">{s.name}</span>
-                <span className="text-xs text-neutral-500">{open.has(s.id) ? "▾" : "▸"}</span>
-              </button>
-              {open.has(s.id) && (
-                <div className="border-t border-neutral-700 p-2">
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs text-neutral-500">id: {s.id}</span>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => drafts[s.id] && onRun(drafts[s.id]!)}
-                        disabled={disabled || !drafts[s.id]}
-                        className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-                      >
-                        Run
-                      </button>
-                      <button
-                        onClick={() => handleSave(s.id)}
-                        disabled={disabled || saving[s.id]}
-                        className="rounded bg-blue-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
-                      >
-                        {saving[s.id] ? "Saving..." : "Save"}
-                      </button>
-                      <button
-                        onClick={() => handleDelete(s.id)}
-                        disabled={disabled}
-                        className="rounded bg-rose-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-rose-600 disabled:opacity-50"
-                      >
-                        Delete
-                      </button>
+          {snippets.map((s) => {
+            const isEditing = editing.has(s.id);
+            const draft = drafts[s.id];
+            return (
+              <li key={s.id} className="rounded border border-neutral-700 bg-neutral-800">
+                <button
+                  onClick={() => toggle(s.id)}
+                  className="flex w-full items-center justify-between px-2 py-1 text-left"
+                >
+                  <span className="text-xs font-medium text-neutral-200">{s.name}</span>
+                  <span className="text-xs text-neutral-500">{open.has(s.id) ? "▾" : "▸"}</span>
+                </button>
+                {open.has(s.id) && (
+                  <div className="border-t border-neutral-700 p-2">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-xs text-neutral-500">id: {s.id}</span>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleRun(s.id)}
+                          disabled={disabled || !draft}
+                          className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                        >
+                          Run
+                        </button>
+                        {isEditing ? (
+                          <button
+                            onClick={() => handleSave(s.id)}
+                            disabled={disabled || saving[s.id]}
+                            className="rounded bg-blue-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+                          >
+                            {saving[s.id] ? "Saving..." : "Save"}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => startEdit(s.id)}
+                            disabled={disabled}
+                            className="rounded bg-neutral-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-neutral-500 disabled:opacity-50"
+                          >
+                            Edit
+                          </button>
+                        )}
+                        {isEditing && (
+                          <button
+                            onClick={() => cancelEdit(s.id)}
+                            disabled={disabled}
+                            className="rounded bg-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-200 hover:bg-neutral-600 disabled:opacity-50"
+                          >
+                            Cancel
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDelete(s.id)}
+                          disabled={disabled}
+                          className="rounded bg-rose-700 px-2 py-0.5 text-xs font-medium text-white hover:bg-rose-600 disabled:opacity-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
+                    {errors[s.id] && <p className="mb-2 text-xs text-rose-400">{errors[s.id]}</p>}
+                    {!draft ? (
+                      <p className="text-xs text-neutral-500">Loading snippet...</p>
+                    ) : isEditing ? (
+                      <div className="rounded border border-neutral-800 bg-neutral-950">
+                        <JsonEditor
+                          data={editorData(s.id)!}
+                          setData={(d) => updateDraft(s.id, d as EditableSnippet)}
+                          collapse={2}
+                          rootName="snippet"
+                          theme={[githubDarkTheme, {}]}
+                          showCollectionCount="when-closed"
+                          maxWidth="100%"
+                        />
+                      </div>
+                    ) : (
+                      <SummaryView snippet={draft} />
+                    )}
                   </div>
-                  {errors[s.id] && <p className="mb-2 text-xs text-rose-400">{errors[s.id]}</p>}
-                  {editorData(s.id) ? (
-                    <div className="rounded border border-neutral-800 bg-neutral-950">
-                      <JsonEditor
-                        data={editorData(s.id)!}
-                        setData={(d) => updateDraft(s.id, d as EditableSnippet)}
-                        collapse={2}
-                        rootName="snippet"
-                        theme={[githubDarkTheme, {}]}
-                        showCollectionCount="when-closed"
-                        maxWidth="100%"
-                      />
-                    </div>
-                  ) : (
-                    <p className="text-xs text-neutral-500">Loading snippet...</p>
-                  )}
-                </div>
-              )}
-            </li>
-          ))}
+                )}
+              </li>
+            );
+          })}
           {open.has(NEW_KEY) && (
             <li className="rounded border border-emerald-500/30 bg-emerald-500/5">
               <button
@@ -349,6 +434,18 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
                   </div>
                 ) : null}
                 <div className="mt-2 flex items-center justify-end gap-2">
+                  <button
+                    onClick={() => handleRun(NEW_KEY)}
+                    disabled={
+                      disabled ||
+                      !drafts[NEW_KEY] ||
+                      !drafts[NEW_KEY].id ||
+                      !drafts[NEW_KEY].startState
+                    }
+                    className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+                  >
+                    Run
+                  </button>
                   <button
                     onClick={() => close(NEW_KEY)}
                     className="rounded bg-neutral-700 px-2 py-0.5 text-xs font-medium text-neutral-200 hover:bg-neutral-600"
