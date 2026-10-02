@@ -142,10 +142,63 @@ export interface GameFlags {
   _note: string;
 }
 
+export interface BattleEnemy {
+  slot: number;
+  id: number | undefined;
+  name: string | undefined;
+  hp: number | undefined;
+  maxHp: number | undefined;
+}
+
+export interface BattlePartyMember {
+  index: number;
+  name: string;
+  canAct: boolean | undefined;
+  pendingAction: Record<string, unknown> | undefined;
+}
+
+export interface BattleState {
+  inBattle: boolean;
+  enemyCount: number | undefined;
+  enemies: BattleEnemy[];
+  party: BattlePartyMember[];
+  activePartyIndex: number | undefined;
+  note: string;
+}
+
+export type MenuContext =
+  | "field"
+  | "main_menu"
+  | "shop"
+  | "inn"
+  | "clinic"
+  | "dialog"
+  | "battle"
+  | "unknown";
+
+export interface GameContext {
+  mode: "field" | "battle" | "menu";
+  menu: MenuContext;
+  note: string;
+}
+
+export interface KnownLocation {
+  id: string;
+  name: string;
+  mapId?: number;
+  mapName?: string;
+  position?: { x: number; y: number };
+  type: "town" | "shop" | "inn" | "clinic" | "npc" | "dungeon" | "point";
+  note?: string;
+}
+
 export interface FF1GameState {
   party: PartyCharacter[];
   gold: number;
   inventory: InventoryItem[];
   world: WorldState;
   flags: GameFlags;
+  battle: BattleState;
+  context: GameContext;
+  availableLocations: KnownLocation[];
 }

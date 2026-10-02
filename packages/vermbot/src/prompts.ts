@@ -98,13 +98,19 @@ function renderTemplate(template: string, ctx: RenderContext): string {
   });
 }
 
+function resolveModeSnippets(config: import("./files.ts").PromptConfig, mode?: string): string[] | undefined {
+  if (!mode) return undefined;
+  const found = config.modes?.find((m) => m.id === mode);
+  return found?.promptSnippets;
+}
+
 export function renderPrompt(req: TurnRequest): PromptParts {
   const parsed = parsePlayId(req.playId, req.gameId);
   const game = parsed?.game ?? req.gameId;
   const id = parsed?.id;
 
   const config = resolvePromptConfig(game, id);
-  const snippets = config.snippets ?? ["system", "commands", "state"];
+  const snippets = resolveModeSnippets(config, req.mode) ?? config.snippets ?? ["system", "commands", "state"];
   if (snippets.length === 0) {
     return { system: "", user: "" };
   }

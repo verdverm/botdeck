@@ -31,6 +31,10 @@ export class GenericGamePlugin implements GamePlugin {
     ];
   }
 
+  getMode(): string {
+    return "field";
+  }
+
   readState(): Record<string, unknown> {
     return {
       romName: this.emulator.getRomName(),

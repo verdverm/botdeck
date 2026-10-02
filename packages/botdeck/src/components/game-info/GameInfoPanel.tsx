@@ -5,6 +5,7 @@ import { LocationTab } from "./LocationTab";
 import { MarkdownTab } from "./MarkdownTab";
 import { OverviewTab } from "./OverviewTab";
 import { PartyTab } from "./PartyTab";
+import { SnippetsTab } from "./SnippetsTab";
 import { TabButton } from "./shared";
 import type { GameInfoPanelProps, Tab } from "./types";
 
@@ -87,7 +88,19 @@ function RefreshRateDropdown({
   );
 }
 
-export function GameInfoPanel({ data, saved, disabled, onRefresh, agent }: GameInfoPanelProps) {
+export function GameInfoPanel({
+  data,
+  saved,
+  disabled,
+  onRefresh,
+  agent,
+  playId,
+  onRunSnippet,
+  onManualCommand,
+  snippetPaused,
+  onPauseSnippet,
+  onStopSnippet,
+}: GameInfoPanelProps) {
   const [tab, setTab] = useState<Tab>("overview");
   const [rate, setRate] = useState<RefreshRate>(DEFAULT_REFRESH_RATE);
 
@@ -141,7 +154,7 @@ export function GameInfoPanel({ data, saved, disabled, onRefresh, agent }: GameI
       </div>
 
       <div className="flex flex-wrap gap-1 border-b border-neutral-800 pb-2">
-        {(["overview", "party", "location", "battle", "agent", "markdown"] as Tab[]).map(
+        {(["overview", "party", "location", "battle", "agent", "snippets", "markdown"] as Tab[]).map(
           (t) => (
             <TabButton key={t} active={tab === t} label={t} onClick={() => setTab(t)} />
           ),
@@ -152,7 +165,7 @@ export function GameInfoPanel({ data, saved, disabled, onRefresh, agent }: GameI
         {tab === "overview" && <OverviewTab data={data} />}
         {tab === "party" && <PartyTab ff1={data?.ff1} />}
         {tab === "location" && <LocationTab ff1={data?.ff1} />}
-        {tab === "battle" && <BattleTab />}
+        {tab === "battle" && <BattleTab ff1={data?.ff1} />}
         {tab === "agent" && (
           <AgentTab
             isThinking={agent?.isThinking}
@@ -163,10 +176,24 @@ export function GameInfoPanel({ data, saved, disabled, onRefresh, agent }: GameI
             messages={agent?.messages}
             autoRun={agent?.autoRun}
             onAutoRunChange={agent?.setAutoRun}
+            runMode={agent?.runMode}
+            onRunModeChange={agent?.setRunMode}
             onStep={agent?.step}
+            pendingDecision={agent?.pendingDecision}
+            onExecutePending={agent?.executePending}
+            onClearPending={agent?.clearPending}
+            playId={playId}
+            onRunSnippet={onRunSnippet}
+            snippetPaused={snippetPaused}
+            onPauseSnippet={onPauseSnippet}
+            onStopSnippet={onStopSnippet}
+            onManualCommand={onManualCommand}
             pendingMessage={agent?.pendingMessage}
             onPendingMessageChange={agent?.setPendingMessage}
           />
+        )}
+        {tab === "snippets" && playId && onRunSnippet && (
+          <SnippetsTab playId={playId} disabled={disabled} onRun={onRunSnippet} />
         )}
         {tab === "markdown" && <MarkdownTab />}
       </div>

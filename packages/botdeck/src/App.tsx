@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GameScreen } from "@/components/GameScreen";
 import { Gamepad } from "@/components/Gamepad";
 import { RomPicker } from "@/components/RomPicker";
@@ -8,8 +8,9 @@ import { useEmulator } from "@/hooks/useEmulator";
 import { useBotLoop } from "@/hooks/useBotLoop";
 import { GenericGamePlugin } from "@/games/generic";
 import { FF1GamePlugin } from "@/games/ff1";
-import { loadPlayConfig, readGameId, readPlayId } from "@/play";
+import { loadPlayConfig, readGameId, readPlayId, stateUrl } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
+import type { GameCommand, PlaySnippet, SnippetStep } from "@/types";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -91,6 +92,14 @@ export function App() {
     metadataPath?: string;
   } | null>(null);
 
+  const [snippetPaused, setSnippetPaused] = useState(false);
+  const snippetPausedRef = useRef(false);
+  const snippetAbortRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    snippetPausedRef.current = snippetPaused;
+  }, [snippetPaused]);
+
   const onSnapshot = useCallback(
     async (name?: string) => {
       const collected = collect();
@@ -135,6 +144,125 @@ export function App() {
       setLastSaved(null);
     },
     [loadStateFromFile],
+  );
+
+  const runSnippetStep = useCallback(
+    async (step: SnippetStep, signal: AbortSignal) => {
+      if (signal.aborted) return;
+      switch (step.kind) {
+        case "command": {
+          const macro = plugin.compile(step.command);
+          if (macro.length > 0) {
+            await emulator.runMacro(macro);
+          }
+          break;
+        }
+        case "macro": {
+          if (step.buttonSteps.length > 0) {
+            await emulator.runMacro(step.buttonSteps);
+          }
+          break;
+        }
+        case "wait": {
+          await new Promise((resolve) => {
+            const id = window.setTimeout(resolve, (step.frames / 60) * 1000);
+            const onAbort = () => {
+              signal.removeEventListener("abort", onAbort);
+              window.clearTimeout(id);
+              resolve(undefined);
+            };
+            signal.addEventListener("abort", onAbort);
+          });
+          break;
+        }
+      }
+    },
+    [emulator, plugin],
+  );
+
+  const onRunSnippet = useCallback(
+    async (snippet: PlaySnippet) => {
+      const controller = new AbortController();
+      snippetAbortRef.current = () => controller.abort();
+      setSnippetPaused(false);
+      try {
+        const filename = `${snippet.startState}.state.json`;
+        const res = await fetch(stateUrl(playId, filename));
+        if (!res.ok) {
+          throw new Error(`failed to load start state ${filename}: ${res.status}`);
+        }
+        const state = (await res.json()) as object;
+        const collected = await loadState(state);
+        setSnapshot(collected);
+        setLastSaved(null);
+
+        for (const step of snippet.steps) {
+          if (controller.signal.aborted) break;
+          if (snippetPausedRef.current) {
+            await new Promise<void>((resolve) => {
+              const check = () => {
+                if (!snippetPausedRef.current || controller.signal.aborted) {
+                  resolve();
+                  return;
+                }
+                window.setTimeout(check, 50);
+              };
+              check();
+            });
+          }
+          if (controller.signal.aborted) break;
+          await runSnippetStep(step, controller.signal);
+        }
+
+        const final = collect();
+        if (final) setSnapshot(final);
+      } catch (e) {
+        console.error("snippet failed:", e);
+      } finally {
+        snippetAbortRef.current = null;
+        setSnippetPaused(false);
+      }
+    },
+    [playId, loadState, collect, runSnippetStep],
+  );
+
+  const onPauseSnippet = useCallback(() => {
+    setSnippetPaused((v) => !v);
+  }, []);
+
+  const onStopSnippet = useCallback(() => {
+    snippetAbortRef.current?.();
+  }, []);
+
+  const onManualCommand = useCallback(
+    async (command: GameCommand) => {
+      await agent.runManualCommand(command);
+      const final = collect();
+      if (final) setSnapshot(final);
+    },
+    [agent, collect],
+  );
+
+  const handleButtonDown = useCallback(
+    (button: number) => {
+      // In step mode or snippet pause, route manual input through the macro runner.
+      if (agent.runMode === "step" || agent.pendingDecision || snippetPausedRef.current) {
+        void agent.runManualMacro([{ button, holdFrames: 4, gapFrames: 4 }]);
+        return;
+      }
+      buttonDown(button);
+    },
+    [agent, buttonDown],
+  );
+
+  const handleButtonUp = useCallback(
+    (button: number) => {
+      if (agent.runMode === "step" || agent.pendingDecision || snippetPausedRef.current) {
+        return;
+      }
+      buttonUp(button);
+    },
+    [agent, buttonUp],
   );
 
   return (
@@ -210,7 +338,7 @@ export function App() {
           />
 
           <div className="flex justify-center">
-            <Gamepad onDown={buttonDown} onUp={buttonUp} />
+            <Gamepad onDown={handleButtonDown} onUp={handleButtonUp} />
           </div>
         </div>
 
@@ -222,6 +350,12 @@ export function App() {
             disabled={!power || !hasRom}
             onRefresh={onRefreshState}
             agent={agent}
+            playId={playId}
+            onRunSnippet={onRunSnippet}
+            onManualCommand={onManualCommand}
+            snippetPaused={snippetPaused}
+            onPauseSnippet={onPauseSnippet}
+            onStopSnippet={onStopSnippet}
           />
         </div>
       </main>

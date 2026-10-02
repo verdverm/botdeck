@@ -233,6 +233,31 @@ export const ADDR_WORLD_FLAGS = 0x6200;
 export const WORLD_FLAGS_SIZE = 0x100;
 
 // ===========================================================================
+// Battle / menu state (INFERRED / TODO)
+// These offsets are taken from community documentation and need verification
+// against the disassembly or known-good save states. They are wired into the
+// reader so the UI and agent can consume battle/menu context as soon as the
+// real offsets are confirmed.
+// ===========================================================================
+
+/** TODO: battle flag / in-battle indicator. */
+export const ADDR_BATTLE_FLAG = 0x6a00;
+/** TODO: number of active enemies in the current encounter. */
+export const ADDR_BATTLE_ENEMY_COUNT = 0x6a01;
+/** TODO: start of enemy roster data. */
+export const ADDR_BATTLE_ENEMIES = 0x6a10;
+/** TODO: stride of one enemy record. */
+export const BATTLE_ENEMY_STRIDE = 0x10;
+/** TODO: index of the party member whose action is being selected. */
+export const ADDR_BATTLE_ACTIVE_INDEX = 0x6a80;
+/** TODO: cursor X position for menu navigation. */
+export const ADDR_MENU_CURSOR_X = 0x6b00;
+/** TODO: cursor Y position for menu navigation. */
+export const ADDR_MENU_CURSOR_Y = 0x6b01;
+/** TODO: open menu / dialog flag. */
+export const ADDR_MENU_OPEN = 0x6b02;
+
+// ===========================================================================
 // DEPRECATED / INCORRECT offsets kept out of the active reader.
 // These were the original assumptions from community docs and are left here
 // only so callers looking at older commits can see what changed.

@@ -86,6 +86,20 @@ function baseState(): FF1GameState {
       hasAirOrb: undefined,
       _note: "",
     },
+    battle: {
+      inBattle: false,
+      enemyCount: undefined,
+      enemies: [],
+      party: [],
+      activePartyIndex: undefined,
+      note: "",
+    },
+    context: {
+      mode: "field",
+      menu: "field",
+      note: "",
+    },
+    availableLocations: [],
   };
 }
 

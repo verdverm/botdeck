@@ -1,0 +1,18 @@
+{
+  "id": "coneria-inn-heal",
+  "name": "Coneria Inn Heal",
+  "description": "Talk to the Coneria innkeeper, confirm a stay, and wait through the sleep animation. Starts from the 'entered-inn' snapshot where the party is already inside the inn facing the clerk.",
+  "game": "ff1",
+  "play": "0000_dev",
+  "startState": "000036-post-battle-01-2-entered-inn",
+  "steps": [
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "command", "command": { "name": "move", "args": { "direction": "down" } } },
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "wait", "frames": 180 },
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "command", "command": { "name": "interact" } }
+  ],
+  "expectedEndState": "000039-post-battle-01-5-done-sleeping-at-inn",
+  "tags": ["coneria", "inn", "heal"]
+}

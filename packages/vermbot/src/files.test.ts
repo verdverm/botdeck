@@ -11,8 +11,11 @@ import {
   createPlay,
   deletePlay,
   diffPlayStates,
+  listPlaySnippets,
+  readPlaySnippet,
   PathEscapeError,
   FileNotFoundError,
+  ValidationError,
 } from "./files.ts";
 
 const TEST_GAME = "ff1";
@@ -262,6 +265,69 @@ describe("diffPlayStates", () => {
       expect(() =>
         diffPlayStates(TEST_GAME, id, "000001.state.json", "000002.state.json"),
       ).toThrow(FileNotFoundError);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+});
+
+describe("play snippets", () => {
+  it("lists and reads snippets from the play snippets directory", () => {
+    const id = tmpPlayId("snippets");
+    createPlay(TEST_GAME, id);
+    try {
+      const dir = playDir(TEST_GAME, id);
+      const snippetsDir = join(dir, "snippets");
+      expect(existsSync(snippetsDir)).toBe(true);
+      writeFileSync(
+        join(snippetsDir, "test.snippet.json"),
+        JSON.stringify({
+          id: "test",
+          name: "Test Snippet",
+          description: "A test snippet",
+          game: TEST_GAME,
+          play: id,
+          startState: "000001-start",
+          steps: [{ kind: "command", command: { name: "interact" } }],
+          tags: ["test"],
+        }),
+      );
+
+      const list = listPlaySnippets(TEST_GAME, id);
+      expect(list.length).toBe(1);
+      expect(list[0]!.id).toBe("test");
+      expect(list[0]!.name).toBe("Test Snippet");
+
+      const snippet = readPlaySnippet(TEST_GAME, id, "test");
+      expect(snippet.id).toBe("test");
+      expect(snippet.name).toBe("Test Snippet");
+      expect(snippet.steps.length).toBe(1);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("throws FileNotFoundError for missing snippets", () => {
+    const id = tmpPlayId("snippets_missing");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(() => readPlaySnippet(TEST_GAME, id, "missing")).toThrow(FileNotFoundError);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("rejects invalid snippet JSON", () => {
+    const id = tmpPlayId("snippets_invalid");
+    createPlay(TEST_GAME, id);
+    try {
+      const dir = playDir(TEST_GAME, id);
+      const snippetsDir = join(dir, "snippets");
+      writeFileSync(
+        join(snippetsDir, "bad.snippet.json"),
+        JSON.stringify({ name: "Bad", steps: "not-an-array" }),
+      );
+      expect(() => readPlaySnippet(TEST_GAME, id, "bad")).toThrow(ValidationError);
     } finally {
       deletePlay(TEST_GAME, id);
     }

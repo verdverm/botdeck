@@ -70,6 +70,8 @@ import {
   writePlayStep,
   assertStepRecord,
   diffPlayStates,
+  listPlaySnippets,
+  readPlaySnippet,
   slugify,
   formatTimestamp,
   FileNotFoundError,
@@ -350,6 +352,41 @@ async function handlePlays(
       } catch (err) {
         if (err instanceof ValidationError) json(res, 400, { error: String(err) });
         else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/snippets (GET)
+  if (segments.length === 5 && segments[4] === "snippets") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlaySnippets(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/snippets/:snippetId (GET)
+  if (segments.length === 6 && segments[4] === "snippets") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const snippetId = segments[5]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, readPlaySnippet(game, id, snippetId));
+      } catch (err) {
+        sendError(err);
       }
       return true;
     }

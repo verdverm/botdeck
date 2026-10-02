@@ -1,0 +1,19 @@
+{
+  "id": "coneria-weapon-shop",
+  "name": "Coneria Weapon Shop Purchase",
+  "description": "Talk to the Coneria weapon shop clerk, choose Buy, select the Rapier, and confirm. Starts from the weapon-shop snapshot where the party is already inside the shop.",
+  "game": "ff1",
+  "play": "0000_dev",
+  "startState": "000003-start-03-1-weapon-shop",
+  "steps": [
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "command", "command": { "name": "move", "args": { "direction": "down" } } },
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "command", "command": { "name": "move", "args": { "direction": "down" } } },
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "command", "command": { "name": "interact" } },
+    { "kind": "command", "command": { "name": "cancel" } },
+    { "kind": "command", "command": { "name": "cancel" } }
+  ],
+  "tags": ["coneria", "shop", "weapon", "buy"]
+}

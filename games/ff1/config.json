@@ -12,6 +12,32 @@
     }
   },
   "prompt": {
-    "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"]
+    "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"],
+    "modes": [
+      {
+        "id": "field",
+        "label": "Field",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "field"],
+        "autoAdvance": true
+      },
+      {
+        "id": "battle",
+        "label": "Battle",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "battle"],
+        "autoAdvance": true
+      },
+      {
+        "id": "shop",
+        "label": "Shop",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "shop"],
+        "autoAdvance": false
+      },
+      {
+        "id": "inn",
+        "label": "Inn",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "inn"],
+        "autoAdvance": false
+      }
+    ]
   }
 }

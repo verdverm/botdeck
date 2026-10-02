@@ -14,6 +14,9 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure",
     headless: process.env.PW_HEADLESS !== "false",
+    launchOptions: {
+      args: ["--no-first-run", "--no-default-browser-check"],
+    },
   },
   projects: [
     {

@@ -109,6 +109,14 @@ export function stateUrl(playId: string, filename: string): string {
   return `${playBase(playId)}/states/${encodeURIComponent(filename)}`;
 }
 
+export function snippetsUrl(playId: string): string {
+  return `${playBase(playId)}/snippets`;
+}
+
+export function snippetUrl(playId: string, snippetId: string): string {
+  return `${playBase(playId)}/snippets/${encodeURIComponent(snippetId)}`;
+}
+
 export async function updateStateMetadata(
   playId: string,
   filename: string,

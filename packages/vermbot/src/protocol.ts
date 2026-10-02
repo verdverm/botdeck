@@ -29,12 +29,16 @@ export interface TurnRequest {
   gameId: string;
   /** Optional play id (game/id) used to resolve prompt config and snippets. */
   playId?: string;
+  /** Active agent mode (field/battle/shop/inn); drives prompt snippet selection. */
+  mode?: string;
   /** Structured game state prepared by the plugin. */
   state: Record<string, unknown>;
   /** Optional PNG data URL of the current frame. */
   screenshot?: string;
   /** Commands the agent may choose this turn. */
   options: CommandSpec[];
+  /** In battle, the party member whose turn is being decided. */
+  actor?: string;
 }
 
 export interface TurnResponse {

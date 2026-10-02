@@ -57,6 +57,19 @@ function FF1Summary({ ff1 }: { ff1: NonNullable<CollectedState["ff1"]> }) {
         </div>
       </section>
 
+      <section className="grid grid-cols-2 gap-3">
+        <div>
+          <SectionTitle>Context</SectionTitle>
+          <p className="text-neutral-200">
+            {ff1.context ? `${ff1.context.mode} / ${ff1.context.menu}` : "Unknown"}
+          </p>
+        </div>
+        <div>
+          <SectionTitle>Battle</SectionTitle>
+          <p className="text-neutral-200">{ff1.battle?.inBattle ? "In battle" : "Not in battle"}</p>
+        </div>
+      </section>
+
       <section>
         <SectionTitle>Vehicles</SectionTitle>
         <p className="text-neutral-200">

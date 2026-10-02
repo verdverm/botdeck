@@ -118,6 +118,14 @@ export function listGames(): GameInfo[] {
 
 export interface PromptConfig {
   snippets?: string[];
+  modes?: AgentMode[];
+}
+
+export interface AgentMode {
+  id: string;
+  label: string;
+  promptSnippets: string[];
+  autoAdvance?: boolean;
 }
 
 export function readGameConfig(game: string): Record<string, unknown> {
@@ -143,13 +151,30 @@ export function slugify(text: string): string {
   );
 }
 
+function isAgentMode(value: unknown): value is AgentMode {
+  if (!isPlainObject(value)) return false;
+  if (typeof value.id !== "string" || value.id === "") return false;
+  if (typeof value.label !== "string") return false;
+  const snippets = value.promptSnippets;
+  if (!Array.isArray(snippets) || !snippets.every((s) => typeof s === "string")) return false;
+  return true;
+}
+
 function extractPromptConfig(config: Record<string, unknown> | undefined): PromptConfig | undefined {
   if (!config) return undefined;
   const prompt = config["prompt"];
   if (!isPlainObject(prompt)) return undefined;
   const snippets = prompt["snippets"];
-  if (!Array.isArray(snippets) || !snippets.every((s) => typeof s === "string")) return undefined;
-  return { snippets };
+  const modes = prompt["modes"];
+  const out: PromptConfig = {};
+  if (Array.isArray(snippets) && snippets.every((s) => typeof s === "string")) {
+    out.snippets = snippets;
+  }
+  if (Array.isArray(modes) && modes.every(isAgentMode)) {
+    out.modes = modes;
+  }
+  if (out.snippets || out.modes) return out;
+  return undefined;
 }
 
 export function resolvePromptConfig(game: string, id?: string): PromptConfig {
@@ -629,6 +654,7 @@ export function createPlay(
   mkdirSync(join(dir, "memory"), { recursive: true });
   mkdirSync(join(dir, "journal"), { recursive: true });
   mkdirSync(join(dir, "goals"), { recursive: true });
+  mkdirSync(join(dir, "snippets"), { recursive: true });
   const config = { id, game, ...(label ? { label } : {}) };
   writePlayConfig(game, id, config);
   return config;
@@ -876,6 +902,121 @@ export function savePlayState(
 }
 
 export type PlayStateSort = "newest" | "oldest" | "name (a-z)" | "name (z-a)";
+
+export interface PlaySnippet {
+  id: string;
+  name: string;
+  description: string;
+  game: string;
+  play: string;
+  startState: string;
+  steps: SnippetStep[];
+  expectedEndState?: string;
+  tags?: string[];
+}
+
+export type SnippetStep =
+  | { kind: "command"; command: GameCommand }
+  | { kind: "macro"; buttonSteps: ButtonStep[] }
+  | { kind: "wait"; frames: number };
+
+const SNIPPET_FILE_RE = /^[\w.-]+\.snippet\.json$/;
+
+function isSnippetStep(value: unknown): value is SnippetStep {
+  if (!isPlainObject(value)) return false;
+  const kind = value.kind;
+  if (kind === "wait") return typeof value.frames === "number";
+  if (kind === "macro") return Array.isArray(value.buttonSteps);
+  if (kind === "command" || kind === undefined) {
+    return isGameCommand(value.command);
+  }
+  return false;
+}
+
+function assertSnippet(body: unknown, id: string, game: string, play: string): PlaySnippet {
+  if (!isPlainObject(body)) {
+    throw new ValidationError("snippet must be a JSON object");
+  }
+  const { name, description, startState, steps, expectedEndState, tags } = body;
+  if (typeof name !== "string" || name === "") {
+    throw new ValidationError("snippet.name must be a non-empty string");
+  }
+  if (typeof description !== "string") {
+    throw new ValidationError("snippet.description must be a string");
+  }
+  if (typeof startState !== "string" || startState === "") {
+    throw new ValidationError("snippet.startState must be a non-empty string");
+  }
+  if (!Array.isArray(steps) || !steps.every(isSnippetStep)) {
+    throw new ValidationError("snippet.steps must be an array of valid snippet steps");
+  }
+  if (typeof expectedEndState !== "undefined" && typeof expectedEndState !== "string") {
+    throw new ValidationError("snippet.expectedEndState must be a string if provided");
+  }
+  if (typeof tags !== "undefined" && !(Array.isArray(tags) && tags.every((t) => typeof t === "string"))) {
+    throw new ValidationError("snippet.tags must be an array of strings if provided");
+  }
+  return {
+    id,
+    name,
+    description,
+    game,
+    play,
+    startState,
+    steps: steps as SnippetStep[],
+    expectedEndState,
+    tags,
+  };
+}
+
+export interface SnippetDescriptor {
+  id: string;
+  name: string;
+  path: string;
+  url: string;
+}
+
+export function listPlaySnippets(game: string, id: string): SnippetDescriptor[] {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = join(playDir(game, id), "snippets");
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && SNIPPET_FILE_RE.test(d.name))
+    .map((d) => {
+      const snippetId = d.name.replace(/\.snippet\.json$/, "");
+      const file = join(dir, d.name);
+      let name = snippetId;
+      try {
+        const parsed = JSON.parse(readFileSync(file, "utf8")) as unknown;
+        if (isPlainObject(parsed) && typeof parsed.name === "string") {
+          name = parsed.name;
+        }
+      } catch {
+        // ignore malformed snippet when listing
+      }
+      return {
+        id: snippetId,
+        name,
+        path: `plays/${game}/${id}/snippets/${d.name}`,
+        url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/snippets/${encodeURIComponent(snippetId)}`,
+      };
+    })
+    .sort((a, b) => a.id.localeCompare(b.id));
+}
+
+export function readPlaySnippet(game: string, id: string, snippetId: string): PlaySnippet {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  assertSegment("snippetId", snippetId);
+  if (!SNIPPET_FILE_RE.test(`${snippetId}.snippet.json`)) {
+    throw new PathEscapeError(snippetId);
+  }
+  const file = join(playDir(game, id), "snippets", `${snippetId}.snippet.json`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  const body = JSON.parse(readFileSync(file, "utf8")) as unknown;
+  return assertSnippet(body, snippetId, game, id);
+}
 
 function readMetadata(dir: string, base: string): PlayStateMetadata | undefined {
   const file = join(dir, `${base}.metadata.json`);

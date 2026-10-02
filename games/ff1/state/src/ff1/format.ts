@@ -1,4 +1,4 @@
-import type { FF1GameState, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
+import type { FF1GameState, KnownLocation, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
 
 function mpSummary(charges: SpellChargeLevel[] | undefined): string {
   if (!charges || charges.length === 0) return "-";
@@ -21,6 +21,27 @@ function formatInventory(state: FF1GameState): string {
     .map((item) => `${item.itemInfo?.name ?? `Item ${item.itemId}`} x${item.quantity}`);
   if (items.length === 0) return "None";
   return items.join(", ");
+}
+
+function formatLocations(locations: KnownLocation[] | undefined): string {
+  if (!locations || locations.length === 0) return "None";
+  return locations.map((loc) => `- ${loc.name} (${loc.id})`).join("\n");
+}
+
+function formatBattle(state: FF1GameState): string {
+  const battle = state.battle;
+  if (!battle?.inBattle) return "Not in battle.";
+  const enemies = battle.enemies.length > 0
+    ? battle.enemies.map((e) => `- ${e.name}`).join("\n")
+    : "- Enemy roster unread (offsets TODO)";
+  const party = battle.party.map((m) => `- ${m.name}: ${m.canAct ? "can act" : "cannot act"}`).join("\n");
+  return [
+    `Active actor: ${battle.activePartyIndex !== undefined ? state.party[battle.activePartyIndex]?.name ?? "?" : "unknown"}`,
+    "Enemies:",
+    enemies,
+    "Party:",
+    party,
+  ].join("\n");
 }
 
 function formatCharacter(c: PartyCharacter): string {
@@ -56,6 +77,7 @@ export function formatFF1GameInfo(state: FF1GameState | undefined): string {
     ? ` (riding ${world.currentVehicle})`
     : "";
   const gold = typeof state.gold === "number" ? state.gold.toLocaleString() : "?";
+  const context = state.context ?? { mode: "unknown", menu: "unknown" };
 
   return [
     "## Party",
@@ -65,6 +87,13 @@ export function formatFF1GameInfo(state: FF1GameState | undefined): string {
     `- Gold: ${gold}`,
     `- Position: ${formatPosition(world)}`,
     `- Vehicles: ${vehicles}${currentVehicle}`,
+    `- Context: ${context.mode} / menu: ${context.menu}`,
+    "",
+    "## Battle",
+    formatBattle(state),
+    "",
+    "## Available Locations",
+    formatLocations(state.availableLocations),
     "",
     "## Inventory",
     formatInventory(state),

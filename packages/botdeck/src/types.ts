@@ -29,12 +29,23 @@ export interface CommandSpec {
   args?: string;
 }
 
+export interface AgentMode {
+  id: string;
+  label: string;
+  promptSnippets: string[];
+  autoAdvance?: boolean;
+}
+
 export interface TurnRequest {
   gameId: string;
   playId?: string;
+  /** Active agent mode (field/battle/shop/inn); drives prompt snippet selection. */
+  mode?: string;
   state: Record<string, unknown>;
   screenshot?: string;
   options: CommandSpec[];
+  /** In battle, the party member whose turn is being decided. */
+  actor?: string;
 }
 
 export interface TurnResponse {
@@ -60,8 +71,10 @@ export interface StepRecord {
 export interface GamePlugin {
   id: string;
   title: string;
-  availableCommands(state?: Record<string, unknown>): CommandSpec[];
+  availableCommands(state?: Record<string, unknown>, context?: { actor?: string }): CommandSpec[];
   readState(): Record<string, unknown>;
+  /** Current agent mode for this plugin state (field/battle/shop/inn). */
+  getMode(state?: Record<string, unknown>): string;
   compile(command: GameCommand): ButtonStep[];
 }
 
@@ -104,3 +117,20 @@ export interface PlayStateEntry {
 }
 
 export type PlayStateSort = "newest" | "oldest" | "name (a-z)" | "name (z-a)";
+
+export interface PlaySnippet {
+  id: string;
+  name: string;
+  description: string;
+  game: string;
+  play: string;
+  startState: string;
+  steps: SnippetStep[];
+  expectedEndState?: string;
+  tags?: string[];
+}
+
+export type SnippetStep =
+  | { kind: "command"; command: GameCommand }
+  | { kind: "macro"; buttonSteps: ButtonStep[] }
+  | { kind: "wait"; frames: number };

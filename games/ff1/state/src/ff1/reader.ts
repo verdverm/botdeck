@@ -75,6 +75,12 @@ import {
   MAPOBJ_GFX_Y_OFFSET,
   MAPOBJ_FACE_OFFSET,
   MAPOBJ_PL_OFFSET,
+  ADDR_BATTLE_FLAG,
+  ADDR_BATTLE_ENEMY_COUNT,
+  ADDR_BATTLE_ACTIVE_INDEX,
+  ADDR_MENU_OPEN,
+  ADDR_MENU_CURSOR_X,
+  ADDR_MENU_CURSOR_Y,
 } from "../data/constants.js";
 import { getClassById } from "../data/classes.js";
 import {
@@ -100,6 +106,12 @@ import type {
   WorldState,
   GameFlags,
   FF1GameState,
+  BattleState,
+  BattleEnemy,
+  BattlePartyMember,
+  GameContext,
+  MenuContext,
+  KnownLocation,
   CharacterStats,
   SpellCharges,
   CharacterStatus,
@@ -528,19 +540,162 @@ export function readGameFlags(view: MemoryView): GameFlags {
   };
 }
 
+const TODO_BATTLE_NOTE =
+  "Battle-state RAM offsets are TODO/INFERRED. inBattle is currently derived from the placeholder ADDR_BATTLE_FLAG and may be wrong; enemy roster and active party index are not yet read.";
+
+const TODO_MENU_NOTE =
+  "Menu-state RAM offsets are TODO/INFERRED. The menu context is currently a heuristic (battle > standard-map shops/inn > field) and not read from live menu RAM.";
+
+const TODO_LOCATION_NOTE =
+  "Available locations are a static lookup keyed by map ID. They are not validated against live collision or quest state.";
+
+function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
+  const enemies: BattleEnemy[] = [];
+  for (let i = 0; i < count; i++) {
+    enemies.push({
+      slot: i,
+      id: undefined,
+      name: `enemy_${i + 1}`,
+      hp: undefined,
+      maxHp: undefined,
+    });
+  }
+  return enemies;
+}
+
+function readBattleParty(party: PartyCharacter[]): BattlePartyMember[] {
+  return party.map((c) => ({
+    index: c.index,
+    name: c.name,
+    canAct: c.hp !== undefined && c.hp > 0 && c.status?.ailments.every((s) => s.key !== "dead")
+      ? true
+      : undefined,
+    pendingAction: undefined,
+  }));
+}
+
+/**
+ * Read battle state from CPU RAM.
+ *
+ * @param view - A MemoryView backed by the full NES CPU address space.
+ * @param party - Current party state, used to populate the battle party view.
+ * @returns Battle detection stub with the full expected shape. Offsets are TODO.
+ */
+export function readBattleState(view: MemoryView, party: PartyCharacter[]): BattleState {
+  const rawFlag = view.u8(ADDR_BATTLE_FLAG);
+  const enemyCountRaw = view.u8(ADDR_BATTLE_ENEMY_COUNT);
+  const activeIndex = view.u8(ADDR_BATTLE_ACTIVE_INDEX);
+  const inBattle = rawFlag !== 0;
+  const enemyCount = inBattle ? (enemyCountRaw > 0 ? enemyCountRaw : undefined) : 0;
+
+  return {
+    inBattle,
+    enemyCount,
+    enemies: inBattle ? readBattleEnemies(view, enemyCount ?? 0) : [],
+    party: readBattleParty(party),
+    activePartyIndex: inBattle ? (activeIndex < PARTY_SIZE ? activeIndex : undefined) : undefined,
+    note: TODO_BATTLE_NOTE,
+  };
+}
+
+function inferMenuContext(world: WorldState, battle: BattleState): MenuContext {
+  if (battle.inBattle) return "battle";
+  if (!world.isStandardMap) return "field";
+  // Without a real menu-open flag we cannot tell whether the party is standing
+  // in a shop, at the inn counter, or just walking around. Return "unknown"
+  // for standard maps so callers can fall back to map-specific location data.
+  return "unknown";
+}
+
+/**
+ * Read the current high-level game context.
+ *
+ * @param view - A MemoryView backed by the full NES CPU address space.
+ * @param world - Current world state.
+ * @param battle - Current battle state.
+ * @returns Mode/menu context stub with a note about inferred offsets.
+ */
+export function readGameContext(view: MemoryView, world: WorldState, battle: BattleState): GameContext {
+  const menuOpen = view.u8(ADDR_MENU_OPEN) !== 0;
+  const cursorX = view.u8(ADDR_MENU_CURSOR_X);
+  const cursorY = view.u8(ADDR_MENU_CURSOR_Y);
+  const menu = inferMenuContext(world, battle);
+  const mode = battle.inBattle ? "battle" : menuOpen ? "menu" : "field";
+  void cursorX;
+  void cursorY;
+  return {
+    mode,
+    menu,
+    note: TODO_MENU_NOTE,
+  };
+}
+
+const KNOWN_LOCATIONS: Readonly<Record<number, KnownLocation[]>> = {
+  0x00: [
+    { id: "coneria_weapon_shop", name: "Coneria Weapon Shop", mapId: 0x00, type: "shop" },
+    { id: "coneria_armor_shop", name: "Coneria Armor Shop", mapId: 0x00, type: "shop" },
+    { id: "coneria_white_magic_shop", name: "Coneria White Magic Shop", mapId: 0x00, type: "shop" },
+    { id: "coneria_black_magic_shop", name: "Coneria Black Magic Shop", mapId: 0x00, type: "shop" },
+    { id: "coneria_item_shop", name: "Coneria Item Shop", mapId: 0x00, type: "shop" },
+    { id: "coneria_clinic", name: "Coneria Clinic", mapId: 0x00, type: "clinic" },
+    { id: "coneria_inn", name: "Coneria Inn", mapId: 0x00, type: "inn" },
+    { id: "coneria_north_exit", name: "Coneria North Exit", mapId: 0x00, type: "point" },
+    { id: "coneria_east_exit", name: "Coneria East Exit", mapId: 0x00, type: "point" },
+    { id: "coneria_south_exit", name: "Coneria South Exit", mapId: 0x00, type: "point" },
+    { id: "coneria_fountain", name: "Coneria Fountain", mapId: 0x00, type: "npc" },
+    { id: "coneria_well", name: "Coneria Well", mapId: 0x00, type: "npc" },
+  ],
+};
+
+/**
+ * Return the list of locations that can be targeted by `goto` for the current
+ * map. This is a static lookup keyed by standard-map ID; the overworld returns
+ * the nearest towns/dungeons as travel targets.
+ *
+ * @param world - Current world state.
+ * @returns List of known navigable locations for the current context.
+ */
+export function getAvailableLocations(world: WorldState): KnownLocation[] {
+  const list: KnownLocation[] = [];
+  if (world.isStandardMap && world.mapId in KNOWN_LOCATIONS) {
+    const mapLocs = KNOWN_LOCATIONS[world.mapId];
+    if (mapLocs) list.push(...mapLocs);
+  } else if (world.isOverworld) {
+    list.push(
+      { id: "coneria", name: "Coneria", type: "town" },
+      { id: "temple_of_fiends", name: "Temple of Fiends", type: "dungeon" },
+      { id: "matoyas_cave", name: "Matoya's Cave", type: "dungeon" },
+      { id: "marsh_cave", name: "Marsh Cave", type: "dungeon" },
+      { id: "pravoka", name: "Pravoka", type: "town" },
+      { id: "elfheim", name: "Elfheim", type: "town" },
+    );
+  }
+  list.forEach((loc) => {
+    loc.mapName = world.mapName ?? undefined;
+  });
+  return list.map((loc) => ({ ...loc, note: TODO_LOCATION_NOTE }));
+}
+
 /**
  * Read the full FF1 game state from CPU RAM.
  *
  * @param view - A MemoryView backed by the full NES CPU address space.
- * @returns Complete game snapshot including party, gold, inventory, world, and flags.
+ * @returns Complete game snapshot including party, gold, inventory, world, flags, battle state, context, and locations.
  */
 export function readFF1State(view: MemoryView): FF1GameState {
+  const party = readParty(view);
+  const world = readWorldState(view);
+  const battle = readBattleState(view, party);
+  const context = readGameContext(view, world, battle);
   return {
-    party: readParty(view),
+    party,
     gold: readGold(view),
     inventory: readInventory(view),
-    world: readWorldState(view),
+    world,
     flags: readGameFlags(view),
+    battle,
+    context,
+    availableLocations: getAvailableLocations(world),
   };
 }
 
