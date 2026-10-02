@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { JsonEditor, githubDarkTheme } from "json-edit-react";
 import { deleteSnippet, parsePlayId, saveSnippet, snippetUrl, snippetsUrl } from "@/play";
-import type { PlaySnippet } from "@/types";
+import type { PlaySnippet, SnippetRunResult } from "@/types";
 import { SectionTitle } from "./shared";
 
 interface SnippetDescriptor {
@@ -14,7 +14,7 @@ type EditableSnippet = Omit<PlaySnippet, "id" | "game" | "play">;
 interface SnippetsTabProps {
   playId: string;
   disabled?: boolean;
-  onRun: (snippet: PlaySnippet) => Promise<void> | void;
+  onRun: (snippet: PlaySnippet) => Promise<SnippetRunResult | void> | void;
 }
 
 const NEW_KEY = "__new__";
@@ -78,6 +78,7 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | undefined>();
   const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [runResults, setRunResults] = useState<Record<string, SnippetRunResult | undefined>>({});
 
   const { game, id: play } = useMemo(() => parsePlayId(playId), [playId]);
 
@@ -265,7 +266,10 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
     if (!draft) return;
     setErrors((prev) => ({ ...prev, [snippetId]: undefined }));
     try {
-      await onRun(draft);
+      const result = await onRun(draft);
+      if (result) {
+        setRunResults((prev) => ({ ...prev, [snippetId]: result }));
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setErrors((prev) => ({ ...prev, [snippetId]: msg }));
@@ -377,6 +381,21 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
                       </div>
                     </div>
                     {errors[s.id] && <p className="mb-2 text-xs text-rose-400">{errors[s.id]}</p>}
+                    {runResults[s.id] && (
+                      <div className="mb-2 rounded border border-neutral-700 bg-neutral-900 p-1.5 text-xs text-neutral-400">
+                        {runResults[s.id]!.beforePath && (
+                          <p>before: {runResults[s.id]!.beforePath}</p>
+                        )}
+                        {runResults[s.id]!.afterPath && (
+                          <p>after: {runResults[s.id]!.afterPath}</p>
+                        )}
+                        {runResults[s.id]!.diff && (
+                          <p className="text-neutral-300">
+                            diff: {String((runResults[s.id]!.diff as { summary?: string }).summary ?? "n/a")}
+                          </p>
+                        )}
+                      </div>
+                    )}
                     {!draft ? (
                       <p className="text-xs text-neutral-500">Loading snippet...</p>
                     ) : isEditing ? (

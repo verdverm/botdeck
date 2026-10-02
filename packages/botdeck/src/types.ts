@@ -134,3 +134,9 @@ export type SnippetStep =
   | { kind: "command"; command: GameCommand }
   | { kind: "macro"; buttonSteps: ButtonStep[] }
   | { kind: "wait"; frames: number };
+
+export interface SnippetRunResult {
+  beforePath?: string;
+  afterPath?: string;
+  diff?: Record<string, unknown>;
+}

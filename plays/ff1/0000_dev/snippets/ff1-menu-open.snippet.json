@@ -1,0 +1,12 @@
+{
+  "id": "ff1-menu-open",
+  "name": "FF1 Open START Menu",
+  "description": "Validate main-menu-open detection: press START in Coneria town (no menu open) to capture the baseline vs the open menu. State pair for needed-state-comparisons #1.",
+  "game": "ff1",
+  "play": "0000_dev",
+  "startState": "000002-start-02-town-entrence",
+  "steps": [
+    { "kind": "command", "command": { "name": "menu" } }
+  ],
+  "tags": ["ff1", "menu", "detection"]
+}

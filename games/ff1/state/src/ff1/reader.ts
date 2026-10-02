@@ -89,6 +89,10 @@ import {
   ADDR_SHOP_ID,
   ADDR_SHOP_TYPE,
   ADDR_MENU_CURSOR,
+  ADDR_MENU_CURSOR_MAX,
+  ADDR_WINDOW_ID,
+  ADDR_MENU_OVERLAY,
+  MENU_OVERLAY_WINDOW_BIT,
   ADDR_SHOP_CURSOR_X,
   ADDR_SHOP_CURSOR_Y,
   ADDR_TALK_OBJECT,
@@ -722,9 +726,15 @@ export function readGameContext(view: MemoryView, world: WorldState, battle: Bat
 export function readMenuState(view: MemoryView, context: GameContext): MenuState {
   const enteringShop = view.u8(ADDR_ENTERING_SHOP) !== 0;
   const shopTypeRaw = view.u8(ADDR_SHOP_TYPE);
+  const cursorMax = view.u8(ADDR_MENU_CURSOR_MAX);
+  const windowId = view.u8(ADDR_WINDOW_ID);
+  const overlay = view.u8(ADDR_MENU_OVERLAY);
   return {
     inMenu: context.mode === "menu" || view.u8(ADDR_DIALOG_OPEN) !== 0,
     cursor: view.u8(ADDR_MENU_CURSOR),
+    cursorMax,
+    windowId,
+    menuOverlay: (overlay & MENU_OVERLAY_WINDOW_BIT) !== 0,
     enteringShop,
     shopId: enteringShop ? view.u8(ADDR_SHOP_ID) : undefined,
     shopType: enteringShop ? shopTypeName(shopTypeRaw) : undefined,

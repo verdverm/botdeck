@@ -105,6 +105,9 @@ function baseState(): FF1GameState {
     menu: {
       inMenu: false,
       cursor: undefined,
+      cursorMax: 0,
+      windowId: 0,
+      menuOverlay: false,
       enteringShop: false,
       shopId: undefined,
       shopType: undefined,

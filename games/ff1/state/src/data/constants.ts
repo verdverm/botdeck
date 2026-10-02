@@ -273,6 +273,29 @@ export const ADDR_SHOP_ID = 0x51;
 export const ADDR_SHOP_TYPE = 0x66;
 /** Generic menu cursor position ($62, shared by main/item/equip menus). */
 export const ADDR_MENU_CURSOR = 0x62;
+/**
+ * Menu row count / cursor maximum ($63). Zero on the open field, nonzero when
+ * a list window (main menu, shop buy list, etc.) is drawn. OBSERVED against a
+ * controlled field->START-open transition in the emulator; not yet confirmed in
+ * the disassembly.
+ */
+export const ADDR_MENU_CURSOR_MAX = 0x63;
+/**
+ * Window/overlay id ($1f). 64 (0x40) on a plain field; 1 while a menu window is
+ * drawn. OBSERVED against a controlled field->START-open transition; the field
+ * value is not perfectly stable across all overworld tiles, so treat nonzero
+ * here as a weak signal to combine with the cursor bytes.
+ */
+export const ADDR_WINDOW_ID = 0x1f;
+/**
+ * Menu overlay state byte ($67). Bit 7 (0x80) is set while the main menu or an
+ * in-map window is open. OBSERVED: 0 on the plain field, 0xC0 when the START
+ * menu is open; also set for inn/clinic windows (which are caught earlier by
+ * entering_shop).
+ */
+export const ADDR_MENU_OVERLAY = 0x67;
+/** Bit within $67 that marks an open window/menu overlay. */
+export const MENU_OVERLAY_WINDOW_BIT = 0x80;
 /** Shop cursor X ($64). */
 export const ADDR_SHOP_CURSOR_X = 0x64;
 /** Shop cursor Y ($65). */

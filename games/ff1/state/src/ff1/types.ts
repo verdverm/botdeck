@@ -176,6 +176,12 @@ export type MenuContext =
 export interface MenuState {
   inMenu: boolean;
   cursor: number | undefined;
+  /** $63 row count / cursor max; nonzero when a list window is drawn (observed). */
+  cursorMax: number;
+  /** $1f window/overlay id; 64 (0x40) on a plain field, 1 under a menu (observed). */
+  windowId: number;
+  /** $67 bit 7: set while the main menu or an in-map window is open (observed). */
+  menuOverlay: boolean;
   enteringShop: boolean;
   shopId: number | undefined;
   shopType: string | undefined;

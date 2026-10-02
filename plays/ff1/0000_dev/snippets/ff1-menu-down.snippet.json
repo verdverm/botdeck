@@ -1,0 +1,14 @@
+{
+  "id": "ff1-menu-down",
+  "name": "FF1 Open START Menu + Move Cursor",
+  "description": "Validate menu cursor movement: open the START menu in Coneria town then press down twice to advance the cursor. State pair for needed-state-comparisons #1/#2.",
+  "game": "ff1",
+  "play": "0000_dev",
+  "startState": "000002-start-02-town-entrence",
+  "steps": [
+    { "kind": "command", "command": { "name": "menu" } },
+    { "kind": "command", "command": { "name": "move", "args": { "direction": "down" } } },
+    { "kind": "command", "command": { "name": "move", "args": { "direction": "down" } } }
+  ],
+  "tags": ["ff1", "menu", "cursor", "detection"]
+}

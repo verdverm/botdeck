@@ -8,9 +8,9 @@ import { useEmulator } from "@/hooks/useEmulator";
 import { useBotLoop } from "@/hooks/useBotLoop";
 import { GenericGamePlugin } from "@/games/generic";
 import { FF1GamePlugin } from "@/games/ff1";
-import { loadPlayConfig, readGameId, readPlayId, stateUrl } from "@/play";
+import { fetchDiff, loadPlayConfig, postState, readGameId, readPlayId, stateUrl } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
-import type { GameCommand, PlaySnippet, SnippetStep } from "@/types";
+import type { GameCommand, PlaySnippet, SnippetRunResult, SnippetStep } from "@/types";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -184,10 +184,26 @@ export function App() {
   );
 
   const onRunSnippet = useCallback(
-    async (snippet: PlaySnippet) => {
+    async (snippet: PlaySnippet): Promise<SnippetRunResult> => {
       const controller = new AbortController();
       snippetAbortRef.current = () => controller.abort();
       setSnippetPaused(false);
+
+      const settle = (ms: number) =>
+        new Promise<void>((resolve) => {
+          window.setTimeout(resolve, ms);
+        });
+
+      const snapshot = (when: "before" | "after") => {
+        const collected = collect();
+        if (!collected) return Promise.resolve(undefined);
+        return postState(
+          playId,
+          collected,
+          `snippet_${snippet.id}_${when}`,
+        ).then((r) => r.statePath);
+      };
+
       try {
         const filename = `${snippet.startState}.state.json`;
         const res = await fetch(stateUrl(playId, filename));
@@ -198,6 +214,9 @@ export function App() {
         const collected = await loadState(state);
         setSnapshot(collected);
         setLastSaved(null);
+
+        await settle(200);
+        const beforePath = await snapshot("before");
 
         for (const step of snippet.steps) {
           if (controller.signal.aborted) break;
@@ -217,8 +236,21 @@ export function App() {
           await runSnippetStep(step, controller.signal);
         }
 
+        await settle(200);
+        const afterPath = await snapshot("after");
+
+        let diff: Record<string, unknown> | undefined;
+        if (beforePath && afterPath) {
+          try {
+            diff = await fetchDiff(playId, beforePath, afterPath);
+          } catch (diffErr) {
+            console.warn(`snippet ${snippet.id} diff failed:`, diffErr);
+          }
+        }
+
         const final = collect();
         if (final) setSnapshot(final);
+        return { beforePath, afterPath, diff };
       } finally {
         snippetAbortRef.current = null;
         setSnippetPaused(false);

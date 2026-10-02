@@ -25,6 +25,10 @@ export interface FF1StateDiff {
     menu?: { before: string | undefined; after: string | undefined };
     dialog?: { before: boolean; after: boolean };
     cursor?: { before: number | undefined; after: number | undefined };
+    window?: {
+      before: { cursorMax: number; overlay: boolean };
+      after: { cursorMax: number; overlay: boolean };
+    };
     shop?: { before: string | undefined; after: string | undefined };
   };
   summary: string;
@@ -154,6 +158,17 @@ export function diffFF1States(before: FF1GameState, after: FF1GameState): FF1Sta
       after: after.menu?.cursor,
     };
   }
+  const winBefore = {
+    cursorMax: before.menu?.cursorMax ?? 0,
+    overlay: before.menu?.menuOverlay ?? false,
+  };
+  const winAfter = {
+    cursorMax: after.menu?.cursorMax ?? 0,
+    overlay: after.menu?.menuOverlay ?? false,
+  };
+  if (winBefore.cursorMax !== winAfter.cursorMax || winBefore.overlay !== winAfter.overlay) {
+    context.window = { before: winBefore, after: winAfter };
+  }
   const shopBefore = before.menu?.enteringShop ? before.menu.shopType : undefined;
   const shopAfter = after.menu?.enteringShop ? after.menu.shopType : undefined;
   if (shopBefore !== shopAfter) {
@@ -184,6 +199,11 @@ export function diffFF1States(before: FF1GameState, after: FF1GameState): FF1Sta
   if (context.menu) parts.push(`Menu: ${context.menu.before ?? "none"} -> ${context.menu.after ?? "none"}`);
   if (context.dialog) parts.push(`Dialog: ${context.dialog.before} -> ${context.dialog.after}`);
   if (context.cursor) parts.push(`Cursor: ${context.cursor.before ?? "?"} -> ${context.cursor.after ?? "?"}`);
+  if (context.window) {
+    parts.push(
+      `Window: cursorMax ${context.window.before.cursorMax}->${context.window.after.cursorMax}, overlay ${context.window.before.overlay}->${context.window.after.overlay}`,
+    );
+  }
   if (context.shop) parts.push(`Shop: ${context.shop.before ?? "none"} -> ${context.shop.after ?? "none"}`);
 
   return {

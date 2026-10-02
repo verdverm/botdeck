@@ -39,6 +39,16 @@ export function MenuTab({ ff1 }: { ff1: FF1GameState | undefined }) {
           <p className="text-neutral-200">{menu?.cursor ?? "-"}</p>
         </div>
         <div>
+          <SectionTitle>Window ($1f/$63/$67b7)</SectionTitle>
+          <p className="text-neutral-200">
+            id {menu?.windowId ?? "-"} · rows {menu?.cursorMax ?? "-"} ·{" "}
+            {menu?.menuOverlay ? "overlay" : "none"}
+          </p>
+        </div>
+      </section>
+
+      <section className="grid grid-cols-2 gap-3">
+        <div>
           <SectionTitle>Talk Object</SectionTitle>
           <p className="text-neutral-200">{describeTalkObject(menu?.talkObject, objects)}</p>
         </div>

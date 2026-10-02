@@ -1,4 +1,4 @@
-import type { FF1GameState, GameContext, KnownLocation, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
+import type { FF1GameState, GameContext, KnownLocation, MenuState, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
 
 export function mpSummary(charges: SpellChargeLevel[] | undefined): string {
   if (!charges || charges.length === 0) return "-";
@@ -68,6 +68,18 @@ export function formatContext(context: GameContext | undefined): string {
   return ctx.mode;
 }
 
+export function formatMenu(menu: MenuState | undefined): string {
+  if (!menu) return "unknown";
+  const bits: string[] = [
+    `cursor ${menu.cursor ?? "-"}/${menu.cursorMax}`,
+    `window $1f=${menu.windowId}`,
+    menu.menuOverlay ? "overlay-bit-set" : "overlay-bit-clear",
+  ];
+  if (menu.enteringShop) bits.push(`shop ${menu.shopType ?? "?"} #${menu.shopId ?? "?"}`);
+  if (menu.dialogOpen) bits.push("dialog");
+  return bits.join(" | ");
+}
+
 function formatCharacter(c: PartyCharacter): string {
   const eq = c.equipment ?? {};
   const stats = c.stats;
@@ -111,6 +123,7 @@ export function formatFF1GameInfo(state: FF1GameState | undefined): string {
     `- Position: ${formatPosition(world)}`,
     `- Vehicles: ${vehicles}${currentVehicle}`,
     `- Context: ${formatContext(state.context)}`,
+    `- Menu: ${formatMenu(state.menu)}`,
     "",
     "## Battle",
     formatBattle(state),
