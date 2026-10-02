@@ -3,6 +3,7 @@
     "model": "small",
     "maxToolRounds": 5,
     "maxTokens": 1024,
+    "timeoutMs": 120000,
     "limits": {
       "goals": 1024,
       "memory": 2048,

@@ -1,4 +1,5 @@
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   repoPath,
@@ -9,7 +10,9 @@ import {
   writePlayConfig,
   createPlay,
   deletePlay,
+  diffPlayStates,
   PathEscapeError,
+  FileNotFoundError,
 } from "./files.ts";
 
 const TEST_GAME = "ff1";
@@ -149,6 +152,116 @@ describe("createPlay / deletePlay", () => {
     createPlay(TEST_GAME, id);
     try {
       expect(() => createPlay(TEST_GAME, id)).toThrow();
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+});
+
+function minimalFF1State(gold: number): unknown {
+  return {
+    party: [],
+    gold,
+    inventory: [],
+    world: {
+      mapId: 0,
+      mapName: "Coneria",
+      isOverworld: false,
+      isStandardMap: true,
+      mapFlags: 0,
+      tilesetId: 0,
+      overworldX: 0,
+      overworldY: 0,
+      standardMapX: 10,
+      standardMapY: 10,
+      standardMapScrollX: 0,
+      standardMapScrollY: 0,
+      shipX: undefined,
+      shipY: undefined,
+      airshipX: undefined,
+      airshipY: undefined,
+      currentVehicle: undefined,
+      ownedVehicles: [],
+      vehiclesRaw: 0,
+      hasCanoe: false,
+      mapObjects: [],
+      _note: "",
+    },
+    flags: {
+      raw: [],
+      _note: "",
+    },
+  };
+}
+
+describe("diffPlayStates", () => {
+  it("diffs two states given filenames only", () => {
+    const id = tmpPlayId("diff");
+    createPlay(TEST_GAME, id);
+    try {
+      const dir = join(playDir(TEST_GAME, id), "states");
+      writeFileSync(
+        join(dir, "000001-step_before.state.json"),
+        JSON.stringify({}),
+      );
+      writeFileSync(
+        join(dir, "000001-step_before.ff1.json"),
+        JSON.stringify(minimalFF1State(100)),
+      );
+      writeFileSync(
+        join(dir, "000001-step_before.metadata.json"),
+        JSON.stringify({ name: "step_before", createdAt: new Date().toISOString(), bookmarked: false }),
+      );
+      writeFileSync(
+        join(dir, "000002-step_after.state.json"),
+        JSON.stringify({}),
+      );
+      writeFileSync(
+        join(dir, "000002-step_after.ff1.json"),
+        JSON.stringify(minimalFF1State(250)),
+      );
+      writeFileSync(
+        join(dir, "000002-step_after.metadata.json"),
+        JSON.stringify({ name: "step_after", createdAt: new Date().toISOString(), bookmarked: false }),
+      );
+
+      const diff = diffPlayStates(
+        TEST_GAME,
+        id,
+        "000001-step_before.state.json",
+        "000002-step_after.state.json",
+      );
+      expect(diff.changed).toBe(true);
+      expect(diff.gold).toEqual({ before: 100, after: 250, delta: 150 });
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("rejects full repo-relative paths", () => {
+    const id = tmpPlayId("diff_path");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(() =>
+        diffPlayStates(
+          TEST_GAME,
+          id,
+          "plays/ff1/0000_dev/states/000001-step_before.state.json",
+          "000002-step_after.state.json",
+        ),
+      ).toThrow(PathEscapeError);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("throws FileNotFoundError for missing state files", () => {
+    const id = tmpPlayId("diff_missing");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(() =>
+        diffPlayStates(TEST_GAME, id, "000001.state.json", "000002.state.json"),
+      ).toThrow(FileNotFoundError);
     } finally {
       deletePlay(TEST_GAME, id);
     }

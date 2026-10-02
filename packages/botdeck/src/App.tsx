@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { GameScreen } from "@/components/GameScreen";
 import { Gamepad } from "@/components/Gamepad";
 import { RomPicker } from "@/components/RomPicker";
@@ -7,8 +7,13 @@ import { GameInfoPanel } from "@/components/game-info";
 import { useEmulator } from "@/hooks/useEmulator";
 import { useBotLoop } from "@/hooks/useBotLoop";
 import { GenericGamePlugin } from "@/games/generic";
-import { readGameId, readPlayId } from "@/play";
+import { FF1GamePlugin } from "@/games/ff1";
+import { loadPlayConfig, readGameId, readPlayId } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
 export function App() {
   const game = readGameId();
@@ -37,17 +42,35 @@ export function App() {
     setMuted,
   } = useEmulator(game);
 
-  const plugin = useMemo(() => new GenericGamePlugin(emulator), [emulator]);
+  const plugin = useMemo(() => {
+    if (game === "ff1") return new FF1GamePlugin(emulator);
+    return new GenericGamePlugin(emulator);
+  }, [emulator, game]);
 
   const getScreenshot = useCallback(() => {
     const canvas = canvasRef.current;
     return canvas ? canvas.toDataURL("image/png") : undefined;
   }, [canvasRef]);
 
-  const saveCheckpoint = useCallback(
-    async (name?: string) => saveStateToPlay(playId, name),
-    [saveStateToPlay, playId],
-  );
+  const [playConfig, setPlayConfig] = useState<Record<string, unknown> | null>(null);
+  useEffect(() => {
+    loadPlayConfig(playId)
+      .then(setPlayConfig)
+      .catch((e) => console.error("failed to load play config", e));
+  }, [playId]);
+
+  const { turnTimeoutMs, settleDelayMs, collectStates } = useMemo(() => {
+    const agent = isPlainObject(playConfig?.agent) ? playConfig.agent : {};
+    const maxToolRounds = typeof agent.maxToolRounds === "number" ? agent.maxToolRounds : 5;
+    const timeoutMs = typeof agent.timeoutMs === "number" ? agent.timeoutMs : 120_000;
+    const collectStates =
+      agent.collectStates === false ? false : true;
+    return {
+      turnTimeoutMs: maxToolRounds * timeoutMs + 10_000,
+      settleDelayMs: 250,
+      collectStates,
+    };
+  }, [playConfig]);
 
   const agent = useBotLoop({
     playId,
@@ -55,7 +78,10 @@ export function App() {
     emulator,
     plugin,
     getScreenshot,
-    saveCheckpoint,
+    collect,
+    collectStates,
+    turnTimeoutMs,
+    settleDelayMs,
   });
 
   const [snapshot, setSnapshot] = useState<CollectedState | null>(null);

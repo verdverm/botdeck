@@ -520,7 +520,6 @@ export function readGameFlags(view: MemoryView): GameFlags {
     hasCube: undefined,
     hasBottle: undefined,
     hasOxyale: undefined,
-    hasCanoe: undefined,
     hasEarthOrb: undefined,
     hasFireOrb: undefined,
     hasWaterOrb: undefined,

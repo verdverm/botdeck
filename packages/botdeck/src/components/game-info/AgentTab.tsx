@@ -224,6 +224,17 @@ export function AgentTab({
                         macro: {m.macro.length} step{m.macro.length === 1 ? "" : "s"}
                       </p>
                     )}
+                    {m.diff && (
+                      <div className="mt-1">
+                        <p className="text-xs text-neutral-500">diff summary:</p>
+                        <p className="text-xs text-neutral-400">
+                          {String(m.diff.summary ?? "")}
+                        </p>
+                        {m.diff.changed === false && (
+                          <p className="text-xs text-neutral-500">no changes</p>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

@@ -15,7 +15,7 @@
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { Effect, Layer } from "effect";
+import { Duration, Effect, Layer } from "effect";
 import { LLM, LLMClient, Auth, Message, ToolDefinition, ToolCallPart, type LLMResponse } from "@opencode-ai/llm";
 import { RequestExecutor } from "@opencode-ai/llm/route";
 import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible";
@@ -30,32 +30,26 @@ const PROJECT_CONFIG = JSON.parse(
   readFileSync(fileURLToPath(new URL("../config.json", import.meta.url)), "utf8"),
 ) as { baseUrl: string };
 
-// VERMBOT_PLAY selects which play (default ff1/0000_dev); used only as a fallback
-// when a turn request does not include a playId.
-const PLAY = process.env.VERMBOT_PLAY ?? "ff1/0000_dev";
-const [playGame, playId] = PLAY.split("/");
-if (!playGame || !playId) {
-  throw new Error(`VERMBOT_PLAY must be game/id, got: ${PLAY}`);
-}
-
 const vllm = OpenAICompatible.configure({
   baseURL: PROJECT_CONFIG.baseUrl,
   provider: "homelab-vllm",
   auth: Auth.passthrough,
-  headers: {
-    "X-GoModel-User-Path": `/proj/vermbot-plays-games/${playGame}/${playId}`,
-  },
 });
 
 const requestExecutorLayer = RequestExecutor.fetchLayer;
 const llmClientLayer = LLMClient.layer.pipe(Layer.provide(requestExecutorLayer));
+
+const [DEFAULT_GAME, DEFAULT_ID] = (process.env.VERMBOT_PLAY ?? "ff1/0000_dev").split("/");
+if (!DEFAULT_GAME || !DEFAULT_ID) {
+  throw new Error(`VERMBOT_PLAY must be game/id, got: ${process.env.VERMBOT_PLAY ?? "ff1/0000_dev"}`);
+}
 
 function parsePlayId(rawPlayId: string | undefined): { game: string; id: string } {
   if (rawPlayId && rawPlayId.includes("/")) {
     const [game, id] = rawPlayId.split("/");
     if (game && id) return { game, id };
   }
-  return { game: playGame, id: rawPlayId ?? playId };
+  return { game: DEFAULT_GAME, id: rawPlayId ?? DEFAULT_ID };
 }
 
 function toolCallsFromResponse(response: LLMResponse): Array<{
@@ -103,6 +97,8 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
 
   const model = vllm.model(config.model);
 
+  const userPath = `/proj/vermbot-plays-games/${game}/${id}`;
+
   let messages = [Message.user(user)];
   let request = LLM.request({
     model,
@@ -110,6 +106,7 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
     messages,
     tools: toolDefinitions,
     generation: { maxTokens: config.maxTokens },
+    http: { headers: { "X-GoModel-User-Path": userPath } },
   });
 
   for (let round = 0; round < config.maxToolRounds; round++) {
@@ -118,7 +115,9 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
       return response;
     }).pipe(Effect.provide(Layer.mergeAll(requestExecutorLayer, llmClientLayer)));
 
-    const response = await Effect.runPromise(program);
+    const response = await Effect.runPromise(
+      Effect.timeout(program, Duration.millis(config.timeoutMs)),
+    );
     const calls = toolCallsFromResponse(response);
 
     if (calls.length === 0) {
@@ -154,6 +153,7 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
       messages,
       tools: toolDefinitions,
       generation: { maxTokens: config.maxTokens },
+      http: { headers: { "X-GoModel-User-Path": userPath } },
     });
   }
 

@@ -16,6 +16,7 @@
  *   POST   /api/plays/:game/:id/states      - save state + extract FF1 state
  *   GET    /api/plays/:game/:id/states       - list states (sort=newest|oldest|name (a-z)|name (z-a))
  *   GET    /api/plays/:game/:id/states/:file - read state / ff1 / metadata
+ *   GET    /api/plays/:game/:id/diff?before=<file>&after=<file> - diff two FF1 state sidecars
  *   PATCH  /api/plays/:game/:id/states/:file - update metadata (name, bookmarked)
  *   DELETE /api/plays/:game/:id/states/:file - delete state + sidecars
  *   GET    /api/plays/:game/:id/memory      - list memory entries
@@ -68,6 +69,7 @@ import {
   readPlayStep,
   writePlayStep,
   assertStepRecord,
+  diffPlayStates,
   slugify,
   formatTimestamp,
   FileNotFoundError,
@@ -287,6 +289,30 @@ async function handlePlays(
         const body = await readBody(req);
         const config = JSON.parse(body) as Record<string, unknown>;
         json(res, 200, writePlayConfig(game, id, config));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/diff?before=<file>&after=<file>
+  if (segments.length === 5 && segments[4] === "diff") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        const before = url.searchParams.get("before") ?? "";
+        const after = url.searchParams.get("after") ?? "";
+        if (!before || !after) {
+          json(res, 400, { error: "before and after query params are required" });
+          return true;
+        }
+        const diff = diffPlayStates(game, id, before, after);
+        json(res, 200, diff);
       } catch (err) {
         sendError(err);
       }
@@ -603,7 +629,7 @@ const server = createServer(async (req, res) => {
 
   const url = new URL(req.url ?? "/", `http://localhost`);
 
-  if (req.method === "GET" && url.pathname === "/health") {
+  if (req.method === "GET" && (url.pathname === "/health" || url.pathname === "/api/health")) {
     json(res, 200, { ok: true });
     return;
   }

@@ -60,6 +60,7 @@ export async function loadRomBytes(game: string): Promise<ArrayBuffer> {
 
 // --- plays / config (separate concern, not the ROM boot) -------------------
 
+import type { CollectedState } from "@/emulator/collectState";
 import type { PlayStateSort } from "@/types";
 export type { PlayStateSort } from "@/types";
 
@@ -134,6 +135,60 @@ export async function deleteState(playId: string, filename: string): Promise<voi
 
 export function stepsUrl(playId: string): string {
   return `${playBase(playId)}/steps`;
+}
+
+export async function postState(
+  playId: string,
+  data: CollectedState,
+  name?: string,
+): Promise<{
+  statePath?: string;
+  extractedPath?: string;
+  metadataPath?: string;
+  ff1?: unknown;
+}> {
+  const res = await fetch(statesUrl(playId), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ data, name }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`save state failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as {
+    statePath?: string;
+    extractedPath?: string;
+    metadataPath?: string;
+    ff1?: unknown;
+  };
+}
+
+export function diffUrl(playId: string, before: string, after: string): string {
+  const base = `${playBase(playId)}/diff`;
+  const params = new URLSearchParams();
+  params.set("before", basename(before));
+  params.set("after", basename(after));
+  return `${base}?${params.toString()}`;
+}
+
+export async function fetchDiff(
+  playId: string,
+  before: string,
+  after: string,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(diffUrl(playId, before, after));
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`diff failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as Record<string, unknown>;
+}
+
+function basename(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
 }
 
 export async function loadPlayConfig(playId: string): Promise<PlayConfig> {

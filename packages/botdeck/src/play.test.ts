@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DEFAULT_GAME,
   DEFAULT_PLAY_ID,
+  diffUrl,
+  fetchDiff,
   gamesUrl,
   parsePlayId,
   playConfigUrl,
@@ -119,6 +121,61 @@ describe("play", () => {
       });
       const { loadRomBytes } = await import("./play");
       await expect(loadRomBytes("ff1")).rejects.toThrow('ROM for "ff1" (404)');
+    });
+  });
+
+  describe("diffUrl", () => {
+    it("uses filenames as-is", () => {
+      expect(diffUrl("ff1/0000_dev", "000001-step_before.state.json", "000002-step_after.state.json")).toBe(
+        "/api/plays/ff1/0000_dev/diff?before=000001-step_before.state.json&after=000002-step_after.state.json",
+      );
+    });
+
+    it("strips repo-relative paths to basenames", () => {
+      expect(
+        diffUrl(
+          "ff1/0000_dev",
+          "plays/ff1/0000_dev/states/000001-step_before.state.json",
+          "plays/ff1/0000_dev/states/000002-step_after.state.json",
+        ),
+      ).toBe(
+        "/api/plays/ff1/0000_dev/diff?before=000001-step_before.state.json&after=000002-step_after.state.json",
+      );
+    });
+
+    it("handles Windows-style backslash paths", () => {
+      expect(diffUrl("ff1/0000_dev", "states\\000001-step_before.state.json", "states\\000002-step_after.state.json")).toBe(
+        "/api/plays/ff1/0000_dev/diff?before=000001-step_before.state.json&after=000002-step_after.state.json",
+      );
+    });
+  });
+
+  describe("fetchDiff", () => {
+    it("passes basename-only params and returns parsed JSON", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ changed: true, summary: "moved" }),
+      });
+      const result = await fetchDiff(
+        "ff1/0000_dev",
+        "plays/ff1/0000_dev/states/000001-step_before.state.json",
+        "plays/ff1/0000_dev/states/000002-step_after.state.json",
+      );
+      expect(result).toEqual({ changed: true, summary: "moved" });
+      expect(globalThis.fetch).toHaveBeenCalledWith(
+        "/api/plays/ff1/0000_dev/diff?before=000001-step_before.state.json&after=000002-step_after.state.json",
+      );
+    });
+
+    it("throws when the response is not ok", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        text: vi.fn().mockResolvedValue("invalid filename"),
+      });
+      await expect(fetchDiff("ff1/0000_dev", "000001.state.json", "000002.state.json")).rejects.toThrow(
+        "diff failed (400): invalid filename",
+      );
     });
   });
 });

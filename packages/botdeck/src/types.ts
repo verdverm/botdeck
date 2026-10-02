@@ -60,7 +60,7 @@ export interface StepRecord {
 export interface GamePlugin {
   id: string;
   title: string;
-  availableCommands(): CommandSpec[];
+  availableCommands(state?: Record<string, unknown>): CommandSpec[];
   readState(): Record<string, unknown>;
   compile(command: GameCommand): ButtonStep[];
 }

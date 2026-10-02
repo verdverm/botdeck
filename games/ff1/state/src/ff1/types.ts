@@ -135,7 +135,6 @@ export interface GameFlags {
   hasCube: boolean | undefined;
   hasBottle: boolean | undefined;
   hasOxyale: boolean | undefined;
-  hasCanoe: boolean | undefined;
   hasEarthOrb: boolean | undefined;
   hasFireOrb: boolean | undefined;
   hasWaterOrb: boolean | undefined;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { CollectedState } from "@/emulator/collectState";
 import type { Emulator } from "@/emulator/emulator";
-import { stepsUrl } from "@/play";
+import { fetchDiff, postState, stepsUrl } from "@/play";
 import type {
   ButtonStep,
   GameCommand,
@@ -11,6 +12,7 @@ import type {
 } from "@/types";
 
 const DEFAULT_SETTLE_MS = 250;
+const DEFAULT_TURN_TIMEOUT_MS = 120_000;
 
 export interface TurnLogEntry {
   seq: number;
@@ -21,6 +23,7 @@ export interface TurnLogEntry {
   macro?: ButtonStep[];
   stateBefore?: string;
   stateAfter?: string;
+  diff?: Record<string, unknown>;
   error?: string;
 }
 
@@ -30,8 +33,13 @@ export interface UseBotLoopOptions {
   emulator: Emulator;
   plugin: GamePlugin;
   getScreenshot?: () => string | undefined;
-  saveCheckpoint?: (name?: string) => Promise<{ statePath?: string }>;
+  /** Snapshot the emulator for before/after state capture. */
+  collect?: () => CollectedState | null;
+  /** Persist before/after states for each agent step (default true). */
+  collectStates?: boolean;
   settleDelayMs?: number;
+  /** Timeout for the POST /api/turn fetch, in milliseconds. */
+  turnTimeoutMs?: number;
 }
 
 export interface UseBotLoopResult {
@@ -49,8 +57,10 @@ export interface UseBotLoopResult {
 }
 
 export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
-  const { playId, game, emulator, plugin, getScreenshot, saveCheckpoint } = options;
+  const { playId, game, emulator, plugin, getScreenshot, collect } = options;
   const settleDelayMs = options.settleDelayMs ?? DEFAULT_SETTLE_MS;
+  const turnTimeoutMs = options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
+  const collectStates = options.collectStates ?? true;
 
   const [isThinking, setIsThinking] = useState(false);
   const [isPlayingMacro, setIsPlayingMacro] = useState(false);
@@ -96,6 +106,24 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     [playId],
   );
 
+  const saveStepState: (
+    seq: number,
+    when: "before" | "after",
+  ) => Promise<string | undefined> = useCallback(
+    async (seq, when) => {
+      if (!collect) return undefined;
+      const snapshot = collect();
+      if (!snapshot) return undefined;
+      const result = await postState(
+        playId,
+        snapshot,
+        `step_${String(seq).padStart(6, "0")}_${when}`,
+      );
+      return result.statePath;
+    },
+    [collect, playId],
+  );
+
   const runOneTurn = useCallback(async (): Promise<void> => {
     if (runningRef.current) return;
     if (!emulator.hasRomLoaded() || !emulator.isRunning()) {
@@ -117,9 +145,8 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     let macro: ButtonStep[] | undefined;
 
     try {
-      if (saveCheckpoint) {
-        const before = await saveCheckpoint(`before_turn_${String(seq).padStart(6, "0")}`);
-        stateBefore = before.statePath;
+      if (collectStates) {
+        stateBefore = await saveStepState(seq, "before");
       }
 
       const pluginState = plugin.readState();
@@ -133,15 +160,23 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         playId,
         state: pluginState,
         screenshot: getScreenshot?.(),
-        options: plugin.availableCommands(),
+        options: plugin.availableCommands(pluginState),
       };
       setLastRequest(request);
 
-      const res = await fetch("/api/turn", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(request),
-      });
+      const controller = new AbortController();
+      const timeoutId = window.setTimeout(() => controller.abort(), turnTimeoutMs);
+      let res: Response;
+      try {
+        res = await fetch("/api/turn", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(request),
+          signal: controller.signal,
+        });
+      } finally {
+        window.clearTimeout(timeoutId);
+      }
       if (!res.ok) {
         const body = await res.text();
         throw new Error(`turn failed (${res.status}): ${body}`);
@@ -155,9 +190,8 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       await emulator.runMacro(macro);
       setIsPlayingMacro(false);
 
-      if (saveCheckpoint) {
-        const after = await saveCheckpoint(`after_turn_${String(seq).padStart(6, "0")}`);
-        stateAfter = after.statePath;
+      if (collectStates) {
+        stateAfter = await saveStepState(seq, "after");
       }
 
       const record: StepRecord = {
@@ -172,6 +206,16 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       };
       await persistStep(record);
 
+      let diff: Record<string, unknown> | undefined;
+      if (collectStates && stateBefore && stateAfter) {
+        try {
+          diff = await fetchDiff(playId, stateBefore, stateAfter);
+          console.log(`step ${seq} diff:`, diff);
+        } catch (diffErr) {
+          console.warn(`step ${seq} diff failed:`, diffErr);
+        }
+      }
+
       const entry: TurnLogEntry = {
         seq,
         ts,
@@ -181,6 +225,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         macro,
         stateBefore,
         stateAfter,
+        diff,
       };
       setMessages((prev) => [...prev, entry]);
 
@@ -211,7 +256,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setIsPlayingMacro(false);
       runningRef.current = false;
     }
-  }, [emulator, game, playId, plugin, getScreenshot, saveCheckpoint, persistStep]);
+  }, [emulator, game, playId, plugin, getScreenshot, persistStep, turnTimeoutMs, collectStates, saveStepState]);
 
   const step = useCallback(async () => {
     setAutoRunState(false);

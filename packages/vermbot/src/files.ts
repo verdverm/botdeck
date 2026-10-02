@@ -23,8 +23,10 @@ import {
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  diffFF1States,
   readFF1StateFromSaveState,
   type FF1GameState,
+  type FF1StateDiff,
   type JsNesState,
 } from "@games/ff1-state";
 import type {
@@ -179,6 +181,8 @@ export interface AgentConfig {
   model: string;
   maxToolRounds: number;
   maxTokens: number;
+  /** Per-provider-turn timeout in milliseconds. */
+  timeoutMs: number;
   limits: AgentLimits;
 }
 
@@ -186,6 +190,7 @@ const DEFAULT_AGENT_CONFIG: AgentConfig = {
   model: "small",
   maxToolRounds: 5,
   maxTokens: 1024,
+  timeoutMs: 120_000,
   limits: { goals: 1024, memory: 2048, journal: 32768, memoryCount: 10 },
 };
 
@@ -201,6 +206,7 @@ function extractAgentConfig(
   if (typeof agent["model"] === "string") out.model = agent["model"];
   if (typeof agent["maxToolRounds"] === "number") out.maxToolRounds = agent["maxToolRounds"];
   if (typeof agent["maxTokens"] === "number") out.maxTokens = agent["maxTokens"];
+  if (typeof agent["timeoutMs"] === "number") out.timeoutMs = agent["timeoutMs"];
   if (limits) {
     out.limits = {
       goals: numberOrDefault(limits["goals"], DEFAULT_AGENT_CONFIG.limits.goals),
@@ -233,6 +239,7 @@ export function resolveAgentConfig(game: string, id?: string): AgentConfig {
     model: merged.model ?? DEFAULT_AGENT_CONFIG.model,
     maxToolRounds: merged.maxToolRounds ?? DEFAULT_AGENT_CONFIG.maxToolRounds,
     maxTokens: merged.maxTokens ?? DEFAULT_AGENT_CONFIG.maxTokens,
+    timeoutMs: merged.timeoutMs ?? DEFAULT_AGENT_CONFIG.timeoutMs,
     limits: mergeLimits(gameCfg?.limits, playCfg?.limits),
   };
 }
@@ -960,7 +967,7 @@ export function listPlayStates(
   }
 }
 
-const STATE_FILE_RE = /[\w.-]+\.(state|ff1|metadata)\.json$/;
+const STATE_FILE_RE = /^[\w.-]+\.(state|ff1|metadata)\.json$/;
 
 export function readPlayState(game: string, id: string, filename: string): unknown {
   assertSegment("game", game);
@@ -971,6 +978,34 @@ export function readPlayState(game: string, id: string, filename: string): unkno
   const file = join(playDir(game, id), "states", filename);
   if (!existsSync(file)) throw new FileNotFoundError(file);
   return JSON.parse(readFileSync(file, "utf8"));
+}
+
+function ff1Filename(filename: string): string {
+  const base = filename.replace(/\.(state|ff1|metadata)\.json$/, "");
+  return `${base}.ff1.json`;
+}
+
+export function diffPlayStates(
+  game: string,
+  id: string,
+  beforeFilename: string,
+  afterFilename: string,
+): FF1StateDiff {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  if (!STATE_FILE_RE.test(beforeFilename)) {
+    throw new PathEscapeError(beforeFilename);
+  }
+  if (!STATE_FILE_RE.test(afterFilename)) {
+    throw new PathEscapeError(afterFilename);
+  }
+  const beforeFile = join(playDir(game, id), "states", ff1Filename(beforeFilename));
+  const afterFile = join(playDir(game, id), "states", ff1Filename(afterFilename));
+  if (!existsSync(beforeFile)) throw new FileNotFoundError(beforeFile);
+  if (!existsSync(afterFile)) throw new FileNotFoundError(afterFile);
+  const before = JSON.parse(readFileSync(beforeFile, "utf8")) as FF1GameState;
+  const after = JSON.parse(readFileSync(afterFile, "utf8")) as FF1GameState;
+  return diffFF1States(before, after);
 }
 
 function stateBaseFromFilename(filename: string): string | undefined {

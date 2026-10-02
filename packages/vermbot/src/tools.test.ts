@@ -18,6 +18,7 @@ const TEST_CONFIG: AgentConfig = {
   model: "small",
   maxToolRounds: 5,
   maxTokens: 1024,
+  timeoutMs: 120_000,
   limits: { goals: 100, memory: 50, journal: 200, memoryCount: 3 },
 };
 
