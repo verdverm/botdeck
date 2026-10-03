@@ -8,6 +8,7 @@ import {
   readPlayGoals,
   writePlayConfig,
 } from "./files.ts";
+import { useTempRepoRoot } from "./test-root.ts";
 import type { AgentConfig } from "./files.ts";
 
 function tmpId(prefix: string): string {
@@ -23,11 +24,12 @@ const TEST_CONFIG: AgentConfig = {
 };
 
 describe("makeAgentTools", () => {
-  let game: string;
+  useTempRepoRoot();
+
+  const game = "ff1";
   let id: string;
 
   beforeEach(() => {
-    game = "ff1";
     id = tmpId("tools");
     createPlay(game, id);
     writePlayConfig(game, id, {
@@ -38,11 +40,7 @@ describe("makeAgentTools", () => {
   });
 
   afterEach(() => {
-    try {
-      deletePlay(game, id);
-    } catch {
-      // ignore
-    }
+    deletePlay(game, id);
   });
 
   it("definitions match tool names and required fields", () => {

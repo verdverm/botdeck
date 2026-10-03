@@ -1,6 +1,6 @@
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach } from "vitest";
 import {
   repoPath,
   gameDir,
@@ -19,12 +19,43 @@ import {
   FileNotFoundError,
   ValidationError,
 } from "./files.ts";
+import { useTempRepoRoot } from "./test-root.ts";
 
 const TEST_GAME = "ff1";
 
 function tmpPlayId(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
+
+function writeGameConfig(game: string, config: Record<string, unknown>): void {
+  const dir = gameDir(game);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.json"), JSON.stringify(config));
+}
+
+function seedGameConfig(): void {
+  writeGameConfig(TEST_GAME, {
+    agent: {
+      model: "small",
+      maxToolRounds: 5,
+      maxTokens: 1024,
+      timeoutMs: 120_000,
+      limits: {
+        goals: 1024,
+        memory: 2048,
+        journal: 32768,
+        memoryCount: 10,
+      },
+    },
+    prompt: {
+      snippets: ["system", "commands", "state"],
+    },
+  });
+}
+
+describe("files", () => {
+  useTempRepoRoot();
+  beforeEach(() => seedGameConfig());
 
 describe("repoPath", () => {
   it("resolves a safe path under the repo root", () => {
@@ -63,8 +94,18 @@ describe("resolveAgentConfig", () => {
   });
 
   it("play config overrides the game model", () => {
-    const cfg = resolveAgentConfig(TEST_GAME, "0000_dev");
-    expect(cfg.model).toBe("small");
+    createPlay(TEST_GAME, "0000_dev");
+    try {
+      writePlayConfig(TEST_GAME, "0000_dev", {
+        id: "0000_dev",
+        game: TEST_GAME,
+        agent: { model: "playmodel" },
+      });
+      const cfg = resolveAgentConfig(TEST_GAME, "0000_dev");
+      expect(cfg.model).toBe("playmodel");
+    } finally {
+      deletePlay(TEST_GAME, "0000_dev");
+    }
   });
 
   it("falls back to defaults when no game config exists", () => {
@@ -119,9 +160,18 @@ describe("resolveAgentConfig", () => {
 
 describe("resolvePromptConfig", () => {
   it("returns the play prompt snippet list when present", () => {
-    const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
-    expect(cfg.snippets).toContain("system");
-    expect(cfg.snippets).toContain("commands");
+    createPlay(TEST_GAME, "0000_dev");
+    try {
+      writePlayConfig(TEST_GAME, "0000_dev", {
+        id: "0000_dev",
+        game: TEST_GAME,
+        prompt: { snippets: ["play-system", "play-state"] },
+      });
+      const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
+      expect(cfg.snippets).toEqual(["play-system", "play-state"]);
+    } finally {
+      deletePlay(TEST_GAME, "0000_dev");
+    }
   });
 
   it("falls back to the game prompt snippets", () => {
@@ -355,4 +405,5 @@ describe("play snippets", () => {
       deletePlay(TEST_GAME, id);
     }
   });
+});
 });

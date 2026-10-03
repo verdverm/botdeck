@@ -29,6 +29,7 @@ import {
   type FF1StateDiff,
   type JsNesState,
 } from "@games/ff1-state";
+import { Schema } from "effect";
 import type {
   ButtonStep,
   GameCommand,
@@ -38,15 +39,32 @@ import type {
 
 // This file lives at <repo>/packages/vermbot/src, so the repo root is three up.
 const HERE = dirname(fileURLToPath(import.meta.url));
-export const REPO_ROOT = resolve(HERE, "../../..");
+const DEFAULT_REPO_ROOT = resolve(HERE, "../../..");
 
-export const GAMES_DIR = join(REPO_ROOT, "games");
-export const PLAYS_DIR = join(REPO_ROOT, "plays");
+let repoRoot = DEFAULT_REPO_ROOT;
+
+/** Point the file API at a different root (e.g. a temp dir in tests). */
+export function setRepoRoot(root?: string): void {
+  repoRoot = root ? resolve(root) : DEFAULT_REPO_ROOT;
+}
+
+/** Current repo root used by path helpers. */
+export function getRepoRoot(): string {
+  return repoRoot;
+}
+
+function gamesDir(): string {
+  return join(repoRoot, "games");
+}
+
+function playsDir(): string {
+  return join(repoRoot, "plays");
+}
 
 /** Resolve `...segments` under the repo root, refusing any escape. */
 export function repoPath(...segments: string[]): string {
-  const abs = resolve(REPO_ROOT, ...segments);
-  if (abs !== REPO_ROOT && !abs.startsWith(REPO_ROOT + "/")) {
+  const abs = resolve(repoRoot, ...segments);
+  if (abs !== repoRoot && !abs.startsWith(repoRoot + "/")) {
     throw new PathEscapeError(segments.join("/"));
   }
   return abs;
@@ -104,13 +122,14 @@ export interface GameInfo {
 }
 
 export function listGames(): GameInfo[] {
-  if (!existsSync(GAMES_DIR)) return [];
-  return readdirSync(GAMES_DIR, { withFileTypes: true })
+  const dir = gamesDir();
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isDirectory())
     .map((d) => ({
       game: d.name,
-      hasRom: existsSync(join(GAMES_DIR, d.name, "game.nes")),
-      hasGuide: existsSync(join(GAMES_DIR, d.name, "guide")),
+      hasRom: existsSync(join(dir, d.name, "game.nes")),
+      hasGuide: existsSync(join(dir, d.name, "guide")),
     }))
     .filter((g) => g.hasRom || g.hasGuide)
     .sort((a, b) => a.game.localeCompare(b.game));
@@ -191,82 +210,73 @@ export function resolvePromptConfig(game: string, id?: string): PromptConfig {
   return { snippets: ["system", "commands", "state"] };
 }
 
-function numberOrDefault(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
+export class AgentLimits extends Schema.Class<AgentLimits>("AgentLimits")({
+  goals: Schema.Number,
+  memory: Schema.Number,
+  journal: Schema.Number,
+  memoryCount: Schema.Number,
+}) {}
 
-export interface AgentLimits {
-  goals: number;
-  memory: number;
-  journal: number;
-  memoryCount: number;
-}
-
-export interface AgentConfig {
-  model: string;
-  maxToolRounds: number;
-  maxTokens: number;
+export class AgentConfig extends Schema.Class<AgentConfig>("AgentConfig")({
+  model: Schema.String,
+  maxToolRounds: Schema.Number,
+  maxTokens: Schema.Number,
   /** Per-provider-turn timeout in milliseconds. */
-  timeoutMs: number;
-  limits: AgentLimits;
-}
+  timeoutMs: Schema.Number,
+  limits: AgentLimits,
+}) {}
 
-const DEFAULT_AGENT_CONFIG: AgentConfig = {
+class AgentLimitsPartial extends Schema.Class<AgentLimitsPartial>("AgentLimitsPartial")({
+  goals: Schema.optional(Schema.Number),
+  memory: Schema.optional(Schema.Number),
+  journal: Schema.optional(Schema.Number),
+  memoryCount: Schema.optional(Schema.Number),
+}) {}
+
+class AgentConfigPartial extends Schema.Class<AgentConfigPartial>("AgentConfigPartial")({
+  model: Schema.optional(Schema.String),
+  maxToolRounds: Schema.optional(Schema.Number),
+  maxTokens: Schema.optional(Schema.Number),
+  timeoutMs: Schema.optional(Schema.Number),
+  limits: Schema.optional(AgentLimitsPartial),
+}) {}
+
+const DEFAULT_AGENT_CONFIG = new AgentConfig({
   model: "small",
   maxToolRounds: 5,
   maxTokens: 1024,
   timeoutMs: 120_000,
-  limits: { goals: 1024, memory: 2048, journal: 32768, memoryCount: 10 },
-};
+  limits: new AgentLimits({ goals: 1024, memory: 2048, journal: 32768, memoryCount: 10 }),
+});
 
-function extractAgentConfig(
-  config: Record<string, unknown> | undefined,
-): Partial<AgentConfig> | undefined {
-  if (!config) return undefined;
-  const agent = config["agent"];
-  if (!isPlainObject(agent)) return undefined;
-  const limitsRaw = agent["limits"];
-  const limits = isPlainObject(limitsRaw) ? limitsRaw : undefined;
-  const out: Partial<AgentConfig> = {};
-  if (typeof agent["model"] === "string") out.model = agent["model"];
-  if (typeof agent["maxToolRounds"] === "number") out.maxToolRounds = agent["maxToolRounds"];
-  if (typeof agent["maxTokens"] === "number") out.maxTokens = agent["maxTokens"];
-  if (typeof agent["timeoutMs"] === "number") out.timeoutMs = agent["timeoutMs"];
-  if (limits) {
-    out.limits = {
-      goals: numberOrDefault(limits["goals"], DEFAULT_AGENT_CONFIG.limits.goals),
-      memory: numberOrDefault(limits["memory"], DEFAULT_AGENT_CONFIG.limits.memory),
-      journal: numberOrDefault(limits["journal"], DEFAULT_AGENT_CONFIG.limits.journal),
-      memoryCount: numberOrDefault(limits["memoryCount"], DEFAULT_AGENT_CONFIG.limits.memoryCount),
-    };
+function decodeGameAgentConfig(game: string): AgentConfig {
+  const raw = readGameConfig(game).agent;
+  if (!isPlainObject(raw)) return DEFAULT_AGENT_CONFIG;
+  return Schema.decodeUnknownSync(AgentConfig)(raw);
+}
+
+function decodePlayAgentConfig(game: string, id: string): AgentConfigPartial | undefined {
+  try {
+    const raw = readPlayConfig(game, id).agent;
+    if (!isPlainObject(raw)) return undefined;
+    return Schema.decodeUnknownSync(AgentConfigPartial)(raw);
+  } catch (e) {
+    if (e instanceof FileNotFoundError) return undefined;
+    throw e;
   }
-  return out;
 }
 
 export function resolveAgentConfig(game: string, id?: string): AgentConfig {
-  const gameCfg = extractAgentConfig(readGameConfig(game));
-  let playCfg: Partial<AgentConfig> | undefined;
-  if (id) {
-    try {
-      playCfg = extractAgentConfig(readPlayConfig(game, id));
-    } catch (e) {
-      if (!(e instanceof FileNotFoundError)) throw e;
-    }
-  }
-  const mergeLimits = (base?: AgentLimits, override?: AgentLimits): AgentLimits => ({
-    goals: override?.goals ?? base?.goals ?? DEFAULT_AGENT_CONFIG.limits.goals,
-    memory: override?.memory ?? base?.memory ?? DEFAULT_AGENT_CONFIG.limits.memory,
-    journal: override?.journal ?? base?.journal ?? DEFAULT_AGENT_CONFIG.limits.journal,
-    memoryCount: override?.memoryCount ?? base?.memoryCount ?? DEFAULT_AGENT_CONFIG.limits.memoryCount,
+  const gameCfg = decodeGameAgentConfig(game);
+  const playCfg = id ? decodePlayAgentConfig(game, id) : undefined;
+  if (!playCfg) return gameCfg;
+  return new AgentConfig({
+    model: playCfg.model ?? gameCfg.model,
+    maxToolRounds: playCfg.maxToolRounds ?? gameCfg.maxToolRounds,
+    maxTokens: playCfg.maxTokens ?? gameCfg.maxTokens,
+    timeoutMs: playCfg.timeoutMs ?? gameCfg.timeoutMs,
+    limits: new AgentLimits({ ...gameCfg.limits, ...playCfg.limits }),
   });
-  const merged: Partial<AgentConfig> = { ...gameCfg, ...playCfg };
-  return {
-    model: merged.model ?? DEFAULT_AGENT_CONFIG.model,
-    maxToolRounds: merged.maxToolRounds ?? DEFAULT_AGENT_CONFIG.maxToolRounds,
-    maxTokens: merged.maxTokens ?? DEFAULT_AGENT_CONFIG.maxTokens,
-    timeoutMs: merged.timeoutMs ?? DEFAULT_AGENT_CONFIG.timeoutMs,
-    limits: mergeLimits(gameCfg?.limits, playCfg?.limits),
-  };
 }
 
 function readPlayTextFile(game: string, id: string, ...segments: string[]): string {
@@ -667,10 +677,11 @@ export function deletePlay(game: string, id: string): void {
 }
 
 export function listPlays(game?: string): { game: string; id: string }[] {
-  const roots = game ? [assertSegment("game", game)] : existsSync(PLAYS_DIR) ? readdirSync(PLAYS_DIR) : [];
+  const root = playsDir();
+  const roots = game ? [assertSegment("game", game)] : existsSync(root) ? readdirSync(root) : [];
   const out: { game: string; id: string }[] = [];
   for (const g of roots) {
-    const gameRoot = join(PLAYS_DIR, g);
+    const gameRoot = join(root, g);
     if (!existsSync(gameRoot) || !statSync(gameRoot).isDirectory()) continue;
     for (const id of readdirSync(gameRoot)) {
       if (statSync(join(gameRoot, id)).isDirectory()) out.push({ game: g, id });
@@ -889,7 +900,7 @@ export function savePlayState(
   writeFileSync(metadataFile, `${JSON.stringify(toJSONSafe(metadata), null, 2)}\n`);
 
   const repoRelative = (abs: string): string => {
-    const rel = abs.slice(REPO_ROOT.length);
+    const rel = abs.slice(repoRoot.length);
     return rel.startsWith("/") ? rel.slice(1) : rel;
   };
 

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { renderPrompt } from "./prompts.ts";
 import { gameDir, playDir, createPlay, deletePlay } from "./files.ts";
+import { useTempRepoRoot } from "./test-root.ts";
 import type { TurnRequest } from "./protocol.ts";
 
 function tmpName(prefix: string): string {
@@ -34,6 +35,8 @@ function setSnippetList(game: string, id: string | undefined, snippets: string[]
 }
 
 describe("renderPrompt", () => {
+  useTempRepoRoot();
+
   let game: string;
   let id: string;
 
@@ -46,16 +49,8 @@ describe("renderPrompt", () => {
   });
 
   afterEach(() => {
-    try {
-      deletePlay(game, id);
-    } catch {
-      // ignore
-    }
-    try {
-      rmSync(gameDir(game), { recursive: true, force: true });
-    } catch {
-      // ignore
-    }
+    deletePlay(game, id);
+    rmSync(gameDir(game), { recursive: true, force: true });
   });
 
   it("uses the system snippet as the system prompt", () => {
