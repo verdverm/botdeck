@@ -15,6 +15,10 @@ import {
   readPlaySnippet,
   writePlaySnippet,
   deletePlaySnippet,
+  listPlayAgentSnippets,
+  readPlayAgentSnippet,
+  writePlayAgentSnippet,
+  deletePlayAgentSnippet,
   PathEscapeError,
   FileNotFoundError,
   ValidationError,
@@ -45,6 +49,8 @@ function seedGameConfig(): void {
         memory: 2048,
         journal: 32768,
         memoryCount: 10,
+        snippets: 4096,
+        snippetCount: 50,
       },
     },
     prompt: {
@@ -197,6 +203,8 @@ describe("createPlay / deletePlay", () => {
       expect(existsSync(`${dir}/memory`)).toBe(true);
       expect(existsSync(`${dir}/journal`)).toBe(true);
       expect(existsSync(`${dir}/goals`)).toBe(true);
+      expect(existsSync(`${dir}/snippets/user`)).toBe(true);
+      expect(existsSync(`${dir}/snippets/agent`)).toBe(true);
     } finally {
       deletePlay(TEST_GAME, id);
     }
@@ -329,7 +337,7 @@ describe("play snippets", () => {
     createPlay(TEST_GAME, id);
     try {
       const dir = playDir(TEST_GAME, id);
-      const snippetsDir = join(dir, "snippets");
+      const snippetsDir = join(dir, "snippets", "user");
       expect(existsSync(snippetsDir)).toBe(true);
       writeFileSync(
         join(snippetsDir, "test.snippet.json"),
@@ -374,7 +382,7 @@ describe("play snippets", () => {
     createPlay(TEST_GAME, id);
     try {
       const dir = playDir(TEST_GAME, id);
-      const snippetsDir = join(dir, "snippets");
+      const snippetsDir = join(dir, "snippets", "user");
       writeFileSync(
         join(snippetsDir, "bad.snippet.json"),
         JSON.stringify({ name: "Bad", steps: "not-an-array" }),
@@ -401,6 +409,67 @@ describe("play snippets", () => {
 
       deletePlaySnippet(TEST_GAME, id, "new");
       expect(listPlaySnippets(TEST_GAME, id).some((s) => s.id === "new")).toBe(false);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+});
+
+describe("agent snippets", () => {
+  it("writes, reads, lists, and deletes agent snippets", () => {
+    const id = tmpPlayId("agent_snippets_crud");
+    createPlay(TEST_GAME, id);
+    try {
+      writePlayAgentSnippet(TEST_GAME, id, "test", { content: "agent override" });
+      expect(readPlayAgentSnippet(TEST_GAME, id, "test")).toBe("agent override");
+      const list = listPlayAgentSnippets(TEST_GAME, id);
+      expect(list.some((s) => s.name === "test")).toBe(true);
+      deletePlayAgentSnippet(TEST_GAME, id, "test");
+      expect(listPlayAgentSnippets(TEST_GAME, id).some((s) => s.name === "test")).toBe(false);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("enforces the agent snippet size limit", () => {
+    const id = tmpPlayId("agent_snippets_size");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(() =>
+        writePlayAgentSnippet(TEST_GAME, id, "big", { content: "x".repeat(4097) }),
+      ).toThrow();
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("enforces the agent snippet count limit", () => {
+    const id = tmpPlayId("agent_snippets_count");
+    createPlay(TEST_GAME, id);
+    try {
+      writePlayConfig(TEST_GAME, id, {
+        id,
+        game: TEST_GAME,
+        agent: {
+          limits: { snippets: 4096, snippetCount: 2 },
+        },
+      });
+      writePlayAgentSnippet(TEST_GAME, id, "a", { content: "a" });
+      writePlayAgentSnippet(TEST_GAME, id, "b", { content: "b" });
+      writePlayAgentSnippet(TEST_GAME, id, "c", { content: "c" });
+      const names = listPlayAgentSnippets(TEST_GAME, id).map((s) => s.name).sort();
+      expect(names).toEqual(["b", "c"]);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("rejects unsafe agent snippet names", () => {
+    const id = tmpPlayId("agent_snippets_path");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(() => writePlayAgentSnippet(TEST_GAME, id, "../escape", { content: "x" })).toThrow(PathEscapeError);
+      expect(() => writePlayAgentSnippet(TEST_GAME, id, "a/b", { content: "x" })).toThrow(PathEscapeError);
     } finally {
       deletePlay(TEST_GAME, id);
     }

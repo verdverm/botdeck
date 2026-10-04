@@ -1,11 +1,25 @@
 import { expect, test } from "playwright/test";
+import {
+  copyPlaySnippet,
+  copyPlayStateFiles,
+  createTestPlay,
+  deleteTestPlay,
+  tempPlayId,
+} from "./test-play.ts";
 
 const GAME = "ff1";
-const PLAY = "0000_dev";
+const SOURCE_PLAY_ID = "0000_dev";
+const START_STATE_BASE = "000002-start-02-town-entrence";
+
+let currentPlayId: string | undefined;
+
+test.afterEach(() => {
+  deleteTestPlay(GAME, currentPlayId);
+  currentPlayId = undefined;
+});
 
 async function runNamedSnippet(page: import("playwright").Page, name: string) {
-  // Open the snippets tab and expand the target snippet.
-  await page.getByRole("button", { name: "snippets" }).click();
+  await page.getByRole("button", { name: "snippets", exact: true }).click();
   const row = page
     .getByRole("button")
     .filter({ has: page.getByText(name, { exact: true }) })
@@ -17,8 +31,7 @@ async function runNamedSnippet(page: import("playwright").Page, name: string) {
   await expect(runButton.first()).toBeVisible();
   await runButton.first().click();
 
-  // Wait for the capture summary (before/after/diff) to render for this snippet.
-  const summary = page.locator(`text=diff:`).first();
+  const summary = page.locator("text=diff:").first();
   await expect(summary).toBeVisible({ timeout: 30_000 });
 }
 
@@ -38,7 +51,12 @@ test.describe("snippet capture", () => {
     );
     test.skip(!romAvailable, `ROM not available for ${GAME}`);
 
-    await page.goto(`/?play=${GAME}/${PLAY}`);
+    currentPlayId = tempPlayId("snippet_open");
+    await createTestPlay(page, GAME, currentPlayId, "e2e snippet menu-open");
+    copyPlayStateFiles(GAME, SOURCE_PLAY_ID, currentPlayId, START_STATE_BASE);
+    copyPlaySnippet(GAME, SOURCE_PLAY_ID, currentPlayId, "ff1-menu-open");
+
+    await page.goto(`/?play=${GAME}/${currentPlayId}`);
     await expect(page.locator("h1")).toContainText("botdeck");
 
     const powerButton = page.getByRole("button", { name: /Power (on|off)/ });
@@ -57,7 +75,7 @@ test.describe("snippet capture", () => {
         fetch(`/api/plays/${game}/${id}/states`).then((r) => r.json()) as Promise<
           Array<{ filename: string; name: string; extractedPath?: string }>
         >,
-      { game: GAME, id: PLAY },
+      { game: GAME, id: currentPlayId },
     );
 
     const menuStates = states.filter((s) => s.name.startsWith("snippet_ff1-menu-open"));
@@ -74,7 +92,7 @@ test.describe("snippet capture", () => {
         ).then((r) => r.json()) as Promise<Record<string, unknown>>,
       {
         game: GAME,
-        id: PLAY,
+        id: currentPlayId,
         beforeFile: before!.filename,
         afterFile: after!.filename,
       },
@@ -90,7 +108,18 @@ test.describe("snippet capture", () => {
     const apiHealthy = await page.evaluate(() => fetch("/api/health").then((r) => r.ok));
     test.skip(!apiHealthy, "vermbot API is not reachable");
 
-    await page.goto(`/?play=${GAME}/${PLAY}`);
+    const romAvailable = await page.evaluate(
+      (game) => fetch(`/api/games/${game}/rom`, { method: "HEAD" }).then((r) => r.ok),
+      GAME,
+    );
+    test.skip(!romAvailable, `ROM not available for ${GAME}`);
+
+    currentPlayId = tempPlayId("snippet_down");
+    await createTestPlay(page, GAME, currentPlayId, "e2e snippet menu-down");
+    copyPlayStateFiles(GAME, SOURCE_PLAY_ID, currentPlayId, START_STATE_BASE);
+    copyPlaySnippet(GAME, SOURCE_PLAY_ID, currentPlayId, "ff1-menu-down");
+
+    await page.goto(`/?play=${GAME}/${currentPlayId}`);
     await expect(page.getByText(/standby|power on/)).toBeVisible();
 
     const powerButton = page.getByRole("button", { name: /Power (on|off)/ });
@@ -106,7 +135,7 @@ test.describe("snippet capture", () => {
         fetch(`/api/plays/${game}/${id}/states`).then((r) => r.json()) as Promise<
           Array<{ filename: string; name: string; extractedPath?: string }>
         >,
-      { game: GAME, id: PLAY },
+      { game: GAME, id: currentPlayId },
     );
     const downs = states.filter((s) => s.name.startsWith("snippet_ff1-menu-down"));
     const before = downs.find((s) => s.name.includes("_before"));
@@ -119,7 +148,7 @@ test.describe("snippet capture", () => {
         fetch(
           `/api/plays/${game}/${id}/diff?before=${encodeURIComponent(beforeFile)}&after=${encodeURIComponent(afterFile)}`,
         ).then((r) => r.json()) as Promise<Record<string, unknown>>,
-      { game: GAME, id: PLAY, beforeFile: before.filename, afterFile: after.filename },
+      { game: GAME, id: currentPlayId, beforeFile: before.filename, afterFile: after.filename },
     );
     console.log("menu-down diff:", JSON.stringify(diff, null, 2));
   });

@@ -403,7 +403,7 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
                         <JsonEditor
                           data={editorData(s.id)!}
                           setData={(d) => updateDraft(s.id, d as EditableSnippet)}
-                          collapse={2}
+                          collapse={false}
                           rootName="snippet"
                           theme={[githubDarkTheme, {}]}
                           showCollectionCount="when-closed"
@@ -444,7 +444,7 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
                     <JsonEditor
                       data={editorData(NEW_KEY)!}
                       setData={(d) => updateDraft(NEW_KEY, d as EditableSnippet)}
-                      collapse={2}
+                      collapse={false}
                       rootName="snippet"
                       theme={[githubDarkTheme, {}]}
                       showCollectionCount="when-closed"

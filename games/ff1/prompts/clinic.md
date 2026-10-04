@@ -3,8 +3,8 @@
 You are at a clinic counter. The clinic can revive dead party members, cure poison, or cure stone for a fee.
 
 - `heal` - confirm healing at the clinic (revive/cure poison/stone).
-- `interact` - talk to the clinic staff or confirm a prompt.
-- `cancel` - back out of a dialog.
-- `wait` - let the healing animation and dialog finish.
+- `menu_select` - confirm a prompt.
+- `menu_cancel` - back out of a dialog.
+- `dialog_advance` - advance the staff text.
 
-First-pass limitation: cursor navigation is not implemented. Only use `heal` when the dialog is already asking for confirmation.
+First-pass limitation: if `heal` does not land on the correct option, use `menu_navigate` to move the cursor and then `menu_select`.

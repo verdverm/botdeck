@@ -118,6 +118,7 @@ import {
   hasVehicleOwnership,
 } from "../data/vehicles.js";
 import { decodeName } from "../data/text.js";
+import { readDialogState } from "./dialog.js";
 import type {
   PartyCharacter,
   InventoryItem,
@@ -819,7 +820,10 @@ export function getAvailableLocations(world: WorldState): KnownLocation[] {
  * @param view - A MemoryView backed by the full NES CPU address space.
  * @returns Complete game snapshot including party, gold, inventory, world, flags, battle, context, menu, and locations.
  */
-export function readFF1State(view: MemoryView): FF1GameState {
+export function readFF1State(
+  view: MemoryView,
+  nametable?: { data: Uint8Array; width: number },
+): FF1GameState {
   const party = readParty(view);
   const world = readWorldState(view);
   const battle = readBattleState(view, party);
@@ -834,6 +838,7 @@ export function readFF1State(view: MemoryView): FF1GameState {
     context,
     menu: readMenuState(view, context),
     availableLocations: getAvailableLocations(world),
+    dialog: readDialogState(view, nametable),
   };
 }
 

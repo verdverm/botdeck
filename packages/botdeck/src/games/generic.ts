@@ -19,7 +19,6 @@ export class GenericGamePlugin implements GamePlugin {
 
   availableCommands(): CommandSpec[] {
     return [
-      { name: "wait", description: "Do nothing this turn." },
       { name: "a", description: "Press the A button." },
       { name: "b", description: "Press the B button." },
       { name: "start", description: "Press the Start button." },

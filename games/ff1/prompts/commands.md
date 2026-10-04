@@ -9,7 +9,7 @@ Choose exactly one command from the list above. The `name` and `args` must match
 The command set changes based on the current **context** reported in the game state:
 
 - **Field mode** (walking on the overworld or in a town): movement and interaction commands.
-- **Menu mode** (shop, inn, main menu): menu actions like `buy`, `sell`, or `stay`.
+- **Menu mode** (main menu, shop, inn, clinic): menu navigation and selection commands.
 - **Battle mode**: one action per party member per turn.
 
 ## Field commands
@@ -20,29 +20,31 @@ The command set changes based on the current **context** reported in the game st
 - `cancel` - Press B to cancel or go back.
 - `menu` - Press START to open or close the main menu.
 - `select` - Press SELECT to toggle cursor/target mode in menus.
-- `wait` - Do nothing this turn. Useful when waiting for an animation or dialogue.
 
-## Menu commands (only advertised when in a menu)
+## Menu commands (advertised when a menu is open)
 
-- `buy({ "item": "string", "quantity": number })` - Buy an item from the current shop. The state includes the shop type (weapon/armor/magic/item/caravan) and cursor positions.
+- `menu_navigate({ "direction": "up|down|left|right", "steps": number })` - Move the menu cursor. Use when you need to reposition the cursor before selecting.
+- `menu_select` - Confirm the current menu selection (A).
+- `menu_cancel` - Cancel or close the current menu layer (B).
+- `buy({ "item": "string", "quantity": number })` - Buy an item from the current shop. The item name or index can be used; the compiler will navigate to it.
 - `sell({ "item": "string" })` - Sell an item to the current shop.
 - `stay` - Confirm a stay at the inn to restore the party.
 - `heal` - Confirm healing at the clinic (revive/cure poison/stone).
-- `use_item({ "item": "string", "target": "string" })` - Use a consumable item on the named target. Only advertised when the party has a usable consumable.
+- `use_item({ "item": "string", "target": "string" })` - Use a consumable item on the named target. Works in the field menu and in battle.
+- `dialog_advance({ "presses": number })` - Press A repeatedly to advance dialogue. Default 3 presses.
 
-## Battle commands (only advertised while in battle)
+## Battle commands (advertised while in battle)
 
 In battle, each command names an `actor` (the party member taking the action) and, when needed, a `target`.
 
 - `fight({ "actor": "string", "target": "string" })` - Attack an enemy. Use the enemy name or slot label from the battle state.
 - `magic({ "actor": "string", "spell": "string", "target": "string" })` - Cast a learned spell if the actor has charges.
-- `use_item({ "actor": "string", "item": "string", "target": "string" })` - Drink/use a consumable item in battle (DRINK menu entry).
+- `use_item({ "actor": "string", "item": "string", "target": "string" })` - Drink/use a consumable item in battle.
 - `equip({ "actor": "string" })` - Open the EQUIP menu for the actor.
 - `run({ "actor": "string" })` - Attempt to flee.
-- `wait` - Wait for animations or the enemy turn to resolve.
 
 ## Choosing commands
 
-When moving toward a goal, prefer `goto(location)` with a location from the available list. When the party is in front of a shop, inn, or NPC, prefer `goto` or `talk_to` over raw `interact`. When in battle, choose one action for one party member and wait when the game is animating.
+When moving toward a goal, prefer `goto(location)` with a location from the available list. When the party is in front of a shop, inn, or NPC, prefer `goto` or `talk_to` over raw `interact`. When in battle, choose one action for one party member; the turn loop will call you again after the game animation resolves.
 
-If no safe command is obvious, use `wait` and observe the next state.
+If no safe command is obvious, use `dialog_advance` or `menu_select` only when a text box or menu is clearly waiting for input; otherwise choose the least risky navigation command and observe the next state.

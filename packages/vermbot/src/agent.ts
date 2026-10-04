@@ -10,7 +10,7 @@
  * load from project-level config (packages/vermbot/config.json); the model is
  * selected per request from the resolved agent config, which merges the game's
  * config.json and the play's config.json. The prompt is assembled from
- * games/<game>/prompts/ and plays/<game>/<id>/prompts/ snippets via prompts.ts.
+ * games/<game>/prompts/ and plays/<game>/<id>/snippets/user/ overrides via prompts.ts.
  */
 
 import { readFileSync } from "node:fs";
@@ -22,7 +22,7 @@ import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible"
 import type { TurnRequest, TurnResponse } from "./protocol.ts";
 import { resolveAgentConfig } from "./files.ts";
 import { renderPrompt } from "./prompts.ts";
-import { makeAgentTools, toolDefinitionsForRequest, executeTool } from "./tools.ts";
+import { makeAgentTools, toolDefinitionsForRequest, executeTool, executeDurableCalls } from "./tools.ts";
 import { parseDecision } from "./decision.ts";
 
 // Project-level transport config (base URL), read once at startup.
@@ -81,12 +81,31 @@ function parseToolCallsFromText(text: string): Array<{ id: string; name: string;
   return calls;
 }
 
+function buildToolRequest(
+  model: ReturnType<typeof vllm.model>,
+  system: string,
+  messages: ReturnType<typeof Message.user>[],
+  toolDefinitions: ReturnType<typeof ToolDefinition.make>[],
+  config: { maxTokens: number },
+  userPath: string,
+) {
+  return LLM.request({
+    model,
+    system,
+    messages,
+    tools: toolDefinitions,
+    generation: { maxTokens: config.maxTokens },
+    http: { headers: { "X-GoModel-User-Path": userPath } },
+  });
+}
+
 export async function decide(req: TurnRequest): Promise<TurnResponse> {
   const { system, user } = renderPrompt(req);
   const prompt = { system, user };
   const { game, id } = parsePlayId(req.playId);
   const config = resolveAgentConfig(game, id);
-  const tools = makeAgentTools({ game, id, config });
+  const tools = makeAgentTools({ game, id, config }, req.options);
+  const commandToolNames = new Set(tools.filter((t) => t.isCommand).map((t) => t.name));
   const toolDefinitions = toolDefinitionsForRequest(tools).map((t) =>
     ToolDefinition.make({
       name: t.name,
@@ -100,14 +119,7 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
   const userPath = `/proj/vermbot-plays-games/${game}/${id}`;
 
   let messages = [Message.user(user)];
-  let request = LLM.request({
-    model,
-    system,
-    messages,
-    tools: toolDefinitions,
-    generation: { maxTokens: config.maxTokens },
-    http: { headers: { "X-GoModel-User-Path": userPath } },
-  });
+  let request = buildToolRequest(model, system, messages, toolDefinitions, config, userPath);
 
   for (let round = 0; round < config.maxToolRounds; round++) {
     const program = Effect.gen(function* () {
@@ -122,6 +134,19 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
 
     if (calls.length === 0) {
       return parseDecision(response.text, req.options, prompt);
+    }
+
+    // If the model called a command tool, treat that as the final decision.
+    const commandCall = calls.find((call) => commandToolNames.has(call.name));
+    if (commandCall) {
+      // Execute any accompanying durable calls so the model's side effects land.
+      executeDurableCalls(calls, tools, { game, id, config }, commandToolNames);
+      return {
+        command: { name: commandCall.name, args: commandCall.input as Record<string, unknown> | undefined },
+        reason: "selected via command tool",
+        prompt,
+        raw: response.text,
+      };
     }
 
     const assistantContent = calls.map((call) =>
@@ -147,19 +172,12 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
       ),
     ];
 
-    request = LLM.request({
-      model,
-      system,
-      messages,
-      tools: toolDefinitions,
-      generation: { maxTokens: config.maxTokens },
-      http: { headers: { "X-GoModel-User-Path": userPath } },
-    });
+    request = buildToolRequest(model, system, messages, toolDefinitions, config, userPath);
   }
 
   return {
-    command: { name: "wait" },
-    reason: "max tool rounds reached without a final command",
+    command: { name: "" },
+    error: "max tool rounds reached without a final command",
     prompt,
   };
 }

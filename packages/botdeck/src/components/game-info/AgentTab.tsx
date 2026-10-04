@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { PendingDecision, TurnLogEntry } from "@/hooks/useBotLoop";
 import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse } from "@/types";
-import { parsePlayId, snippetUrl } from "@/play";
+import { parsePlayId, snippetUrl, snippetsUrl } from "@/play";
 import { SectionTitle } from "./shared";
 
 interface AgentTabProps {
@@ -154,8 +154,7 @@ function SnippetDropdown({
       return;
     }
     setLoading(true);
-    const { game, id } = parsePlayId(playId);
-    fetch(`/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/snippets`)
+    fetch(snippetsUrl(playId))
       .then(async (r) => {
         if (!r.ok) throw new Error(`list snippets failed: ${r.status}`);
         return (await r.json()) as { id: string; name: string }[];
@@ -315,6 +314,7 @@ export function AgentTab({
             </label>
           ) : (
             <button
+              data-testid="agent-step-action"
               onClick={onStep}
               disabled={isThinking || isPlayingMacro || !onStep || !!pendingDecision}
               className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
@@ -338,6 +338,7 @@ export function AgentTab({
           )}
           <div className="mt-2 flex gap-2">
             <button
+              data-testid="pending-run"
               onClick={onExecutePending}
               disabled={isPlayingMacro || isThinking}
               className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"

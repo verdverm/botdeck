@@ -1,6 +1,6 @@
 import type { CommandSpec, GameCommand, TurnResponse } from "./protocol.ts";
 
-export function coerceCommand(value: unknown, options: CommandSpec[]): GameCommand {
+export function coerceCommand(value: unknown, options: CommandSpec[]): GameCommand | null {
   const names = new Set(options.map((o) => o.name));
   if (value && typeof value === "object") {
     const obj = value as { name?: unknown; args?: unknown };
@@ -13,7 +13,7 @@ export function coerceCommand(value: unknown, options: CommandSpec[]): GameComma
       return { name, args };
     }
   }
-  return options.length > 0 ? { name: options[0]!.name } : { name: "wait" };
+  return null;
 }
 
 export function parseDecision(
@@ -29,19 +29,31 @@ export function parseDecision(
         command?: unknown;
         reason?: unknown;
       };
-      return {
-        command: coerceCommand(obj.command, options),
-        reason: typeof obj.reason === "string" ? obj.reason : undefined,
-        prompt,
-        raw,
-      };
+      const command = coerceCommand(obj.command, options);
+      if (command) {
+        return {
+          command,
+          reason: typeof obj.reason === "string" ? obj.reason : undefined,
+          prompt,
+          raw,
+        };
+      }
     } catch {
       // fall through to name-match below
     }
   }
   const found = options.find((o) => raw.toUpperCase().includes(o.name.toUpperCase()));
+  if (found) {
+    return {
+      command: { name: found.name },
+      reason: raw.slice(0, 120),
+      prompt,
+      raw,
+    };
+  }
   return {
-    command: found ? { name: found.name } : { name: "wait" },
+    command: { name: "" },
+    error: "No valid command found in model output",
     reason: raw.slice(0, 120),
     prompt,
     raw,

@@ -215,6 +215,8 @@ export class AgentLimits extends Schema.Class<AgentLimits>("AgentLimits")({
   memory: Schema.Number,
   journal: Schema.Number,
   memoryCount: Schema.Number,
+  snippets: Schema.Number,
+  snippetCount: Schema.Number,
 }) {}
 
 export class AgentConfig extends Schema.Class<AgentConfig>("AgentConfig")({
@@ -224,6 +226,13 @@ export class AgentConfig extends Schema.Class<AgentConfig>("AgentConfig")({
   /** Per-provider-turn timeout in milliseconds. */
   timeoutMs: Schema.Number,
   limits: AgentLimits,
+  /**
+   * Optional whitelist of durable tool names exposed to the agent this play. If
+   * omitted, all registered durable tools are available. Command tools derived
+   * from the current turn's available commands are always exposed regardless of
+   * this list. A play's list is merged with the game's list (union of both).
+   */
+  tools: Schema.optional(Schema.Array(Schema.String)),
 }) {}
 
 class AgentLimitsPartial extends Schema.Class<AgentLimitsPartial>("AgentLimitsPartial")({
@@ -231,6 +240,8 @@ class AgentLimitsPartial extends Schema.Class<AgentLimitsPartial>("AgentLimitsPa
   memory: Schema.optional(Schema.Number),
   journal: Schema.optional(Schema.Number),
   memoryCount: Schema.optional(Schema.Number),
+  snippets: Schema.optional(Schema.Number),
+  snippetCount: Schema.optional(Schema.Number),
 }) {}
 
 class AgentConfigPartial extends Schema.Class<AgentConfigPartial>("AgentConfigPartial")({
@@ -239,6 +250,7 @@ class AgentConfigPartial extends Schema.Class<AgentConfigPartial>("AgentConfigPa
   maxTokens: Schema.optional(Schema.Number),
   timeoutMs: Schema.optional(Schema.Number),
   limits: Schema.optional(AgentLimitsPartial),
+  tools: Schema.optional(Schema.Array(Schema.String)),
 }) {}
 
 const DEFAULT_AGENT_CONFIG = new AgentConfig({
@@ -246,7 +258,14 @@ const DEFAULT_AGENT_CONFIG = new AgentConfig({
   maxToolRounds: 5,
   maxTokens: 1024,
   timeoutMs: 120_000,
-  limits: new AgentLimits({ goals: 1024, memory: 2048, journal: 32768, memoryCount: 10 }),
+  limits: new AgentLimits({
+    goals: 1024,
+    memory: 2048,
+    journal: 32768,
+    memoryCount: 10,
+    snippets: 4096,
+    snippetCount: 50,
+  }),
 });
 
 function decodeGameAgentConfig(game: string): AgentConfig {
@@ -266,6 +285,15 @@ function decodePlayAgentConfig(game: string, id: string): AgentConfigPartial | u
   }
 }
 
+function mergeToolLists(
+  gameTools: readonly string[] | undefined,
+  playTools: readonly string[] | undefined,
+): readonly string[] | undefined {
+  if (!playTools || playTools.length === 0) return gameTools;
+  if (!gameTools || gameTools.length === 0) return playTools;
+  return [...new Set([...gameTools, ...playTools])];
+}
+
 export function resolveAgentConfig(game: string, id?: string): AgentConfig {
   const gameCfg = decodeGameAgentConfig(game);
   const playCfg = id ? decodePlayAgentConfig(game, id) : undefined;
@@ -276,6 +304,7 @@ export function resolveAgentConfig(game: string, id?: string): AgentConfig {
     maxTokens: playCfg.maxTokens ?? gameCfg.maxTokens,
     timeoutMs: playCfg.timeoutMs ?? gameCfg.timeoutMs,
     limits: new AgentLimits({ ...gameCfg.limits, ...playCfg.limits }),
+    tools: mergeToolLists(gameCfg.tools, playCfg.tools),
   });
 }
 
@@ -511,6 +540,101 @@ export function deletePlayJournal(game: string, id: string, name: string): void 
   rmSync(file);
 }
 
+export interface AgentSnippetEntry {
+  name: string;
+  path: string;
+  url: string;
+}
+
+function assertAgentSnippetName(name: string): string {
+  if (
+    name === "" ||
+    name === "." ||
+    name === ".." ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("\0") ||
+    name.startsWith(".")
+  ) {
+    throw new PathEscapeError(`agent snippet name: ${name}`);
+  }
+  return name;
+}
+
+export function playUserSnippetsDir(game: string, id: string): string {
+  return join(playDir(game, id), "snippets", "user");
+}
+
+export function playAgentSnippetsDir(game: string, id: string): string {
+  return join(playDir(game, id), "snippets", "agent");
+}
+
+export function listPlayAgentSnippets(game: string, id: string): AgentSnippetEntry[] {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  const dir = playAgentSnippetsDir(game, id);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith(".md"))
+    .map((d) => ({
+      name: d.name.replace(/\.md$/, ""),
+      path: `plays/${game}/${id}/snippets/agent/${d.name}`,
+      url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/snippets/agent/${encodeURIComponent(d.name.replace(/\.md$/, ""))}`,
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function readPlayAgentSnippet(game: string, id: string, name: string): string {
+  assertAgentSnippetName(name);
+  const file = join(playAgentSnippetsDir(game, id), `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return readFileSync(file, "utf8");
+}
+
+function enforceAgentSnippetCount(game: string, id: string, limit: number): void {
+  const entries = listPlayAgentSnippets(game, id);
+  if (entries.length <= limit) return;
+  const dir = playAgentSnippetsDir(game, id);
+  const withMtime = entries.map((entry) => ({
+    ...entry,
+    mtime: statSync(join(dir, `${entry.name}.md`)).mtimeMs,
+  }));
+  withMtime.sort((a, b) => a.mtime - b.mtime);
+  const toDelete = withMtime.slice(0, withMtime.length - limit);
+  for (const entry of toDelete) {
+    rmSync(join(dir, `${entry.name}.md`));
+  }
+}
+
+export function writePlayAgentSnippet(
+  game: string,
+  id: string,
+  name: string,
+  options: WritePlayTextOptions,
+): string {
+  assertAgentSnippetName(name);
+  const cfg = resolveAgentConfig(game, id);
+  const maxChars = options.maxChars ?? cfg.limits.snippets;
+  if (options.content.length > maxChars) {
+    throw new ValidationError(
+      `snippet exceeds ${maxChars} characters (${options.content.length})`,
+    );
+  }
+  const dir = playAgentSnippetsDir(game, id);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, `${name}.md`);
+  writeFileSync(file, options.content);
+  enforceAgentSnippetCount(game, id, cfg.limits.snippetCount);
+  return options.content;
+}
+
+export function deletePlayAgentSnippet(game: string, id: string, name: string): void {
+  assertAgentSnippetName(name);
+  const file = join(playAgentSnippetsDir(game, id), `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  rmSync(file);
+}
+
 export interface StepRecord {
   stepId: string;
   ts: number;
@@ -664,7 +788,8 @@ export function createPlay(
   mkdirSync(join(dir, "memory"), { recursive: true });
   mkdirSync(join(dir, "journal"), { recursive: true });
   mkdirSync(join(dir, "goals"), { recursive: true });
-  mkdirSync(join(dir, "snippets"), { recursive: true });
+  mkdirSync(playUserSnippetsDir(game, id), { recursive: true });
+  mkdirSync(playAgentSnippetsDir(game, id), { recursive: true });
   const config = { id, game, ...(label ? { label } : {}) };
   writePlayConfig(game, id, config);
   return config;
@@ -1000,7 +1125,7 @@ export interface SnippetDescriptor {
 export function listPlaySnippets(game: string, id: string): SnippetDescriptor[] {
   assertSegment("game", game);
   assertSegment("id", id);
-  const dir = join(playDir(game, id), "snippets");
+  const dir = playUserSnippetsDir(game, id);
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((d) => d.isFile() && SNIPPET_FILE_RE.test(d.name))
@@ -1019,8 +1144,8 @@ export function listPlaySnippets(game: string, id: string): SnippetDescriptor[] 
       return {
         id: snippetId,
         name,
-        path: `plays/${game}/${id}/snippets/${d.name}`,
-        url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/snippets/${encodeURIComponent(snippetId)}`,
+        path: `plays/${game}/${id}/snippets/user/${d.name}`,
+        url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/snippets/user/${encodeURIComponent(snippetId)}`,
       };
     })
     .sort((a, b) => a.id.localeCompare(b.id));
@@ -1033,7 +1158,7 @@ export function readPlaySnippet(game: string, id: string, snippetId: string): Pl
   if (!SNIPPET_FILE_RE.test(`${snippetId}.snippet.json`)) {
     throw new PathEscapeError(snippetId);
   }
-  const file = join(playDir(game, id), "snippets", `${snippetId}.snippet.json`);
+  const file = join(playUserSnippetsDir(game, id), `${snippetId}.snippet.json`);
   if (!existsSync(file)) throw new FileNotFoundError(file);
   const body = JSON.parse(readFileSync(file, "utf8")) as unknown;
   return assertSnippet(body, snippetId, game, id);
@@ -1052,7 +1177,7 @@ export function writePlaySnippet(
     throw new PathEscapeError(snippetId);
   }
   const snippet = assertSnippet(body, snippetId, game, id);
-  const dir = join(playDir(game, id), "snippets");
+  const dir = playUserSnippetsDir(game, id);
   mkdirSync(dir, { recursive: true });
   const file = join(dir, `${snippetId}.snippet.json`);
   writeFileSync(file, JSON.stringify(snippet, null, 2));
@@ -1066,7 +1191,7 @@ export function deletePlaySnippet(game: string, id: string, snippetId: string): 
   if (!SNIPPET_FILE_RE.test(`${snippetId}.snippet.json`)) {
     throw new PathEscapeError(snippetId);
   }
-  const file = join(playDir(game, id), "snippets", `${snippetId}.snippet.json`);
+  const file = join(playUserSnippetsDir(game, id), `${snippetId}.snippet.json`);
   if (!existsSync(file)) throw new FileNotFoundError(file);
   rmSync(file);
 }

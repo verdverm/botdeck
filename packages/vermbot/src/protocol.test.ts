@@ -56,7 +56,7 @@ describe("isValidTurnRequest", () => {
       isValidTurnRequest({
         gameId: "ff1",
         state: {},
-        options: [{ name: "wait" }],
+        options: [{ name: "interact" }],
       }),
     ).toBe(false);
   });

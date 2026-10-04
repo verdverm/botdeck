@@ -19,7 +19,7 @@ function writeGamePrompts(game: string, files: Record<string, string>): void {
 }
 
 function writePlayPrompts(game: string, id: string, files: Record<string, string>): void {
-  const dir = join(playDir(game, id), "prompts");
+  const dir = join(playDir(game, id), "snippets", "user");
   mkdirSync(dir, { recursive: true });
   for (const [name, content] of Object.entries(files)) {
     writeFileSync(join(dir, `${name}.md`), content);
@@ -96,6 +96,26 @@ describe("renderPrompt", () => {
     expect(user).toBe("game state");
   });
 
+  it("agent snippets do not shadow user/system snippets and are appended separately", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "game system",
+      state: "game state",
+    });
+    writePlayPrompts(game, id, {
+      system: "play system",
+    });
+    const agentDir = join(playDir(game, id), "snippets", "agent");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "system.md"), "agent system");
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { system, user } = renderPrompt(req);
+    expect(system).toBe("play system");
+    expect(user).toContain("game state");
+    expect(user).toContain("Agent-authored snippets");
+    expect(user).toContain("agent system");
+  });
+
   it("substitutes commands, state, gameId, and playId", () => {
     setSnippetList(game, id, ["system", "commands", "state"]);
     writeGamePrompts(game, {
@@ -107,11 +127,11 @@ describe("renderPrompt", () => {
       gameId: game,
       playId: `${game}/${id}`,
       state: { hp: 10 },
-      options: [{ name: "wait", description: "do nothing" }],
+      options: [{ name: "interact", description: "press A" }],
     };
     const { system, user } = renderPrompt(req);
     expect(system).toBe(`Game: ${game}`);
-    expect(user).toContain("- wait: do nothing");
+    expect(user).toContain("- interact: press A");
     expect(user).toContain('"hp": 10');
   });
 
@@ -144,5 +164,32 @@ describe("renderPrompt", () => {
     });
     const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     expect(() => renderPrompt(req)).toThrow();
+  });
+
+  it("appends agent snippets in sorted order after configured user snippets", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    const agentDir = join(playDir(game, id), "snippets", "agent");
+    mkdirSync(agentDir, { recursive: true });
+    writeFileSync(join(agentDir, "zebra.md"), "last agent note");
+    writeFileSync(join(agentDir, "alpha.md"), "first agent note");
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user.indexOf("user body")).toBeLessThan(user.indexOf("Agent-authored snippets"));
+    expect(user.indexOf("### alpha")).toBeLessThan(user.indexOf("### zebra"));
+  });
+
+  it("omits the agent snippets section when no agent snippets exist", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user).toBe("user body");
   });
 });

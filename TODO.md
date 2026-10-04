@@ -7,7 +7,7 @@ Living roadmap and known gaps for `botdeck`.
 These are the next concrete features, in rough priority order.
 
 1. **State-change detection.** Replace the fixed `settleDelayMs` timer in `useBotLoop` with a change signal derived from the frame buffer and `plugin.readState()`. The agent loop, step persistence, and future WebRTC data channel should all react to actual game state settlement, not a timeout.
-2. **Real FF1 command compiler.** The `GenericGamePlugin` only emits single-tap placeholders. Build menu navigation, item/equipment/spell selection, shop interaction, and overworld travel macros for Final Fantasy I.
+2. ~~**Real FF1 command compiler.**~~ First pass done: menu navigation, battle action selection, dialog advance, shop/inn/clinic confirms, and item use are implemented in `FF1GamePlugin`. Overworld travel (`goto`) remains a stub pending A* pathfinding.
 3. **Navigation tooling.** Add map walkability data and an A* pathfinder so the agent can issue high-level "travel to <place>" commands that compile into d-pad macros.
 4. **Sub-agents / specialized tools.** Battles, shopping/equipment upgrades, planning/reflection, and summarization helpers that the main agent can invoke.
 5. **Hint / question tool.** Let the agent ask the operator for clarification or a hint when stuck.
@@ -23,7 +23,7 @@ These are the next concrete features, in rough priority order.
 Honest status of what is not yet done.
 
 - **State-change detection is timer-based.** The loop waits `settleDelayMs` after a macro instead of waiting for the screen/state to actually settle.
-- **No real game-specific command compiler.** Only `GenericGamePlugin` exists; FF1 menu navigation, travel, and combat macros are not implemented.
+- **FF1 command compiler is a first pass.** Menu navigation, battle actions, dialog advance, and item/shop/inn/clinic commands compile to real ButtonStep sequences. Overworld travel (`goto`) is still a stub and spell/shop targeting are best-effort.
 - **No eval suite.** There are Vitest benchmarks but no agent-evaluation harness or scoring yet.
 - **WebRTC is unbuilt.** Signaling endpoint, host capture, and viewer mode are all TODO.
 - **No automated save-state patching.** Starting conditions must be set by hand or by playing to that point.

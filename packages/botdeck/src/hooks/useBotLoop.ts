@@ -215,12 +215,48 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       response: TurnResponse,
       stateBefore?: string,
     ): Promise<TurnLogEntry> => {
-      const macro = plugin.compile(response.command);
+      let macro: ButtonStep[];
+      try {
+        macro = plugin.compile(response.command);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        response.error = message;
+        macro = [];
+      }
+
+      // Start per-frame dialog capture before the macro runs.
+      const capturePlugin = plugin as unknown as {
+        resetDialogCapture?: () => void;
+        captureDialogFrame?: () => void;
+      };
+      capturePlugin.resetDialogCapture?.();
+      const probe = () => capturePlugin.captureDialogFrame?.();
+      const removeProbe = emulator.onFrameProbe(probe);
+
       setIsPlayingMacro(true);
       await emulator.runMacro(macro);
       setIsPlayingMacro(false);
 
+      // If a dialog box is open after the macro, keep sampling through the
+      // settle delay so post-macro pages (e.g. the next page after
+      // dialog_advance) are captured before persisting the step.
+      let postState = plugin.readState();
+      const postDialogOpen =
+        (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
+      if (postDialogOpen) {
+        await waitSettle();
+        postState = plugin.readState();
+      }
+      removeProbe();
+
       const stateAfter = collectStates ? await saveStepState(seq, "after") : undefined;
+
+      // Persist the captured dialog text on the step's state so it is saved
+      // with the turn and visible to the agent next turn.
+      const postDialog = (postState.ff1 as { dialog?: unknown } | undefined)?.dialog;
+      if (postDialog) {
+        (request.state as Record<string, unknown>).dialog = postDialog;
+      }
 
       const record: StepRecord = {
         stepId: "",
@@ -259,7 +295,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastResponse(response);
       return entry;
     },
-    [emulator, plugin, collectStates, saveStepState, persistStep, playId],
+    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle],
   );
 
   const decideAndMaybeExecute = useCallback(
@@ -276,6 +312,9 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastRequest(request);
       const response = await callAgent(request);
       setLastResponse(response);
+      if (response.error) {
+        throw new Error(response.error);
+      }
 
       // In step mode, pause before execution and surface the pending decision.
       if (runModeRef.current === "step") {
@@ -433,7 +472,12 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         options: plugin.availableCommands(snapshot),
       };
       const response: TurnResponse = { command, reason: "manual injection" };
-      await executeCommand(seq, ts, request, response, stateBefore);
+      try {
+        await executeCommand(seq, ts, request, response, stateBefore);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+      }
     },
     [emulator, game, playId, plugin, getScreenshot, collectStates, saveStepState, executeCommand],
   );

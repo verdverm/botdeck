@@ -99,3 +99,11 @@ export type {
 } from "./data/types.js";
 
 export * from "./ff1/index.js";
+
+export {
+  FF1_DIALOG_GEOMETRY,
+  decodeNametableWindow,
+  readDialogState,
+  type DialogGeometry,
+  type DialogState,
+} from "./ff1/dialog.js";

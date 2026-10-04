@@ -1,13 +1,26 @@
 import { expect, test } from "playwright/test";
+import {
+  copyPlaySnippet,
+  createTestPlay,
+  deleteTestPlay,
+  tempPlayId,
+} from "./test-play.ts";
 
 const GAME = "ff1";
-const PLAY_ID = "0000_dev";
+const SOURCE_PLAY_ID = "0000_dev";
+
+let currentPlayId: string | undefined;
+
+test.afterEach(() => {
+  deleteTestPlay(GAME, currentPlayId);
+  currentPlayId = undefined;
+});
 
 test.describe("watch", () => {
   test.setTimeout(60_000);
 
   test("loads a play, powers on, and can trigger a snippet", async ({ page }) => {
-    await page.goto(`/?play=${GAME}/${PLAY_ID}`);
+    await page.goto("/");
 
     const apiHealthy = await page.evaluate(() =>
       fetch("/api/health").then((r) => r.ok),
@@ -20,6 +33,12 @@ test.describe("watch", () => {
     );
     test.skip(!romAvailable, "ROM is not available via /api/games/ff1/rom");
 
+    currentPlayId = tempPlayId("watch");
+    await createTestPlay(page, GAME, currentPlayId, "e2e watch");
+    copyPlaySnippet(GAME, SOURCE_PLAY_ID, currentPlayId, "ff1-menu-open");
+
+    await page.goto(`/?play=${GAME}/${currentPlayId}`);
+
     await expect(page.locator("h1")).toContainText("botdeck");
     await expect(page.getByText(/standby|power on/)).toBeVisible();
 
@@ -31,20 +50,14 @@ test.describe("watch", () => {
     }
     await expect(page.getByText("power on")).toBeVisible();
 
-    // Open the Snippets tab and wait for it to populate.
-    const snippetsTab = page.getByRole("button", { name: "snippets" });
+    const snippetsTab = page.getByRole("button", { name: "snippets", exact: true });
     await expect(snippetsTab).toBeVisible();
     await snippetsTab.click();
 
-    // Expand the first snippet so its Run button is rendered.
     const firstRow = page.locator("li").first();
     await firstRow.locator("button").first().click();
 
     const runButton = page.getByRole("button", { name: "Run", exact: true }).first();
     await expect(runButton).toBeVisible();
-
-    // In watch mode the user is expected to click Run manually; we just verify
-    // the harness is ready. Uncomment the next line to auto-start a snippet.
-    // await runButton.click();
   });
 });

@@ -5,9 +5,13 @@ import type { CommandSpec, TurnRequest } from "./protocol.ts";
 import {
   gameDir,
   playDir,
+  playUserSnippetsDir,
   resolvePromptConfig,
+  resolveAgentConfig,
   readPlayMemory,
   readPlayGoals,
+  listPlayAgentSnippets,
+  readPlayAgentSnippet,
   PathEscapeError,
 } from "./files.ts";
 
@@ -31,10 +35,17 @@ function assertSnippetName(name: string): string {
   return name;
 }
 
+/**
+ * Resolve user/system snippet paths only: play-level overrides under
+ * snippets/user/, then game defaults under games/<game>/prompts/.
+ * Agent-authored snippets are a separate store under snippets/agent/ and are
+ * appended to the prompt explicitly; they never shadow user/system snippets by
+ * name.
+ */
 function resolveSnippetPath(game: string, id: string | undefined, name: string): string | undefined {
   assertSnippetName(name);
   if (id) {
-    const playFile = join(playDir(game, id), "prompts", `${name}.md`);
+    const playFile = join(playUserSnippetsDir(game, id), `${name}.md`);
     if (existsSync(playFile)) return playFile;
   }
   const gameFile = join(gameDir(game), "prompts", `${name}.md`);
@@ -46,6 +57,18 @@ function readSnippet(game: string, id: string | undefined, name: string): string
   const path = resolveSnippetPath(game, id, name);
   if (!path) return "";
   return readFileSync(path, "utf8").trim();
+}
+
+function readAgentSnippets(game: string, id: string | undefined): string {
+  if (!id) return "";
+  const entries = listPlayAgentSnippets(game, id);
+  if (entries.length === 0) return "";
+  return entries
+    .map((entry) => {
+      const content = readPlayAgentSnippet(game, id, entry.name);
+      return `### ${entry.name}\n\n${content}`;
+    })
+    .join("\n\n");
 }
 
 function formatCommands(options: CommandSpec[]): string {
@@ -75,9 +98,31 @@ interface RenderContext {
   gameInfo: string;
   memory: string;
   goals: string;
+  agentSnippets: string;
+  memoryLimit: string;
+  memoryCount: string;
+  goalsLimit: string;
+  journalLimit: string;
+  snippetLimit: string;
+  snippetCount: string;
 }
 
-function buildContext(req: TurnRequest, game: string, id: string | undefined): RenderContext {
+function buildContext(
+  req: TurnRequest,
+  game: string,
+  id: string | undefined,
+  config?: {
+    limits: {
+      memory: number;
+      memoryCount: number;
+      goals: number;
+      journal: number;
+      snippets: number;
+      snippetCount: number;
+    };
+  },
+): RenderContext {
+  const limits = config?.limits;
   return {
     gameId: req.gameId,
     playId: req.playId ?? "",
@@ -86,6 +131,13 @@ function buildContext(req: TurnRequest, game: string, id: string | undefined): R
     gameInfo: formatFF1StateFromUnknown(req.state),
     memory: id ? readPlayMemory(game, id) : "",
     goals: id ? readPlayGoals(game, id) : "",
+    agentSnippets: readAgentSnippets(game, id),
+    memoryLimit: String(limits?.memory ?? 2048),
+    memoryCount: String(limits?.memoryCount ?? 10),
+    goalsLimit: String(limits?.goals ?? 1024),
+    journalLimit: String(limits?.journal ?? 32768),
+    snippetLimit: String(limits?.snippets ?? 4096),
+    snippetCount: String(limits?.snippetCount ?? 50),
   };
 }
 
@@ -109,13 +161,14 @@ export function renderPrompt(req: TurnRequest): PromptParts {
   const game = parsed?.game ?? req.gameId;
   const id = parsed?.id;
 
-  const config = resolvePromptConfig(game, id);
-  const snippets = resolveModeSnippets(config, req.mode) ?? config.snippets ?? ["system", "commands", "state"];
+  const promptConfig = resolvePromptConfig(game, id);
+  const snippets = resolveModeSnippets(promptConfig, req.mode) ?? promptConfig.snippets ?? ["system", "commands", "state"];
   if (snippets.length === 0) {
     return { system: "", user: "" };
   }
 
-  const ctx = buildContext(req, game, id);
+  const agentConfig = id ? resolveAgentConfig(game, id) : undefined;
+  const ctx = buildContext(req, game, id, agentConfig);
   // Convention: the snippet named exactly "system" becomes the system prompt;
   // every other snippet is joined in config order to form the user prompt.
   const systemIndex = snippets.indexOf("system");
@@ -123,11 +176,18 @@ export function renderPrompt(req: TurnRequest): PromptParts {
   const system = systemSnippet
     ? renderTemplate(readSnippet(game, id, systemSnippet), ctx)
     : "";
-  const user = snippets
+  const userParts = snippets
     .filter((_, i) => i !== systemIndex)
     .map((name) => renderTemplate(readSnippet(game, id, name), ctx))
-    .filter(Boolean)
-    .join("\n\n");
+    .filter(Boolean);
 
-  return { system, user };
+  // Agent-authored snippets are a completely separate store. They are never
+  // allowed to shadow user/system snippets by name; instead they are appended
+  // as their own clearly-delimited section so the agent can add turn-by-turn
+  // guidance without rewriting the prompt constitution.
+  if (ctx.agentSnippets) {
+    userParts.push(`## Agent-authored snippets\n\n${ctx.agentSnippets}`);
+  }
+
+  return { system, user: userParts.join("\n\n") };
 }

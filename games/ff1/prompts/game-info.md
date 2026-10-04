@@ -2,4 +2,4 @@
 
 {{gameInfo}}
 
-Use this static reference to interpret commands, locations, and game mechanics. If the game info contradicts the current state, trust the current state.
+Trust the current state above over any static knowledge. The state is read live from the emulator each turn.

@@ -157,7 +157,7 @@ export function OverviewTab({ data }: { data: CollectedState | null }) {
         <JsonEditor
           data={(showRaw && data.ff1 ? data.ff1 : data) as unknown as object}
           viewOnly
-          collapse={2}
+          collapse={false}
           rootName={data.ff1 && showRaw ? "ff1" : "state"}
           theme={[githubDarkTheme, {}]}
           showCollectionCount="when-closed"

@@ -51,6 +51,8 @@ export interface TurnRequest {
 export interface TurnResponse {
   command: GameCommand;
   reason?: string;
+  /** If present, the turn did not produce a valid command and the loop should surface this instead of executing. */
+  error?: string;
   /** The rendered system + user prompts sent to the model (for UI inspection). */
   prompt?: { system?: string; user?: string };
   /** Raw text output from the model before parsing/coercion. */

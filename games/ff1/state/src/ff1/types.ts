@@ -227,6 +227,13 @@ export interface MapObject {
   rawBytes: Uint8Array;
 }
 
+export interface DialogState {
+  open: boolean;
+  current: string;
+  pages: string[];
+  note?: string;
+}
+
 export interface FF1GameState {
   party: PartyCharacter[];
   gold: number;
@@ -237,4 +244,5 @@ export interface FF1GameState {
   context: GameContext;
   menu: MenuState;
   availableLocations: KnownLocation[];
+  dialog?: DialogState;
 }

@@ -33,7 +33,7 @@ Data flow per turn:
 1. botdeck reads game state via a `GamePlugin` (browser, from the live emulator).
 2. botdeck composes a `TurnRequest` (structured state + optional screenshot + available commands).
 3. botdeck POSTs the request to vermbot's `/api/turn`.
-4. vermbot assembles the prompt from `games/<game>/prompts/*.md` snippets, with optional per-play overrides in `plays/<game>/<id>/prompts/`, then asks the model.
+4. vermbot assembles the prompt from `games/<game>/prompts/*.md` snippets, with optional per-play overrides in `plays/<game>/<id>/snippets/user/`, then asks the model.
 5. The model may call memory/journal/goals tools across `maxToolRounds` before emitting a final command.
 6. vermbot returns a `TurnResponse` with the chosen `GameCommand`, reason, rendered prompts, and raw output.
 7. botdeck's `GamePlugin` compiles the command into a `ButtonStep[]` macro.

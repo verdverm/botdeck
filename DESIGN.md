@@ -72,9 +72,9 @@ These were resolved during design review and are now fixed:
 
 - **Prompts are snippets, not monolithic files.** Each game ships a
   `prompts/` directory of markdown templates. A play may override individual
-  snippets by shadowing them in `plays/<game>/<id>/prompts/`. The snippet list
-  and order come from `prompt.snippets` in the resolved config (play overrides
-  game). Snippet names are safe file basenames only.
+  snippets by shadowing them in `plays/<game>/<id>/snippets/user/`. The snippet
+  list and order come from `prompt.snippets` in the resolved config (play
+  overrides game). Snippet names are safe file basenames only.
 
 ---
 
@@ -250,8 +250,9 @@ Rendering uses simple `{{key}}` substitution against a context built from the
 | `goals` | Current goals text |
 
 A play may shadow any game snippet by placing a file with the same name in
-`plays/<game>/<id>/prompts/`. This lets a single play specialize instructions,
-goals framing, or tool descriptions without forking the game prompts.
+`plays/<game>/<id>/snippets/user/`. This lets a single play specialize
+instructions, goals framing, or tool descriptions without forking the game
+prompts.
 
 ---
 

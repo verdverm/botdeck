@@ -29,6 +29,12 @@
  *   DELETE /api/plays/:game/:id/journal/:name - remove journal entry
  *   GET    /api/plays/:game/:id/goals       - read goals
  *   PUT    /api/plays/:game/:id/goals       - write goals
+ *   GET    /api/plays/:game/:id/snippets/user  - list user/replay snippets
+ *   GET    /api/plays/:game/:id/snippets/user/:snippetId - read/update/delete user/replay snippet
+ *   GET    /api/plays/:game/:id/snippets/agent - list agent-authored snippets
+ *   POST   /api/plays/:game/:id/snippets/agent - write agent-authored snippet
+ *   GET    /api/plays/:game/:id/snippets/agent/:name - read agent-authored snippet
+ *   DELETE /api/plays/:game/:id/snippets/agent/:name - remove agent-authored snippet
  *   GET    /api/plays/:game/:id/steps       - list steps
  *   POST   /api/plays/:game/:id/steps       - append step
  *   GET    /api/plays/:game/:id/steps/:stepId - read step
@@ -65,6 +71,10 @@ import {
   deletePlayJournal,
   readPlayGoals,
   writePlayGoals,
+  listPlayAgentSnippets,
+  readPlayAgentSnippet,
+  writePlayAgentSnippet,
+  deletePlayAgentSnippet,
   listPlaySteps,
   readPlayStep,
   writePlayStep,
@@ -148,7 +158,7 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse): Promise<bo
     const decision = await decide(request);
     json(res, 200, decision);
   } catch (err) {
-    json(res, 500, { command: { name: "wait" }, reason: String(err) });
+    json(res, 200, { command: { name: "" }, error: String(err) });
   }
   return true;
 }
@@ -361,8 +371,8 @@ async function handlePlays(
     return false;
   }
 
-  // /api/plays/:game/:id/snippets (GET)
-  if (segments.length === 5 && segments[4] === "snippets") {
+  // /api/plays/:game/:id/snippets/user (GET)
+  if (segments.length === 6 && segments[4] === "snippets" && segments[5] === "user") {
     const game = segments[2]!;
     const id = segments[3]!;
 
@@ -378,11 +388,11 @@ async function handlePlays(
     return false;
   }
 
-  // /api/plays/:game/:id/snippets/:snippetId (GET | PUT | DELETE)
-  if (segments.length === 6 && segments[4] === "snippets") {
+  // /api/plays/:game/:id/snippets/user/:snippetId (GET | PUT | DELETE)
+  if (segments.length === 7 && segments[4] === "snippets" && segments[5] === "user") {
     const game = segments[2]!;
     const id = segments[3]!;
-    const snippetId = segments[5]!;
+    const snippetId = segments[6]!;
 
     if (req.method === "GET") {
       try {
@@ -416,6 +426,67 @@ async function handlePlays(
       try {
         deletePlaySnippet(game, id, snippetId);
         json(res, 204, undefined);
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/snippets/agent (GET | POST)
+  if (segments.length === 6 && segments[4] === "snippets" && segments[5] === "agent") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlayAgentSnippets(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "POST") {
+      try {
+        const body = await readBody(req);
+        const { name, content } = JSON.parse(body) as { name?: string; content?: string };
+        if (typeof name !== "string" || typeof content !== "string") {
+          throw new ValidationError("name and content must be strings");
+        }
+        writePlayAgentSnippet(game, id, name, { content });
+        json(res, 201, { name, content });
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+
+    return false;
+  }
+
+  // /api/plays/:game/:id/snippets/agent/:name (GET | DELETE)
+  if (segments.length === 7 && segments[4] === "snippets" && segments[5] === "agent") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const name = segments[6]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, { name, content: readPlayAgentSnippet(game, id, name) });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+
+    if (req.method === "DELETE") {
+      try {
+        deletePlayAgentSnippet(game, id, name);
+        json(res, 204, { ok: true });
       } catch (err) {
         sendError(err);
       }

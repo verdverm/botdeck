@@ -8,8 +8,22 @@
       "goals": 1024,
       "memory": 2048,
       "journal": 32768,
-      "memoryCount": 10
-    }
+      "memoryCount": 10,
+      "snippets": 4096,
+      "snippetCount": 50
+    },
+    "tools": [
+      "journal_list",
+      "journal_read",
+      "journal_write",
+      "memory_write",
+      "goals_write",
+      "press_button",
+      "snippet_list",
+      "snippet_read",
+      "snippet_write",
+      "snippet_delete"
+    ]
   },
   "prompt": {
     "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"],

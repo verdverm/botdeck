@@ -16,13 +16,21 @@ export const SRAM_SIZE = 0x2000;
 export type FrameListener = (buffer: Uint32Array) => void;
 export type BatteryWriteListener = (address: number, value: number) => void;
 export type ErrorListener = (message: string) => void;
+export type FrameProbe = () => void;
 
 // jsnes keeps the ROM header + memory on internal fields not in its .d.ts.
 // Access them through a narrow cast rather than widening public types.
+interface PpuInternals {
+  nameTable?: { tile: Uint8Array; width: number; height: number }[];
+  vramMem?: Uint8Array;
+  vramMirrorTable?: Uint16Array;
+}
+
 interface NesInternals {
   rom?: Record<string, unknown>;
   cpu?: { mem?: Uint8Array | number[] };
   mmap?: { mem?: Uint8Array | number[] };
+  ppu?: PpuInternals;
 }
 
 // Header getters on jsnes' ROM are plain properties; surface the useful subset.
@@ -79,6 +87,7 @@ export class Emulator {
   private listeners = new Set<FrameListener>();
   private batteryListeners = new Set<BatteryWriteListener>();
   private errorListeners = new Set<ErrorListener>();
+  private frameProbes = new Set<FrameProbe>();
   private romBytes: string | Uint8Array | ArrayBuffer | null = null;
   private romName: string | null = null;
   private hasRom = false;
@@ -204,6 +213,25 @@ export class Emulator {
     return getMemory(this.nes);
   }
 
+  /**
+   * Read the effective PPU nametable region ($2000-$2FFF) through jsnes'
+   * mirroring lookup. The returned buffer is 32x128: four 32x32 nametables
+   * stacked in address order, with mirroring already resolved so the data
+   * reflects what the PPU actually displays.
+   */
+  getNametable(): { data: Uint8Array; width: number; height: number } | undefined {
+    const internals = this.nes as unknown as NesInternals;
+    const ppu = internals.ppu;
+    if (!ppu?.vramMem || !ppu.vramMirrorTable) return undefined;
+    const data = new Uint8Array(32 * 32 * 4);
+    for (let i = 0; i < data.length; i++) {
+      const addr = 0x2000 + i;
+      const eff = ppu.vramMirrorTable[addr] ?? addr;
+      data[i] = ppu.vramMem[eff] ?? 0;
+    }
+    return { data, width: 32, height: 128 };
+  }
+
   buttonDown(button: number): void {
     this.nes.buttonDown(1, button as never);
   }
@@ -314,6 +342,15 @@ export class Emulator {
     return () => this.errorListeners.delete(listener);
   }
 
+  /**
+   * Register a lightweight per-frame probe. Probes run once per emulated frame
+   * and are intended for game-specific capture (dialog text, HP deltas, etc.).
+   */
+  onFrameProbe(listener: FrameProbe): () => void {
+    this.frameProbes.add(listener);
+    return () => this.frameProbes.delete(listener);
+  }
+
   getFps(): number {
     return this.nes.getFPS();
   }
@@ -330,6 +367,13 @@ export class Emulator {
     this.advanceMacro();
     try {
       this.nes.frame();
+      for (const probe of this.frameProbes) {
+        try {
+          probe();
+        } catch {
+          // Probe failures must not kill emulation; they are best-effort capture hooks.
+        }
+      }
       this.audio.flush();
     } catch (e) {
       // A crashed emulation kills the loop silently if uncaught; stop and

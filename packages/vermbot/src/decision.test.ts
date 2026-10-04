@@ -3,7 +3,6 @@ import { coerceCommand, parseDecision } from "./decision.ts";
 import type { CommandSpec } from "./protocol.ts";
 
 const OPTIONS: CommandSpec[] = [
-  { name: "wait", description: "Wait" },
   { name: "move", description: "Move", args: "{direction}" },
   { name: "fight", description: "Fight" },
 ];
@@ -17,20 +16,20 @@ describe("coerceCommand", () => {
   });
 
   it("accepts a valid command without args", () => {
-    expect(coerceCommand({ name: "wait" }, OPTIONS)).toEqual({ name: "wait" });
+    expect(coerceCommand({ name: "fight" }, OPTIONS)).toEqual({ name: "fight" });
   });
 
-  it("falls back to the first option for an unknown command name", () => {
-    expect(coerceCommand({ name: "invalid" }, OPTIONS)).toEqual({ name: "wait" });
+  it("returns null for an unknown command name", () => {
+    expect(coerceCommand({ name: "invalid" }, OPTIONS)).toBeNull();
   });
 
-  it("falls back to wait when options is empty", () => {
-    expect(coerceCommand({ name: "wait" }, [])).toEqual({ name: "wait" });
+  it("returns null when options is empty", () => {
+    expect(coerceCommand({ name: "move" }, [])).toBeNull();
   });
 
-  it("falls back when value is not an object", () => {
-    expect(coerceCommand("wait", OPTIONS)).toEqual({ name: "wait" });
-    expect(coerceCommand(null, OPTIONS)).toEqual({ name: "wait" });
+  it("returns null when value is not an object", () => {
+    expect(coerceCommand("move", OPTIONS)).toBeNull();
+    expect(coerceCommand(null, OPTIONS)).toBeNull();
   });
 });
 
@@ -55,19 +54,21 @@ describe("parseDecision", () => {
     expect(res.reason).toBe("I think we should FIGHT now".slice(0, 120));
   });
 
-  it("falls back to wait when no command is found", () => {
+  it("returns an error response when no command is found", () => {
     const res = parseDecision("just some unrelated text", OPTIONS);
-    expect(res.command).toEqual({ name: "wait" });
+    expect(res.command).toEqual({ name: "" });
+    expect(res.error).toContain("No valid command");
   });
 
-  it("falls back to wait for malformed JSON", () => {
+  it("returns an error response for malformed JSON", () => {
     const res = parseDecision(`{"command": broken`, OPTIONS);
-    expect(res.command).toEqual({ name: "wait" });
+    expect(res.command).toEqual({ name: "" });
+    expect(res.error).toContain("No valid command");
   });
 
   it("preserves the prompt in the response", () => {
     const prompt = { system: "sys", user: "usr" };
-    const res = parseDecision(`{"command":{"name":"wait"}}`, OPTIONS, prompt);
+    const res = parseDecision(`{"command":{"name":"move"}}`, OPTIONS, prompt);
     expect(res.prompt).toEqual(prompt);
   });
 });

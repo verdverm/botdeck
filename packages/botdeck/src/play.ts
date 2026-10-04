@@ -110,11 +110,19 @@ export function stateUrl(playId: string, filename: string): string {
 }
 
 export function snippetsUrl(playId: string): string {
-  return `${playBase(playId)}/snippets`;
+  return `${playBase(playId)}/snippets/user`;
 }
 
 export function snippetUrl(playId: string, snippetId: string): string {
-  return `${playBase(playId)}/snippets/${encodeURIComponent(snippetId)}`;
+  return `${playBase(playId)}/snippets/user/${encodeURIComponent(snippetId)}`;
+}
+
+export function agentSnippetsUrl(playId: string): string {
+  return `${playBase(playId)}/snippets/agent`;
+}
+
+export function agentSnippetUrl(playId: string, name: string): string {
+  return `${playBase(playId)}/snippets/agent/${encodeURIComponent(name)}`;
 }
 
 export async function saveSnippet(
@@ -139,6 +147,31 @@ export async function deleteSnippet(playId: string, snippetId: string): Promise<
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`delete snippet failed (${res.status}): ${body}`);
+  }
+}
+
+export async function saveAgentSnippet(
+  playId: string,
+  name: string,
+  content: string,
+): Promise<{ name: string; content: string }> {
+  const res = await fetch(agentSnippetsUrl(playId), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`save agent snippet failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as { name: string; content: string };
+}
+
+export async function deleteAgentSnippet(playId: string, name: string): Promise<void> {
+  const res = await fetch(agentSnippetUrl(playId, name), { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`delete agent snippet failed (${res.status}): ${body}`);
   }
 }
 

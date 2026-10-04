@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { AgentTab } from "./AgentTab";
+import { AgentSnippetsTab } from "./AgentSnippetsTab";
 import { BattleTab } from "./BattleTab";
 import { LocationTab } from "./LocationTab";
 import { MarkdownTab } from "./MarkdownTab";
@@ -155,11 +156,21 @@ export function GameInfoPanel({
       </div>
 
       <div className="flex flex-wrap gap-1 border-b border-neutral-800 pb-2">
-        {(["overview", "party", "location", "battle", "menu", "agent", "snippets", "markdown"] as Tab[]).map(
-          (t) => (
-            <TabButton key={t} active={tab === t} label={t} onClick={() => setTab(t)} />
-          ),
-        )}
+        {(
+          [
+            "overview",
+            "party",
+            "location",
+            "battle",
+            "menu",
+            "agent",
+            "snippets",
+            "agent-snippets",
+            "markdown",
+          ] as Tab[]
+        ).map((t) => (
+          <TabButton key={t} active={tab === t} label={t} onClick={() => setTab(t)} />
+        ))}
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-sm">
@@ -197,6 +208,7 @@ export function GameInfoPanel({
         {tab === "snippets" && playId && onRunSnippet && (
           <SnippetsTab playId={playId} disabled={disabled} onRun={onRunSnippet} />
         )}
+        {tab === "agent-snippets" && playId && <AgentSnippetsTab playId={playId} disabled={disabled} />}
         {tab === "markdown" && <MarkdownTab />}
       </div>
     </div>

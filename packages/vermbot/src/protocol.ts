@@ -7,6 +7,20 @@
  * button macro played out with human-like timing.
  */
 
+/** NES controller button indices (matches jsnes Controller constants). */
+export const NES_BUTTONS = {
+  A: 0,
+  B: 1,
+  SELECT: 2,
+  START: 3,
+  UP: 4,
+  DOWN: 5,
+  LEFT: 6,
+  RIGHT: 7,
+} as const;
+
+export type NesButtonName = keyof typeof NES_BUTTONS;
+
 export interface ButtonStep {
   button: number;
   holdFrames?: number;
@@ -44,6 +58,8 @@ export interface TurnRequest {
 export interface TurnResponse {
   command: GameCommand;
   reason?: string;
+  /** If present, the turn did not produce a valid command and the loop should surface this instead of executing. */
+  error?: string;
   /** The rendered system + user prompts sent to the model (for UI inspection). */
   prompt?: { system?: string; user?: string };
   /** Raw text output from the model before parsing/coercion. */

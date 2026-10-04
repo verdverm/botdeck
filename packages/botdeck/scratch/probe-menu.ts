@@ -1,4 +1,4 @@
-import { boot, mem, START, DOWN, UP, A, B, LEFT, RIGHT } from "./probe.js";
+import { boot, mem, START, DOWN, UP, A, B } from "./probe.js";
 
 const STATE = process.argv[2] ?? "000002-start-02-town-entrence";
 
