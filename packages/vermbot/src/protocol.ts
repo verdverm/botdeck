@@ -55,6 +55,30 @@ export interface TurnRequest {
   actor?: string;
 }
 
+export interface TurnTranscriptRound {
+  /** Raw assistant text emitted in this round. */
+  assistantText: string;
+  /** Tool calls requested by the assistant in this round (if any). */
+  toolCalls?: ToolCall[];
+  /** Tool results returned to the assistant in this round (if any). */
+  toolResults?: ToolResult[];
+  /** If the assistant's final-text output could not be parsed into a command, the error message. */
+  parseError?: string;
+  /** If the assistant called a command tool but the command failed semantic validation, the error message. */
+  validationError?: string;
+  /** Optional follow-up message sent to the model after a parse or validation error. */
+  correction?: string;
+}
+
+export interface TurnTranscript {
+  /** Rendered system prompt. */
+  system?: string;
+  /** Rendered user prompt. */
+  user?: string;
+  /** One entry per LLM round (tool or final-text). */
+  rounds: TurnTranscriptRound[];
+}
+
 export interface TurnResponse {
   command: GameCommand;
   reason?: string;
@@ -64,6 +88,8 @@ export interface TurnResponse {
   prompt?: { system?: string; user?: string };
   /** Raw text output from the model before parsing/coercion. */
   raw?: string;
+  /** Full message/tool-call transcript for UI inspection. */
+  transcript?: TurnTranscript;
 }
 
 export interface ToolSpec {

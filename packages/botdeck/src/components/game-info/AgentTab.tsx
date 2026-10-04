@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { PendingDecision, TurnLogEntry } from "@/hooks/useBotLoop";
-import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse } from "@/types";
+import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse, TurnTranscript, TurnTranscriptRound, ToolCall, ToolResult } from "@/types";
 import { parsePlayId, snippetUrl, snippetsUrl } from "@/play";
 import { SectionTitle } from "./shared";
 
@@ -74,6 +74,95 @@ function JsonBlock({ value, maxHeight }: { value: unknown; maxHeight?: string })
     >
       {JSON.stringify(value, null, 2)}
     </pre>
+  );
+}
+
+function ToolCallBubble({ call }: { call: ToolCall }) {
+  return (
+    <div className="rounded bg-blue-900/20 p-2">
+      <p className="text-xs font-medium text-blue-300">tool call: {call.name}</p>
+      {call.input && <JsonBlock value={call.input} maxHeight="120px" />}
+    </div>
+  );
+}
+
+function ToolResultBubble({ result }: { result: ToolResult }) {
+  return (
+    <div className={`rounded p-2 ${result.error ? "bg-rose-900/20" : "bg-emerald-900/20"}`}>
+      <p className={`text-xs font-medium ${result.error ? "text-rose-300" : "text-emerald-300"}`}>
+        tool result: {result.name} {result.error ? "(error)" : ""}
+      </p>
+      {result.error ? (
+        <p className="text-xs text-rose-300">{result.error}</p>
+      ) : (
+        <JsonBlock value={result.result} maxHeight="120px" />
+      )}
+    </div>
+  );
+}
+
+function TranscriptView({ transcript }: { transcript: TurnTranscript }) {
+  return (
+    <div className="flex flex-col gap-2">
+      {transcript.system && (
+        <details className="rounded bg-neutral-900">
+          <summary className="cursor-pointer px-2 py-1 text-xs text-neutral-500">system prompt</summary>
+          <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 text-xs text-neutral-400">
+            {transcript.system}
+          </pre>
+        </details>
+      )}
+      {transcript.user && (
+        <details className="rounded bg-neutral-900">
+          <summary className="cursor-pointer px-2 py-1 text-xs text-neutral-500">user prompt</summary>
+          <pre className="max-h-60 overflow-auto whitespace-pre-wrap p-2 text-xs text-neutral-400">
+            {transcript.user}
+          </pre>
+        </details>
+      )}
+      {transcript.rounds.map((round, idx) => (
+        <TranscriptRoundView key={idx} round={round} />
+      ))}
+    </div>
+  );
+}
+
+function TranscriptRoundView({ round }: { round: TurnTranscriptRound }) {
+  return (
+    <div className="flex flex-col gap-1">
+      {round.assistantText && (
+        <div className="rounded bg-neutral-800 p-2">
+          <p className="text-xs font-medium text-neutral-500">assistant</p>
+          <pre className="whitespace-pre-wrap text-xs text-neutral-300">{round.assistantText}</pre>
+        </div>
+      )}
+      {round.toolCalls && round.toolCalls.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {round.toolCalls.map((call) => (
+            <ToolCallBubble key={call.id} call={call} />
+          ))}
+        </div>
+      )}
+      {round.toolResults && round.toolResults.length > 0 && (
+        <div className="flex flex-col gap-1">
+          {round.toolResults.map((result) => (
+            <ToolResultBubble key={result.id} result={result} />
+          ))}
+        </div>
+      )}
+      {round.parseError && (
+        <div className="rounded bg-rose-900/20 p-2">
+          <p className="text-xs font-medium text-rose-300">parse error</p>
+          <p className="text-xs text-rose-300">{round.parseError}</p>
+          {round.correction && (
+            <div className="mt-1">
+              <p className="text-xs font-medium text-amber-300">retry prompt</p>
+              <pre className="whitespace-pre-wrap text-xs text-neutral-400">{round.correction}</pre>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -258,6 +347,16 @@ export function AgentTab({
   onPendingMessageChange,
 }: AgentTabProps) {
   const [tab, setTab] = useState<"request" | "response" | "log">("response");
+  const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
+
+  const toggleTurn = (seq: number) => {
+    setExpandedTurns((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+  };
 
   return (
     <div className="flex h-full flex-col gap-3 text-sm">
@@ -443,6 +542,12 @@ export function AgentTab({
                     </pre>
                   </div>
                 )}
+                {lastResponse.transcript && (
+                  <div>
+                    <SectionTitle>Transcript</SectionTitle>
+                    <TranscriptView transcript={lastResponse.transcript} />
+                  </div>
+                )}
               </>
             ) : (
               <p className="text-xs text-neutral-500">No response yet.</p>
@@ -457,38 +562,113 @@ export function AgentTab({
               <p className="text-xs text-neutral-500">No turns yet.</p>
             ) : (
               <ul className="flex flex-col gap-2">
-                {messages.map((m) => (
-                  <li key={m.seq} className="rounded border border-neutral-800 bg-neutral-950 p-2">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="text-xs font-medium text-neutral-300">
-                        #{m.seq} · {m.command.name}
-                      </span>
-                      <span className="text-xs text-neutral-500">
-                        {new Date(m.ts).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    {m.response.reason && (
-                      <p className="mt-1 text-xs text-neutral-400">{m.response.reason}</p>
-                    )}
-                    {m.error && <p className="mt-1 text-xs text-rose-400">{m.error}</p>}
-                    {m.macro && (
-                      <p className="mt-1 text-xs text-neutral-500">
-                        macro: {m.macro.length} step{m.macro.length === 1 ? "" : "s"}
-                      </p>
-                    )}
-                    {m.diff && (
-                      <div className="mt-1">
-                        <p className="text-xs text-neutral-500">diff summary:</p>
-                        <p className="text-xs text-neutral-400">
-                          {String(m.diff.summary ?? "")}
-                        </p>
-                        {m.diff.changed === false && (
-                          <p className="text-xs text-neutral-500">no changes</p>
-                        )}
-                      </div>
-                    )}
-                  </li>
-                ))}
+                {messages.map((m) => {
+                  const expanded = expandedTurns.has(m.seq);
+                  return (
+                    <li key={m.seq} className="rounded border border-neutral-800 bg-neutral-950 p-2">
+                      <button
+                        onClick={() => toggleTurn(m.seq)}
+                        className="flex w-full items-center justify-between gap-2 text-left"
+                      >
+                        <span className="text-xs font-medium text-neutral-300">
+                          #{m.seq} · {m.command.name}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-neutral-500">
+                            {new Date(m.ts).toLocaleTimeString()}
+                          </span>
+                          <span className="text-xs text-neutral-500">{expanded ? "−" : "+"}</span>
+                        </div>
+                      </button>
+                      {!expanded && (
+                        <div className="mt-1">
+                          {m.response.reason && (
+                            <p className="text-xs text-neutral-400">{m.response.reason}</p>
+                          )}
+                          {m.error && <p className="mt-1 text-xs text-rose-400">{m.error}</p>}
+                          {m.macro && (
+                            <p className="mt-1 text-xs text-neutral-500">
+                              macro: {m.macro.length} step{m.macro.length === 1 ? "" : "s"}
+                            </p>
+                          )}
+                          {m.diff && (
+                            <div className="mt-1">
+                              <p className="text-xs text-neutral-500">diff summary:</p>
+                              <p className="text-xs text-neutral-400">
+                                {String(m.diff.summary ?? "")}
+                              </p>
+                              {m.diff.changed === false && (
+                                <p className="text-xs text-neutral-500">no changes</p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      {expanded && (
+                        <div className="mt-2 flex flex-col gap-2">
+                          {m.response.transcript ? (
+                            <TranscriptView transcript={m.response.transcript} />
+                          ) : (
+                            <>
+                              {m.response.prompt && (
+                                <div>
+                                  <SectionTitle>Prompt</SectionTitle>
+                                  {m.response.prompt.system && (
+                                    <details className="rounded bg-neutral-900">
+                                      <summary className="cursor-pointer px-2 py-1 text-xs text-neutral-500">
+                                        system
+                                      </summary>
+                                      <pre className="max-h-40 overflow-auto whitespace-pre-wrap p-2 text-xs text-neutral-400">
+                                        {m.response.prompt.system}
+                                      </pre>
+                                    </details>
+                                  )}
+                                  {m.response.prompt.user && (
+                                    <details className="rounded bg-neutral-900">
+                                      <summary className="cursor-pointer px-2 py-1 text-xs text-neutral-500">
+                                        user
+                                      </summary>
+                                      <pre className="max-h-60 overflow-auto whitespace-pre-wrap p-2 text-xs text-neutral-400">
+                                        {m.response.prompt.user}
+                                      </pre>
+                                    </details>
+                                  )}
+                                </div>
+                              )}
+                              {m.response.raw && (
+                                <div>
+                                  <SectionTitle>Raw Model Output</SectionTitle>
+                                  <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-neutral-950 p-2 text-xs text-neutral-300">
+                                    {m.response.raw}
+                                  </pre>
+                                </div>
+                              )}
+                            </>
+                          )}
+                          <div>
+                            <SectionTitle>Final Command</SectionTitle>
+                            <JsonBlock value={m.command} maxHeight="120px" />
+                          </div>
+                          {m.macro && (
+                            <p className="text-xs text-neutral-500">
+                              macro: {m.macro.length} step{m.macro.length === 1 ? "" : "s"}
+                            </p>
+                          )}
+                          {m.diff && (
+                            <div>
+                              <SectionTitle>Diff Summary</SectionTitle>
+                              <p className="text-xs text-neutral-400">{String(m.diff.summary ?? "")}</p>
+                              {m.diff.changed === false && (
+                                <p className="text-xs text-neutral-500">no changes</p>
+                              )}
+                            </div>
+                          )}
+                          {m.error && <p className="text-xs text-rose-400">{m.error}</p>}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

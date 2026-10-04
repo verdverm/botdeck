@@ -85,6 +85,14 @@ import {
   ADDR_BATTLE_ACTIVE_INDEX,
   ADDR_BATTLE_CURSOR_X,
   ADDR_BATTLE_CURSOR_Y,
+  ADDR_BATTLE_CHAR_CMDBUF,
+  BATTLE_CHAR_CMD_STRIDE,
+  BATTLE_CHAR_CMD_COMMAND_OFFSET,
+  BATTLE_CHAR_CMD_EFFECT_OFFSET,
+  BATTLE_CHAR_CMD_TARGET_OFFSET,
+  ADDR_BATTLE_CHAR_CMD_ITEM,
+  ADDR_BATTLE_CHAR_CMD_CONSUME_TYPE,
+  ADDR_BATTLE_CHAR_CMD_CONSUME_ID,
   ADDR_ENTERING_SHOP,
   ADDR_SHOP_ID,
   ADDR_SHOP_TYPE,
@@ -569,7 +577,7 @@ export function readGameFlags(view: MemoryView): GameFlags {
 }
 
 const VERIFIED_BATTLE_NOTE =
-  "Battle-state offsets are VERIFIED against FF1Disassembly variables.inc: btl_result ($6B86), btl_enemycount ($6C93), btl_enemystats ($6BD3 x $14), btlcmd_curchar ($6B7A), btlcurs ($6AAA/$6AAB). Enemy names come from the NES bestiary table.";
+  "Battle-state offsets are VERIFIED against FF1Disassembly variables.inc: btl_result ($6B86), btl_enemycount ($6C93), btl_enemystats ($6BD3 x $14), btlcmd_curchar ($6B7A), btlcurs ($6AAA/$6AAB), btl_charcmdbuf ($688F). Enemy names come from the NES bestiary table.";
 
 const VERIFIED_MENU_NOTE =
   "Menu/shop offsets are VERIFIED against FF1Disassembly variables.inc: entering_shop ($50), shop_id ($51), shop_type ($66), cursor ($62), shopcurs ($64/$65), talkobj ($67), descboxopen ($7F).";
@@ -585,6 +593,86 @@ function enemySlotPosition(slot: number): { row: number; col: number } {
 function partySlotPosition(index: number): { row: number; col: number } {
   // Party is shown in two rows of two (front row = 0,1; back row = 2,3).
   return { row: index < 2 ? 0 : 1, col: index % 2 };
+}
+
+function decodeBattleTarget(raw: number): { kind: "enemy" | "player" | "all_enemies" | "all_players"; slot?: number } | undefined {
+  if (raw === 0xff) return { kind: "all_enemies" };
+  if (raw === 0xfe) return { kind: "all_players" };
+  if (raw >= 0x80 && raw <= 0x83) return { kind: "player", slot: raw - 0x80 };
+  if (raw <= 0x08) return { kind: "enemy", slot: raw };
+  return undefined;
+}
+
+/**
+ * Read the queued battle command for a party member from the btl_charcmdbuf.
+ *
+ * Command bytes 0x00/0x01/0x02 mean no command is queued (asleep/stunned, dead,
+ * or stone). Action commands are 0x04 attack, 0x08 drink, 0x10 item, 0x20 run,
+ * 0x40 magic. Returns undefined when no action is queued.
+ */
+function readBattleCommand(view: MemoryView, index: number): Record<string, unknown> | undefined {
+  const base = ADDR_BATTLE_CHAR_CMDBUF + index * BATTLE_CHAR_CMD_STRIDE;
+  const commandByte = view.u8(base + BATTLE_CHAR_CMD_COMMAND_OFFSET);
+  // 00/01/02 are "no command" states; do not report them as queued actions.
+  if (commandByte <= 0x02) return undefined;
+
+  const effect = view.u8(base + BATTLE_CHAR_CMD_EFFECT_OFFSET);
+  const targetRaw = view.u8(base + BATTLE_CHAR_CMD_TARGET_OFFSET);
+  const item = view.u8(ADDR_BATTLE_CHAR_CMD_ITEM + index);
+  const consumeType = view.u8(ADDR_BATTLE_CHAR_CMD_CONSUME_TYPE + index);
+  const consumeId = view.u8(ADDR_BATTLE_CHAR_CMD_CONSUME_ID + index);
+
+  let command: string;
+  switch (commandByte) {
+    case 0x04:
+      command = "attack";
+      break;
+    case 0x08:
+      command = "drink";
+      break;
+    case 0x10:
+      command = "item";
+      break;
+    case 0x20:
+      command = "run";
+      break;
+    case 0x40:
+      command = "magic";
+      break;
+    default:
+      command = `unknown_0x${commandByte.toString(16).padStart(2, "0")}`;
+  }
+
+  return {
+    command,
+    effect: effect === 0xff ? undefined : effect,
+    target: decodeBattleTarget(targetRaw),
+    item: item === 0 ? undefined : item,
+    consumeType: consumeType === 0 ? undefined : consumeType,
+    consumeId: consumeId === 0 ? undefined : consumeId,
+    raw: {
+      command: commandByte,
+      effect,
+      target: targetRaw,
+      item,
+      consumeType,
+      consumeId,
+    },
+  };
+}
+
+function readBattleParty(view: MemoryView, party: PartyCharacter[]): BattlePartyMember[] {
+  return party.map((c) => {
+    const pendingAction = readBattleCommand(view, c.index);
+    const isAlive = c.hp !== undefined && c.hp > 0 && c.status?.ailments.every((s) => s.key !== "dead");
+    return {
+      index: c.index,
+      name: c.name,
+      canAct: isAlive && pendingAction === undefined ? true : false,
+      pendingAction,
+      position: partySlotPosition(c.index),
+    };
+  });
 }
 
 function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
@@ -605,18 +693,6 @@ function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
   return enemies;
 }
 
-function readBattleParty(party: PartyCharacter[]): BattlePartyMember[] {
-  return party.map((c) => ({
-    index: c.index,
-    name: c.name,
-    canAct: c.hp !== undefined && c.hp > 0 && c.status?.ailments.every((s) => s.key !== "dead")
-      ? true
-      : undefined,
-    pendingAction: undefined,
-    position: partySlotPosition(c.index),
-  }));
-}
-
 /**
  * Read battle state from CPU RAM.
  *
@@ -633,7 +709,7 @@ export function readBattleState(view: MemoryView, party: PartyCharacter[]): Batt
     inBattle,
     enemyCount: inBattle ? enemyCount : 0,
     enemies: inBattle ? readBattleEnemies(view, enemyCount) : [],
-    party: readBattleParty(party),
+    party: readBattleParty(view, party),
     activePartyIndex: inBattle ? (activeIndex < PARTY_SIZE ? activeIndex : undefined) : undefined,
     cursorX: inBattle ? view.u8(ADDR_BATTLE_CURSOR_X) : undefined,
     cursorY: inBattle ? view.u8(ADDR_BATTLE_CURSOR_Y) : undefined,

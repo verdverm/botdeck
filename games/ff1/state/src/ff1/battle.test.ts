@@ -43,6 +43,56 @@ describe("readFF1State battle and context shape", () => {
     expect(state.battle.activePartyIndex).toBe(1);
   });
 
+  it("marks living party members as able to act before commands are queued", () => {
+    const mem = new Uint8Array(0x10000);
+    // Set up a living party in unsram character slots.
+    mem[0x6100 + 0x0a] = 35; // char 0 current HP low
+    mem[0x6100 + 0x0b] = 0;
+    mem[0x6100 + 0x40 + 0x0a] = 28;
+    mem[0x6100 + 0x40 + 0x0b] = 0;
+    mem[0x6b86] = 0; // battle active
+    mem[0x6c93] = 2; // 2 enemies
+    const view = createCpuMemoryView(mem);
+    const state = readFF1State(view);
+
+    expect(state.battle.party[0]?.canAct).toBe(true);
+    expect(state.battle.party[0]?.pendingAction).toBeUndefined();
+    expect(state.battle.party[1]?.canAct).toBe(true);
+    expect(state.battle.party[1]?.pendingAction).toBeUndefined();
+  });
+
+  it("reads a queued attack command and clears canAct for that character", () => {
+    const mem = new Uint8Array(0x10000);
+    mem[0x6100 + 0x0a] = 35; // char 0 current HP low
+    mem[0x6100 + 0x0b] = 0;
+    mem[0x6100 + 0x40 + 0x0a] = 28; // char 1 current HP low
+    mem[0x6100 + 0x40 + 0x0b] = 0;
+    mem[0x6b86] = 0; // battle active
+    mem[0x6c93] = 2; // 2 enemies
+    mem[0x6b7a] = 1; // now character 1 is selecting
+    // Character 0 has queued an attack on enemy slot 2.
+    const base0 = 0x688f + 0 * 4;
+    mem[base0 + 0] = 0x04; // attack
+    mem[base0 + 1] = 0xff; // no effect
+    mem[base0 + 2] = 0x02; // enemy slot 2
+    const view = createCpuMemoryView(mem);
+    const state = readFF1State(view);
+
+    expect(state.battle.party[0]?.canAct).toBe(false);
+    expect(state.battle.party[0]?.pendingAction).toEqual({
+      command: "attack",
+      effect: undefined,
+      target: { kind: "enemy", slot: 2 },
+      item: undefined,
+      consumeType: undefined,
+      consumeId: undefined,
+      raw: { command: 0x04, effect: 0xff, target: 0x02, item: 0, consumeType: 0, consumeId: 0 },
+    });
+    // Character 1 is selecting and has not queued a command yet.
+    expect(state.battle.party[1]?.canAct).toBe(true);
+    expect(state.battle.party[1]?.pendingAction).toBeUndefined();
+  });
+
   it("returns available locations for the overworld", () => {
     const mem = new Uint8Array(0x10000);
     const view = createCpuMemoryView(mem);

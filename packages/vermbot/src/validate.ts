@@ -1,0 +1,340 @@
+/**
+ * Server-side semantic validation for command tool calls.
+ *
+ * The agent can hallucinate actors, spells, targets, and items. This module
+ * grounds every command in the actual extracted game state before the turn is
+ * allowed to end. On failure it returns a precise error and a correction
+ * message that lists the valid options derived from state.
+ */
+
+import type { GameCommand, TurnRequest, CommandSpec } from "./protocol.ts";
+
+interface ValidatedPartyMember {
+  index: number;
+  name: string;
+  canAct?: boolean;
+  pendingAction?: unknown;
+  spellsKnown?: { name?: string; level?: number; slot?: number; school?: string }[];
+}
+
+interface ValidatedEnemy {
+  slot: number;
+  name?: string;
+}
+
+interface ValidatedInventoryItem {
+  itemInfo?: { name?: string; type?: string };
+  quantity: number;
+}
+
+interface ValidatedState {
+  party?: ValidatedPartyMember[];
+  battle?: {
+    inBattle?: boolean;
+    party?: ValidatedPartyMember[];
+    enemies?: ValidatedEnemy[];
+    activePartyIndex?: number;
+  };
+  inventory?: ValidatedInventoryItem[];
+}
+
+export interface ValidationFailure {
+  error: string;
+  correction: string;
+}
+
+export function validateCommand(command: GameCommand, request: TurnRequest): ValidationFailure | undefined {
+  const options = request.options;
+  const spec = options.find((o) => o.name === command.name);
+  if (!spec) {
+    return {
+      error: `Command "${command.name}" is not available in ${request.mode ?? "current"} mode.`,
+      correction: buildCommandListCorrection(options),
+    };
+  }
+
+  const args = command.args ?? {};
+  const state = extractState(request);
+  const isBattle = request.mode === "battle";
+
+  if (commandSpecExpectsActor(spec)) {
+    const actorFailure = validateActor(args, state, isBattle, request.actor);
+    if (actorFailure) return actorFailure;
+  }
+
+  if (command.name === "magic") {
+    const spellFailure = validateSpell(args, state);
+    if (spellFailure) return spellFailure;
+  }
+
+  if (command.name === "fight" || command.name === "magic") {
+    const targetFailure = validateTarget(args, state, isBattle, command.name);
+    if (targetFailure) return targetFailure;
+  }
+
+  if (command.name === "use_item") {
+    const itemFailure = validateItem(args, state);
+    if (itemFailure) return itemFailure;
+    const targetFailure = validateItemTarget(args, state);
+    if (targetFailure) return targetFailure;
+  }
+
+  return undefined;
+}
+
+function validateActor(
+  args: Record<string, unknown>,
+  state: ValidatedState,
+  isBattle: boolean,
+  expectedActor: string | undefined,
+): ValidationFailure | undefined {
+  const actorName = String(args.actor ?? "").trim();
+  if (actorName === "") {
+    return {
+      error: "Battle commands must name an actor.",
+      correction: buildActorCorrection(state, expectedActor),
+    };
+  }
+
+  const member = findPartyMember(state, actorName);
+  if (!member) {
+    return {
+      error: `Actor "${actorName}" is not a known party member.`,
+      correction: buildActorCorrection(state, expectedActor),
+    };
+  }
+
+  if (isBattle) {
+    const nextActor = findNextActor(state);
+    if (nextActor && nextActor.name !== member.name) {
+      return {
+        error: `It is ${nextActor.name}'s turn, not ${member.name}'s. Battle commands must be entered in party order.`,
+        correction: `The next actor is ${nextActor.name}. Issue the command for ${nextActor.name}.`,
+      };
+    }
+  }
+
+  return undefined;
+}
+
+function validateSpell(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const spellName = String(args.spell ?? "").trim();
+  const actorName = String(args.actor ?? "").trim();
+  const actor = findPartyMember(state, actorName);
+  const spells = actor?.spellsKnown ?? [];
+
+  if (spellName === "") {
+    return {
+      error: `Magic command requires a spell name for ${actorName}.`,
+      correction: buildSpellCorrection(actorName, spells),
+    };
+  }
+
+  const normalized = spellName.toUpperCase();
+  const known = spells.find((s) => (s.name ?? "").toUpperCase() === normalized);
+  if (!known) {
+    return {
+      error: `Spell "${spellName}" is not known by ${actorName}.`,
+      correction: buildSpellCorrection(actorName, spells),
+    };
+  }
+
+  return undefined;
+}
+
+function validateTarget(
+  args: Record<string, unknown>,
+  state: ValidatedState,
+  isBattle: boolean,
+  commandName: string,
+): ValidationFailure | undefined {
+  const targetName = String(args.target ?? "").trim();
+  const targets = listValidTargets(state, isBattle);
+
+  if (targetName === "") {
+    return {
+      error: `Command "${commandName}" requires a target.`,
+      correction: buildTargetCorrection(targets),
+    };
+  }
+
+  if (!isValidTarget(targetName, targets)) {
+    return {
+      error: `Target "${targetName}" is not valid for ${commandName}.`,
+      correction: buildTargetCorrection(targets),
+    };
+  }
+
+  return undefined;
+}
+
+function validateItemTarget(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const targetName = String(args.target ?? "").trim();
+  const party = state.party ?? state.battle?.party ?? [];
+  const valid = party.map((m) => `${m.name} (slot ${m.index})`);
+
+  if (targetName === "") {
+    return {
+      error: "use_item requires a target party member.",
+      correction: `Valid targets: ${valid.join(", ") || "none"}.`,
+    };
+  }
+
+  const match = party.find((m) => {
+    if (m.name.toLowerCase() === targetName.toLowerCase()) return true;
+    const parsed = Number(targetName.replace(/^slot\s*/i, ""));
+    return Number.isFinite(parsed) && m.index === parsed;
+  });
+
+  if (!match) {
+    return {
+      error: `Target "${targetName}" is not a valid party member for use_item.`,
+      correction: `Valid targets: ${valid.join(", ") || "none"}.`,
+    };
+  }
+
+  return undefined;
+}
+
+function validateItem(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const itemName = String(args.item ?? "").trim();
+  const consumables = (state.inventory ?? []).filter(
+    (it) => it.quantity > 0 && it.itemInfo?.type === "consumable",
+  );
+
+  if (itemName === "") {
+    return {
+      error: "use_item requires an item name.",
+      correction: buildItemCorrection(consumables),
+    };
+  }
+
+  const match = consumables.find((it) => (it.itemInfo?.name ?? "").toLowerCase() === itemName.toLowerCase());
+  if (!match) {
+    return {
+      error: `Item "${itemName}" is not available or is not a usable consumable.`,
+      correction: buildItemCorrection(consumables),
+    };
+  }
+
+  return undefined;
+}
+
+function commandSpecExpectsActor(spec: CommandSpec): boolean {
+  if (!spec.args) return false;
+  try {
+    const schema = JSON.parse(spec.args) as Record<string, unknown>;
+    return "actor" in schema;
+  } catch {
+    return false;
+  }
+}
+
+function extractState(request: TurnRequest): ValidatedState {
+  const ff1 = request.state?.ff1 as ValidatedState | undefined;
+  return ff1 ?? {};
+}
+
+function findPartyMember(state: ValidatedState, name: string): ValidatedPartyMember | undefined {
+  const normalized = name.toLowerCase();
+  const party = state.battle?.party ?? state.party ?? [];
+
+  // Exact name match first.
+  let member = party.find((p) => p.name.toLowerCase() === normalized);
+  if (member) return member;
+
+  // Numeric slot/index match (0-based).
+  const parsed = Number(normalized.replace(/^slot\s*/i, ""));
+  if (Number.isFinite(parsed)) {
+    member = party.find((p) => p.index === parsed);
+    if (member) return member;
+  }
+
+  return undefined;
+}
+
+function findNextActor(state: ValidatedState): ValidatedPartyMember | undefined {
+  const battleParty = state.battle?.party;
+  if (!battleParty) return undefined;
+
+  // canAct already encodes alive + no pendingAction in the FF1 reader.
+  return battleParty.find((m) => m.canAct === true);
+}
+
+function listValidTargets(state: ValidatedState, isBattle: boolean): string[] {
+  const targets: string[] = [];
+  if (isBattle) {
+    const enemies = state.battle?.enemies ?? [];
+    for (const e of enemies) {
+      const label = e.name ? `${e.name} (slot ${e.slot})` : `enemy slot ${e.slot}`;
+      targets.push(label);
+    }
+  }
+  const party = state.party ?? state.battle?.party ?? [];
+  for (const m of party) {
+    targets.push(`${m.name} (slot ${m.index})`);
+  }
+  return targets;
+}
+
+function isValidTarget(name: string, targets: string[]): boolean {
+  const normalized = name.toLowerCase();
+  for (const target of targets) {
+    if (target.toLowerCase() === normalized) return true;
+    // Allow matching just the slot number or just the name.
+    const match = target.match(/^(.+?)\s*\(slot\s*(\d+)\)$/i);
+    if (match) {
+      const [, label, slot] = match;
+      if (label?.trim().toLowerCase() === normalized) return true;
+      if (slot === normalized) return true;
+      if (`slot ${slot}` === normalized) return true;
+    }
+  }
+  return false;
+}
+
+function buildCommandListCorrection(options: CommandSpec[]): string {
+  const list = options.map((o) => `- ${o.name}: ${o.description}`).join("\n");
+  return `Available commands this turn are:\n${list}\nCall exactly one of these command tools.`;
+}
+
+function buildActorCorrection(state: ValidatedState, expectedActor: string | undefined): string {
+  const party = state.battle?.party ?? state.party ?? [];
+  const names = party.map((p) => p.name).join(", ") || "none";
+  if (expectedActor) {
+    return `The next actor is ${expectedActor}. Valid party members: ${names}. Issue the command for ${expectedActor}.`;
+  }
+  const next = findNextActor(state);
+  if (next) {
+    return `The next actor is ${next.name}. Valid party members: ${names}. Issue the command for ${next.name}.`;
+  }
+  return `Valid party members: ${names}. Name the actor exactly.`;
+}
+
+function buildSpellCorrection(actorName: string, spells: { name?: string; level?: number }[]): string {
+  if (spells.length === 0) {
+    return `${actorName} knows no spells.`;
+  }
+  const list = spells
+    .map((s) => {
+      const level = s.level !== undefined ? ` (level ${s.level})` : "";
+      return `${s.name ?? "?"}${level}`;
+    })
+    .join(", ");
+  return `${actorName} knows: ${list}. Choose one of these spells.`;
+}
+
+function buildTargetCorrection(targets: string[]): string {
+  if (targets.length === 0) {
+    return "No valid targets are visible.";
+  }
+  return `Valid targets: ${targets.join(", ")}.`;
+}
+
+function buildItemCorrection(consumables: ValidatedInventoryItem[]): string {
+  if (consumables.length === 0) {
+    return "No usable consumable items are in inventory.";
+  }
+  const list = consumables.map((it) => `${it.itemInfo?.name ?? "?"} x${it.quantity}`).join(", ");
+  return `Available consumables: ${list}.`;
+}

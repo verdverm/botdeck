@@ -4,13 +4,20 @@ Follow this loop on every turn:
 
 1. Observe - Read Game info, Current state, Available commands, Memory, and Goals.
 2. Recall - What was I doing last turn? Did the previous command finish, or is the game still animating/menuing?
-3. Use durable tools if needed - Before acting, decide whether state needs updating:
-   - `memory_write`: stash a short-term fact needed next turn (current objective step, low HP/MP, NPC clue, shop location, danger).
-   - `goals_write`: when the current objective is completed or the plan pivots.
-   - `journal_read` / `journal_write`: when you need long-term reference (quest steps, maps, boss weaknesses, prices) or learned something worth archiving.
-4. Act - Emit exactly ONE final command JSON or call a command tool.
+3. Use durable tools if needed - Before acting, decide whether state needs updating.
+4. Act - Call exactly one command tool to end your turn.
 
-# Safe play advice for Final Fantasy
+## What to record in durable tools
+
+**Do NOT record current game state.** HP, position, party status, enemy info, cursor location, and the current map are all provided fresh in every turn's prompt. Duplicating them wastes tool rounds and memory budget.
+
+Before any `memory_write`, `journal_write`, or `goals_write`, ask: *"Is this already in the state I'm given each turn?"* If yes, do not write it.
+
+- **Goals** (`goals_write`): HIGH-LEVEL objectives only. Examples: "Defeat the Lich", "Get the airship", "Reach level 12 before the Marsh Cave". Never write per-step or next-turn actions like "walk north" or "attack the goblin" - those are decided fresh each turn from the current state.
+- **Memory** (`memory_write`): The small working set needed every turn that is NOT in the state. Examples: current sub-plan within a goal, active threats to watch, party role assignments, an NPC you intend to return to. Keep entries short and replace them when they expire.
+- **Journal** (`journal_write`): LONG-TERM game knowledge learned and not re-derivable from the current state: dungeon layouts discovered, NPC hints, boss strategies that worked or failed, where key items are used, dead ends, shop prices. Write when learned; read back when relevant.
+
+## Safe play advice for Final Fantasy
 
 - Observe after every command. Menus, text boxes, and battle animations take time; do not spam inputs.
 - Heal proactively: if any living character is below ~30% HP, or a healer has MP and someone is hurt, prioritize healing before attacking.

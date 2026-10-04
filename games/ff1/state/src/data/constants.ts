@@ -259,6 +259,32 @@ export const ADDR_BATTLE_CURSOR_X = 0x6aaa;
 /** Battle menu cursor Y (menu position). */
 export const ADDR_BATTLE_CURSOR_Y = 0x6aab;
 
+/**
+ * Per-character battle command buffer.
+ *
+ * Each character has 4 bytes (3 used, 1 padding) starting at $688F:
+ *   +$00 command code: 00/01/02 = none (asleep/stunned/dead/stone),
+ *                       04 = attack, 08 = drink, 10 = use item, 20 = run, 40 = magic
+ *   +$01 effect/spell ID (FF if unused)
+ *   +$02 target: 0x00-0x08 = enemy slot, 0x80-0x83 = player slot,
+ *               0xFF = all enemies, 0xFE = all players
+ *
+ * Derived buffers (contiguous in RAM due to clear loops):
+ *   $689F = item ID for command 0x10 (1 byte per character)
+ *   $68A3 = consume type: 01 magic, 02 drink (1 byte per character)
+ *   $68A7 = consume ID: spell level for magic, potion index for drink (1 byte per character)
+ *
+ * Documented in FF1Disassembly variables.inc.
+ */
+export const ADDR_BATTLE_CHAR_CMDBUF = 0x688f;
+export const BATTLE_CHAR_CMD_STRIDE = 4;
+export const BATTLE_CHAR_CMD_COMMAND_OFFSET = 0;
+export const BATTLE_CHAR_CMD_EFFECT_OFFSET = 1;
+export const BATTLE_CHAR_CMD_TARGET_OFFSET = 2;
+export const ADDR_BATTLE_CHAR_CMD_ITEM = 0x689f;
+export const ADDR_BATTLE_CHAR_CMD_CONSUME_TYPE = 0x68a3;
+export const ADDR_BATTLE_CHAR_CMD_CONSUME_ID = 0x68a7;
+
 // ===========================================================================
 // Menu / shop state (VERIFIED against FF1Disassembly variables.inc)
 // entering_shop ($50), shop_id ($51), and shop_type ($66) are set when the

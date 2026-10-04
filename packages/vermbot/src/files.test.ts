@@ -41,7 +41,7 @@ function seedGameConfig(): void {
   writeGameConfig(TEST_GAME, {
     agent: {
       model: "small",
-      maxToolRounds: 5,
+      maxToolRounds: 25,
       maxTokens: 1024,
       timeoutMs: 120_000,
       limits: {
@@ -94,7 +94,7 @@ describe("resolveAgentConfig", () => {
   it("reads the game default config", () => {
     const cfg = resolveAgentConfig(TEST_GAME);
     expect(cfg.model).toBe("small");
-    expect(cfg.maxToolRounds).toBe(5);
+    expect(cfg.maxToolRounds).toBe(25);
     expect(cfg.maxTokens).toBe(1024);
     expect(cfg.limits.memory).toBe(2048);
   });
@@ -117,7 +117,7 @@ describe("resolveAgentConfig", () => {
   it("falls back to defaults when no game config exists", () => {
     const cfg = resolveAgentConfig("__totally_missing_game_12345");
     expect(cfg.model).toBe("small");
-    expect(cfg.maxToolRounds).toBe(5);
+    expect(cfg.maxToolRounds).toBe(25);
     expect(cfg.limits.memory).toBe(2048);
   });
 

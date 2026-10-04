@@ -240,10 +240,12 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       // If a dialog box is open after the macro, keep sampling through the
       // settle delay so post-macro pages (e.g. the next page after
       // dialog_advance) are captured before persisting the step.
+      // In battle mode, wait briefly so the command buffer and active actor
+      // index have time to latch before the after-state snapshot.
       let postState = plugin.readState();
       const postDialogOpen =
         (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
-      if (postDialogOpen) {
+      if (postDialogOpen || request.mode === "battle") {
         await waitSettle();
         postState = plugin.readState();
       }

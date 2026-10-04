@@ -182,6 +182,7 @@ const DURABLE_TOOLS: AgentTool[] = [
       properties: {
         button: { type: "string", description: "Button name: a, b, start, select, up, down, left, right." },
         frames: { type: "number", description: "How many frames to hold the button (default 4)." },
+        reason: { type: "string", description: "Optional concise reason for pressing this button." },
       },
       required: ["button"],
     },
@@ -324,13 +325,24 @@ function argsStringToSchema(args: string | undefined): Record<string, unknown> {
 }
 
 export function makeCommandTools(options: CommandSpec[]): AgentTool[] {
-  return options.map((spec) => ({
-    name: spec.name,
-    description: spec.description,
-    inputSchema: argsStringToSchema(spec.args),
-    isCommand: true,
-    execute: (_, input) => okResult(spec.name, { selected: true, input }),
-  }));
+  return options.map((spec) => {
+    const argsSchema = argsStringToSchema(spec.args);
+    const inputSchema: Record<string, unknown> = {
+      type: "object",
+      properties: {
+        ...(argsSchema.properties as Record<string, unknown> | undefined),
+        reason: { type: "string", description: "Optional concise reason for choosing this command." },
+      },
+      required: argsSchema.required as string[] | undefined,
+    };
+    return {
+      name: spec.name,
+      description: spec.description,
+      inputSchema,
+      isCommand: true,
+      execute: (_, input) => okResult(spec.name, { selected: true, input }),
+    };
+  });
 }
 
 function toolIsAllowed(name: string, whitelist: readonly string[] | undefined): boolean {

@@ -157,6 +157,25 @@ function getActiveActorSpells(state?: Record<string, unknown>): SpellInfo[] {
   return ff1?.party?.[index]?.spellsKnown ?? [];
 }
 
+function getActorSpellsByName(state?: Record<string, unknown>, actorName?: string): SpellInfo[] {
+  const ff1 = state?.ff1 as { party?: { name?: string; spellsKnown?: SpellInfo[] }[] } | undefined;
+  if (!actorName) return [];
+  return ff1?.party?.find((c) => c.name?.toLowerCase() === actorName.toLowerCase())?.spellsKnown ?? [];
+}
+
+function getEnemyTargetList(state?: Record<string, unknown>): string {
+  const ff1 = state?.ff1 as { battle?: { enemies?: { name?: string; slot: number }[] } } | undefined;
+  const enemies = ff1?.battle?.enemies ?? [];
+  if (enemies.length === 0) return "none";
+  return enemies.map((e) => `${e.name ?? "enemy"} (slot ${e.slot})`).join(", ");
+}
+
+function getConsumablesList(state?: Record<string, unknown>): string {
+  const consumables = getInventory(state).filter(isConsumable);
+  if (consumables.length === 0) return "none";
+  return consumables.map((it) => `${it.itemInfo?.name ?? `Item ${it.itemId}`} x${it.quantity}`).join(", ");
+}
+
 function resolveNamedIndex(
   name: string,
   labels: string[],
@@ -351,7 +370,7 @@ export class FF1GamePlugin implements GamePlugin {
         commands.push({
           name: "use_item",
           description:
-            "Open the ITEM menu, navigate to the named consumable item, and use it on the target party member.",
+            `Open the ITEM menu, navigate to the named consumable item, and use it on the target party member. Available consumables: ${getConsumablesList(state)}.`,
           args: '{ "item": "string", "target": "string" }',
         });
       }
@@ -365,23 +384,31 @@ export class FF1GamePlugin implements GamePlugin {
     const activeIndex = getActivePartyIndex(state);
     const activeActor = actor ?? (activeIndex !== undefined ? actors[activeIndex]?.name : undefined);
     const actorList = actors.length > 0 ? actors.map((a) => a.name).join(", ") : "any conscious party member";
+    const targets = getEnemyTargetList(state);
+    const consumables = getConsumablesList(state);
+    const activeSpells = activeActor ? getActorSpellsByName(state, activeActor) : [];
+    const spellHint = activeSpells.length > 0
+      ? `Known spells: ${activeSpells.map((s) => `${s.name} (L${s.level})`).join(", ")}.`
+      : "No known spells for this actor.";
+
     const base = activeActor
       ? `It is ${activeActor}'s turn. Each command must name an actor from: ${actorList}.`
       : `In battle, each command must name an actor from: ${actorList}.`;
+
     return [
       {
         name: "fight",
-        description: `${base} Attack the targeted enemy with a physical blow.`,
+        description: `${base} Attack the targeted enemy with a physical blow. Valid enemy targets: ${targets}.`,
         args: '{ "actor": "string", "target": "enemy name or slot" }',
       },
       {
         name: "magic",
-        description: `${base} Cast a learned spell. Only mages with charges can cast.`,
+        description: `${base} Cast a learned spell. ${spellHint} Valid targets: ${targets} or an ally name/slot.`,
         args: '{ "actor": "string", "spell": "string", "target": "enemy name or slot | ally name" }',
       },
       {
         name: "use_item",
-        description: `${base} Drink/use a consumable item in battle (DRINK menu entry).`,
+        description: `${base} Drink/use a consumable item in battle (DRINK menu entry). Available consumables: ${consumables}.`,
         args: '{ "actor": "string", "item": "string", "target": "string" }',
       },
       {

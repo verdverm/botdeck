@@ -20,7 +20,7 @@ function tmpId(prefix: string): string {
 
 const TEST_CONFIG: AgentConfig = {
   model: "small",
-  maxToolRounds: 5,
+  maxToolRounds: 25,
   maxTokens: 1024,
   timeoutMs: 120_000,
   limits: { goals: 100, memory: 50, journal: 200, memoryCount: 3, snippets: 200, snippetCount: 3 },
@@ -82,7 +82,10 @@ describe("makeAgentTools", () => {
     const fight = defs.find((d) => d.name === "fight");
     expect(fight?.inputSchema).toEqual({
       type: "object",
-      properties: { target: { type: "string" } },
+      properties: {
+        target: { type: "string" },
+        reason: { type: "string", description: "Optional concise reason for choosing this command." },
+      },
       required: ["target"],
     });
   });
@@ -317,6 +320,7 @@ describe("makeCommandTools", () => {
       properties: {
         item: { type: "string" },
         quantity: { type: "number" },
+        reason: { type: "string", description: "Optional concise reason for choosing this command." },
       },
       required: ["item", "quantity"],
     });
@@ -340,6 +344,7 @@ describe("makeCommandTools", () => {
       properties: {
         direction: { type: "string" },
         steps: { type: "number" },
+        reason: { type: "string", description: "Optional concise reason for choosing this command." },
       },
       required: ["direction", "steps"],
     });

@@ -4,7 +4,6 @@ import { formatFF1StateFromUnknown } from "@games/ff1-state";
 import type { CommandSpec, TurnRequest } from "./protocol.ts";
 import {
   gameDir,
-  playDir,
   playUserSnippetsDir,
   resolvePromptConfig,
   resolveAgentConfig,

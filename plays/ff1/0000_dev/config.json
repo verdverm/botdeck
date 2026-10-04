@@ -4,7 +4,7 @@
   "label": "Final Fantasy - dev run",
   "agent": {
     "model": "small",
-    "maxToolRounds": 5,
+    "maxToolRounds": 25,
     "maxTokens": 1024,
     "limits": {
       "goals": 1024,

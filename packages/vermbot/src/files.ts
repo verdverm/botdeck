@@ -255,7 +255,7 @@ class AgentConfigPartial extends Schema.Class<AgentConfigPartial>("AgentConfigPa
 
 const DEFAULT_AGENT_CONFIG = new AgentConfig({
   model: "small",
-  maxToolRounds: 5,
+  maxToolRounds: 25,
   maxTokens: 1024,
   timeoutMs: 120_000,
   limits: new AgentLimits({

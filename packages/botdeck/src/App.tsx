@@ -62,7 +62,7 @@ export function App() {
 
   const { turnTimeoutMs, settleDelayMs, collectStates } = useMemo(() => {
     const agent = isPlainObject(playConfig?.agent) ? playConfig.agent : {};
-    const maxToolRounds = typeof agent.maxToolRounds === "number" ? agent.maxToolRounds : 5;
+    const maxToolRounds = typeof agent.maxToolRounds === "number" ? agent.maxToolRounds : 25;
     const timeoutMs = typeof agent.timeoutMs === "number" ? agent.timeoutMs : 120_000;
     const collectStates =
       agent.collectStates === false ? false : true;
