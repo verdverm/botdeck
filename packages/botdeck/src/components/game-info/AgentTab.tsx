@@ -79,7 +79,7 @@ function JsonBlock({ value, maxHeight }: { value: unknown; maxHeight?: string })
 
 function ToolCallBubble({ call }: { call: ToolCall }) {
   return (
-    <div className="rounded bg-blue-900/20 p-2">
+    <div data-testid="tool-call-bubble" className="rounded bg-blue-900/20 p-2">
       <p className="text-xs font-medium text-blue-300">tool call: {call.name}</p>
       {call.input && <JsonBlock value={call.input} maxHeight="120px" />}
     </div>
@@ -88,7 +88,7 @@ function ToolCallBubble({ call }: { call: ToolCall }) {
 
 function ToolResultBubble({ result }: { result: ToolResult }) {
   return (
-    <div className={`rounded p-2 ${result.error ? "bg-rose-900/20" : "bg-emerald-900/20"}`}>
+    <div data-testid="tool-result-bubble" className={`rounded p-2 ${result.error ? "bg-rose-900/20" : "bg-emerald-900/20"}`}>
       <p className={`text-xs font-medium ${result.error ? "text-rose-300" : "text-emerald-300"}`}>
         tool result: {result.name} {result.error ? "(error)" : ""}
       </p>
@@ -127,27 +127,46 @@ function TranscriptView({ transcript }: { transcript: TurnTranscript }) {
   );
 }
 
+function ToolCallResultPair({ call, result }: { call: ToolCall; result?: ToolResult }) {
+  return (
+    <div className="flex flex-col gap-1 rounded border border-blue-900/30 bg-blue-950/10 p-2">
+      <ToolCallBubble call={call} />
+      {result && <ToolResultBubble result={result} />}
+    </div>
+  );
+}
+
 function TranscriptRoundView({ round }: { round: TurnTranscriptRound }) {
+  const resultsById = new Map(round.toolResults?.map((r) => [r.id, r]) ?? []);
+  const hasToolCalls = round.toolCalls && round.toolCalls.length > 0;
+  const hasAssistantText = round.assistantText && round.assistantText.trim().length > 0;
+
   return (
     <div className="flex flex-col gap-1">
-      {round.assistantText && (
+      {(hasAssistantText || hasToolCalls) && (
         <div className="rounded bg-neutral-800 p-2">
           <p className="text-xs font-medium text-neutral-500">assistant</p>
-          <pre className="whitespace-pre-wrap text-xs text-neutral-300">{round.assistantText}</pre>
+          {hasAssistantText ? (
+            <pre className="whitespace-pre-wrap text-xs text-neutral-300">{round.assistantText}</pre>
+          ) : (
+            <p className="text-xs italic text-neutral-500">(called tools)</p>
+          )}
         </div>
       )}
-      {round.toolCalls && round.toolCalls.length > 0 && (
+      {hasToolCalls && (
         <div className="flex flex-col gap-1">
-          {round.toolCalls.map((call) => (
-            <ToolCallBubble key={call.id} call={call} />
+          {round.toolCalls!.map((call) => (
+            <ToolCallResultPair key={call.id} call={call} result={resultsById.get(call.id)} />
           ))}
         </div>
       )}
       {round.toolResults && round.toolResults.length > 0 && (
         <div className="flex flex-col gap-1">
-          {round.toolResults.map((result) => (
-            <ToolResultBubble key={result.id} result={result} />
-          ))}
+          {round.toolResults
+            .filter((result) => !round.toolCalls?.some((call) => call.id === result.id))
+            .map((result) => (
+              <ToolResultBubble key={result.id} result={result} />
+            ))}
         </div>
       )}
       {round.parseError && (

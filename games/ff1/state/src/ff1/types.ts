@@ -138,6 +138,8 @@ export interface BattleEnemy {
   hp: number | undefined;
   /** Max HP is not yet read from a verified offset; undefined until verified. */
   maxHp: number | undefined;
+  /** True when the enemy is still alive (HP > 0). Dead enemies remain in the list so slot identity is preserved. */
+  alive: boolean;
   position: { row: number; col: number };
 }
 

@@ -687,6 +687,7 @@ function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
       name: getEnemyNameById(id),
       hp,
       maxHp: undefined,
+      alive: hp > 0,
       position: enemySlotPosition(i),
     });
   }

@@ -3,13 +3,13 @@
   "game": "ff1",
   "label": "Final Fantasy - dev run",
   "agent": {
-    "model": "small",
+    "model": "primary",
     "maxToolRounds": 25,
-    "maxTokens": 1024,
+    "maxTokens": 2048,
     "limits": {
       "goals": 1024,
       "memory": 2048,
-      "journal": 32768,
+      "journal": 8096,
       "memoryCount": 10
     }
   },

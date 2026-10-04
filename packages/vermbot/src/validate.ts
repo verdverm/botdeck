@@ -20,6 +20,8 @@ interface ValidatedPartyMember {
 interface ValidatedEnemy {
   slot: number;
   name?: string;
+  hp?: number;
+  alive?: boolean;
 }
 
 interface ValidatedInventoryItem {
@@ -149,19 +151,27 @@ function validateTarget(
   commandName: string,
 ): ValidationFailure | undefined {
   const targetName = String(args.target ?? "").trim();
-  const targets = listValidTargets(state, isBattle);
+  const targetDomain = commandName === "fight" ? "enemy" : "any";
+  const targets = listValidTargets(state, isBattle, targetDomain);
 
   if (targetName === "") {
     return {
       error: `Command "${commandName}" requires a target.`,
-      correction: buildTargetCorrection(targets),
+      correction: buildTargetCorrection(targets, state, isBattle),
     };
   }
 
   if (!isValidTarget(targetName, targets)) {
+    const deadMatch = targetDomain === "enemy" ? findDeadEnemyMatch(targetName, state) : undefined;
+    if (deadMatch) {
+      return {
+        error: `Target "${targetName}" is ${deadMatch.name ?? `enemy slot ${deadMatch.slot}`} and is already dead.`,
+        correction: buildTargetCorrection(targets, state, isBattle),
+      };
+    }
     return {
       error: `Target "${targetName}" is not valid for ${commandName}.`,
-      correction: buildTargetCorrection(targets),
+      correction: buildTargetCorrection(targets, state, isBattle),
     };
   }
 
@@ -261,20 +271,36 @@ function findNextActor(state: ValidatedState): ValidatedPartyMember | undefined 
   return battleParty.find((m) => m.canAct === true);
 }
 
-function listValidTargets(state: ValidatedState, isBattle: boolean): string[] {
+function listValidTargets(state: ValidatedState, isBattle: boolean, domain: "enemy" | "any" = "any"): string[] {
   const targets: string[] = [];
   if (isBattle) {
     const enemies = state.battle?.enemies ?? [];
     for (const e of enemies) {
+      if (e.alive === false) continue;
       const label = e.name ? `${e.name} (slot ${e.slot})` : `enemy slot ${e.slot}`;
       targets.push(label);
     }
   }
-  const party = state.party ?? state.battle?.party ?? [];
-  for (const m of party) {
-    targets.push(`${m.name} (slot ${m.index})`);
+  if (domain !== "enemy") {
+    const party = state.party ?? state.battle?.party ?? [];
+    for (const m of party) {
+      targets.push(`${m.name} (slot ${m.index})`);
+    }
   }
   return targets;
+}
+
+function findDeadEnemyMatch(targetName: string, state: ValidatedState): ValidatedEnemy | undefined {
+  const enemies = state.battle?.enemies ?? [];
+  const normalized = targetName.toLowerCase();
+  return enemies.find((e) => {
+    if (e.alive !== false) return false;
+    if (e.name && e.name.toLowerCase() === normalized) return true;
+    const parsed = Number(normalized.replace(/^slot\s*/i, ""));
+    if (Number.isFinite(parsed) && e.slot === parsed) return true;
+    if (`slot ${e.slot}` === normalized) return true;
+    return false;
+  });
 }
 
 function isValidTarget(name: string, targets: string[]): boolean {
@@ -324,8 +350,12 @@ function buildSpellCorrection(actorName: string, spells: { name?: string; level?
   return `${actorName} knows: ${list}. Choose one of these spells.`;
 }
 
-function buildTargetCorrection(targets: string[]): string {
+function buildTargetCorrection(targets: string[], state: ValidatedState, isBattle: boolean): string {
   if (targets.length === 0) {
+    const enemies = state.battle?.enemies ?? [];
+    if (isBattle && enemies.length > 0 && enemies.every((e) => e.alive === false)) {
+      return "All enemies are dead. No valid targets remain.";
+    }
     return "No valid targets are visible.";
   }
   return `Valid targets: ${targets.join(", ")}.`;

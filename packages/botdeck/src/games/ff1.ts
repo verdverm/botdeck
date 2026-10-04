@@ -164,10 +164,17 @@ function getActorSpellsByName(state?: Record<string, unknown>, actorName?: strin
 }
 
 function getEnemyTargetList(state?: Record<string, unknown>): string {
-  const ff1 = state?.ff1 as { battle?: { enemies?: { name?: string; slot: number }[] } } | undefined;
+  const ff1 = state?.ff1 as {
+    battle?: { enemies?: { name?: string; slot: number; alive?: boolean; hp?: number }[] };
+  } | undefined;
   const enemies = ff1?.battle?.enemies ?? [];
   if (enemies.length === 0) return "none";
-  return enemies.map((e) => `${e.name ?? "enemy"} (slot ${e.slot})`).join(", ");
+  return enemies
+    .map((e) => {
+      const status = e.alive === false ? " [DEAD]" : "";
+      return `${e.name ?? "enemy"} (slot ${e.slot}, HP ${e.hp ?? "?"})${status}`;
+    })
+    .join(", ");
 }
 
 function getConsumablesList(state?: Record<string, unknown>): string {

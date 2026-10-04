@@ -1,4 +1,6 @@
-import type { DialogState, FF1GameState, GameContext, KnownLocation, MenuState, PartyCharacter, SpellChargeLevel, WorldState } from "./types.js";
+import type { DialogState, FF1GameState, GameContext, KnownLocation, MenuState, PartyCharacter, SpellChargeLevel, WorldState, BattlePartyMember, BattleEnemy } from "./types.js";
+import { getSpellById } from "../data/spells.js";
+import { getConsumableById } from "../data/items.js";
 
 export function mpSummary(charges: SpellChargeLevel[] | undefined): string {
   if (!charges || charges.length === 0) return "-";
@@ -88,16 +90,72 @@ function formatLocations(locations: KnownLocation[] | undefined): string {
     .join("\n");
 }
 
+function formatBattleTarget(target: unknown, enemies: BattleEnemy[], party: PartyCharacter[]): string {
+  if (!target || typeof target !== "object") return "?";
+  const t = target as { kind?: string; slot?: number };
+  switch (t.kind) {
+    case "enemy": {
+      const slot = t.slot ?? 0;
+      const enemy = enemies.find((e) => e.slot === slot);
+      return `${enemy?.name ?? `enemy slot ${slot}`} (slot ${slot})`;
+    }
+    case "player": {
+      const slot = t.slot ?? 0;
+      const member = party[slot];
+      return `${member?.name ?? `party slot ${slot}`} (slot ${slot})`;
+    }
+    case "all_enemies":
+      return "all enemies";
+    case "all_players":
+      return "all allies";
+    default:
+      return "?";
+  }
+}
+
+function formatPendingAction(action: Record<string, unknown> | undefined, enemies: BattleEnemy[], party: PartyCharacter[]): string {
+  if (!action) return "";
+  const command = String(action.command ?? "?").toUpperCase();
+  const target = formatBattleTarget(action.target, enemies, party);
+
+  if (command === "ATTACK") {
+    return `ATTACK -> ${target}`;
+  }
+  if (command === "MAGIC") {
+    const effect = typeof action.effect === "number" ? action.effect : undefined;
+    const spell = effect !== undefined ? getSpellById(effect) : undefined;
+    const spellName = spell?.name ?? (effect !== undefined ? `spell ${effect}` : "?");
+    return `MAGIC ${spellName} -> ${target}`;
+  }
+  if (command === "DRINK" || command === "ITEM") {
+    const itemId = typeof action.item === "number" ? action.item : undefined;
+    const item = itemId !== undefined ? getConsumableById(itemId) : undefined;
+    const itemName = item?.name ?? (itemId !== undefined ? `item ${itemId}` : "?");
+    return `${command} ${itemName} -> ${target}`;
+  }
+  if (command === "RUN") {
+    return "RUN";
+  }
+  return `${command} -> ${target}`;
+}
+
 function formatBattle(state: FF1GameState): string {
   const battle = state.battle;
   if (!battle?.inBattle) return "Not in battle.";
   const enemies = battle.enemies.length > 0
     ? battle.enemies
-        .map((e) => `- ${e.name ?? `Enemy ${e.slot + 1}`} (slot ${e.slot}, HP ${e.hp ?? "?"})`)
+        .map((e) => {
+          const status = e.alive ? "" : " [DEAD]";
+          return `- ${e.name ?? `Enemy ${e.slot + 1}`} (slot ${e.slot}, HP ${e.hp ?? "?"})${status}`;
+        })
         .join("\n")
     : "- Enemy roster unread (offsets TODO)";
   const party = battle.party
-    .map((m) => `- ${m.name}: ${m.canAct ? "can act" : "cannot act"} (row ${m.position.row})`)
+    .map((m) => {
+      const base = `- ${m.name}: ${m.canAct ? "can act" : "cannot act"} (row ${m.position.row})`;
+      const pending = formatPendingAction(m.pendingAction, battle.enemies, state.party);
+      return pending ? `${base} [queued: ${pending}]` : base;
+    })
     .join("\n");
   return [
     `Active actor: ${battle.activePartyIndex !== undefined ? state.party[battle.activePartyIndex]?.name ?? "?" : "unknown"}`,

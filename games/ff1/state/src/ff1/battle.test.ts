@@ -29,7 +29,11 @@ describe("readFF1State battle and context shape", () => {
     mem[0x6b86] = 0; // btl_result == 0 means battle is active
     mem[0x6c93] = 3; // btl_enemycount
     mem[0x6b7a] = 1; // btlcmd_curchar
-    // Three enemy stat records at $6BD3 + slot * $14; enemy ID is at +$11.
+    // Three enemy stat records at $6BD3 + slot * $14; ID at +$11, HP at +$02/$03.
+    for (let i = 0; i < 3; i++) {
+      mem[0x6bd3 + i * 0x14 + 0x02] = 0x10; // HP low
+      mem[0x6bd3 + i * 0x14 + 0x03] = 0x00; // HP high
+    }
     mem[0x6bd3 + 0 * 0x14 + 0x11] = 0x00; // Goblin
     mem[0x6bd3 + 1 * 0x14 + 0x11] = 0x01; // Goblin Guard
     mem[0x6bd3 + 2 * 0x14 + 0x11] = 0x02; // Wolf
@@ -40,7 +44,31 @@ describe("readFF1State battle and context shape", () => {
     expect(state.battle.enemyCount).toBe(3);
     expect(state.battle.enemies).toHaveLength(3);
     expect(state.battle.enemies.map((e) => e.name)).toEqual(["Goblin", "Goblin Guard", "Wolf"]);
+    expect(state.battle.enemies.every((e) => e.alive)).toBe(true);
     expect(state.battle.activePartyIndex).toBe(1);
+  });
+
+  it("marks dead enemies as not alive while preserving their slots", () => {
+    const mem = new Uint8Array(0x10000);
+    mem[0x6b86] = 0; // battle active
+    mem[0x6c93] = 3; // 3 enemies
+    // Enemy stat records at $6BD3 + slot * $14; ID at +$11, HP at +$02/$03.
+    mem[0x6bd3 + 0 * 0x14 + 0x11] = 0x00; // Goblin
+    mem[0x6bd3 + 0 * 0x14 + 0x02] = 0x00; // HP low = 0
+    mem[0x6bd3 + 0 * 0x14 + 0x03] = 0x00; // HP high = 0
+    mem[0x6bd3 + 1 * 0x14 + 0x11] = 0x01; // Goblin Guard
+    mem[0x6bd3 + 1 * 0x14 + 0x02] = 0x14; // HP low = 20
+    mem[0x6bd3 + 1 * 0x14 + 0x03] = 0x00; // HP high = 0
+    mem[0x6bd3 + 2 * 0x14 + 0x11] = 0x02; // Wolf
+    mem[0x6bd3 + 2 * 0x14 + 0x02] = 0x00; // HP low = 0
+    mem[0x6bd3 + 2 * 0x14 + 0x03] = 0x00; // HP high = 0
+    const view = createCpuMemoryView(mem);
+    const state = readFF1State(view);
+
+    expect(state.battle.enemies).toHaveLength(3);
+    expect(state.battle.enemies[0]!.alive).toBe(false);
+    expect(state.battle.enemies[1]!.alive).toBe(true);
+    expect(state.battle.enemies[2]!.alive).toBe(false);
   });
 
   it("marks living party members as able to act before commands are queued", () => {

@@ -27,7 +27,12 @@ const BATTLE_OPTIONS: CommandSpec[] = [
 
 function battleState(
   nextIndex: number,
-  overrides: { dead?: number[]; pending?: number[]; spells?: Record<string, string[]>; enemies?: string[] } = {},
+  overrides: {
+    dead?: number[];
+    pending?: number[];
+    spells?: Record<string, string[]>;
+    enemies?: { name: string; alive?: boolean; hp?: number }[];
+  } = {},
 ): Record<string, unknown> {
   const party = ["Stu", "Rias", "Zing", "Jaki"].map((name, index) => ({
     index,
@@ -36,9 +41,11 @@ function battleState(
     pendingAction: overrides.pending?.includes(index) ? { command: "attack" } : undefined,
     spellsKnown: (overrides.spells?.[name] ?? []).map((spell) => ({ name: spell, level: 1, slot: 1, school: "black" })),
   }));
-  const enemies = (overrides.enemies ?? ["Goblin", "Goblin"]).map((name, slot) => ({
+  const enemies = (overrides.enemies ?? [{ name: "Goblin" }, { name: "Goblin" }]).map((e, slot) => ({
     slot,
-    name,
+    name: e.name,
+    hp: e.hp ?? (e.alive === false ? 0 : 10),
+    alive: e.alive !== false,
     position: { row: 0, col: slot },
   }));
   return {
@@ -105,7 +112,7 @@ describe("validateCommand", () => {
   });
 
   it("rejects an invalid enemy target", () => {
-    const req = makeRequest(battleState(0, { enemies: ["Goblin", "Wolf"] }), BATTLE_OPTIONS);
+    const req = makeRequest(battleState(0, { enemies: [{ name: "Goblin" }, { name: "Wolf" }] }), BATTLE_OPTIONS);
     const result = validateCommand({ name: "fight", args: { actor: "Stu", target: "Dragon" } }, req);
     expect(result).toBeDefined();
     expect(result!.error).toContain("Dragon");
@@ -114,9 +121,43 @@ describe("validateCommand", () => {
   });
 
   it("accepts a target by slot number", () => {
-    const req = makeRequest(battleState(0, { enemies: ["Goblin", "Wolf"] }), BATTLE_OPTIONS);
+    const req = makeRequest(battleState(0, { enemies: [{ name: "Goblin" }, { name: "Wolf" }] }), BATTLE_OPTIONS);
     const result = validateCommand({ name: "fight", args: { actor: "Stu", target: "slot 1" } }, req);
     expect(result).toBeUndefined();
+  });
+
+  it("rejects a dead enemy target and lists living targets", () => {
+    const req = makeRequest(
+      battleState(0, { enemies: [{ name: "Goblin", alive: false, hp: 0 }, { name: "Wolf" }] }),
+      BATTLE_OPTIONS,
+    );
+    const result = validateCommand({ name: "fight", args: { actor: "Stu", target: "Goblin" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("dead");
+    expect(result!.correction).toContain("Wolf");
+    expect(result!.correction).not.toContain("Goblin");
+  });
+
+  it("rejects a dead enemy target by slot", () => {
+    const req = makeRequest(
+      battleState(0, { enemies: [{ name: "Goblin", alive: false, hp: 0 }, { name: "Wolf" }] }),
+      BATTLE_OPTIONS,
+    );
+    const result = validateCommand({ name: "fight", args: { actor: "Stu", target: "slot 0" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("dead");
+    expect(result!.correction).toContain("Wolf");
+  });
+
+  it("rejects targeting an empty enemy slot", () => {
+    const req = makeRequest(
+      battleState(0, { enemies: [{ name: "Goblin", alive: false, hp: 0 }] }),
+      BATTLE_OPTIONS,
+    );
+    const result = validateCommand({ name: "fight", args: { actor: "Stu", target: "slot 1" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("not valid");
+    expect(result!.correction).toContain("All enemies are dead");
   });
 
   it("rejects an unavailable item", () => {

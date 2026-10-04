@@ -60,7 +60,7 @@ interface ParsedCall {
   reason?: string;
 }
 
-function toolCallsFromResponse(response: LLMResponse): ParsedCall[] {
+export function toolCallsFromResponse(response: LLMResponse): ParsedCall[] {
   const native = response.toolCalls.filter((event) => event.type === "tool-call");
   if (native.length > 0) {
     return native.map((event) => ({
