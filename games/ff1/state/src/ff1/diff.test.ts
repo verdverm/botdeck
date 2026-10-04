@@ -89,6 +89,11 @@ function baseState(): FF1GameState {
     },
     battle: {
       inBattle: false,
+      phase: "outOfBattle",
+      roundExecuting: false,
+      commandEntryAvailable: false,
+      battleOver: true,
+      nextCommandableIndex: undefined,
       enemyCount: 0,
       enemies: [],
       party: [],

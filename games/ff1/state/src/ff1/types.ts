@@ -146,13 +146,44 @@ export interface BattleEnemy {
 export interface BattlePartyMember {
   index: number;
   name: string;
-  canAct: boolean | undefined;
+  /**
+   * Corroborated liveness: current HP > 0 and neither KO nor Stone in the
+   * ailment byte (multiple signals; never trusts one field).
+   */
+  alive: boolean;
+  /** The battle command queued in btl_charcmdbuf, if any. */
   pendingAction: Record<string, unknown> | undefined;
+  /** True when the member is alive and no command is queued yet. */
+  canAct: boolean;
   position: { row: number; col: number };
 }
 
+export type BattlePhase =
+  /** Not on the battle screen. */
+  | "outOfBattle"
+  /** Command entry window: a living member can be given a command. */
+  | "commandEntry"
+  /** The round is executing (animations / enemy turns). */
+  | "roundExecuting"
+  /** The battle has been decided but the battle screen is still drawn. */
+  | "battleEnding";
+
 export interface BattleState {
+  /**
+   * Battle screen drawn (mapflags bit 1) with btl_result == 0 and enemies or
+   * party still present. Multi-signal; see reader.ts.
+   */
   inBattle: boolean;
+  /** Derived from corroborating btl_result, enemy HP, and battle-screen flags. */
+  phase: BattlePhase;
+  /** True while the round's queued actions are still resolving. */
+  roundExecuting: boolean;
+  /** True when command entry is available for a living member. */
+  commandEntryAvailable: boolean;
+  /** True when the battle outcome is decided (victory/defeat/flee in progress). */
+  battleOver: boolean;
+  /** First alive member without a queued command, when in commandEntry. */
+  nextCommandableIndex: number | undefined;
   enemyCount: number | undefined;
   enemies: BattleEnemy[];
   party: BattlePartyMember[];

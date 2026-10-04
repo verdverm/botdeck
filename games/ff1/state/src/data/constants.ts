@@ -203,6 +203,16 @@ export const ADDR_CUR_TILESET = 0x0049;
 export const ADDR_MAPFLAGS = 0x002d;
 /** Bit 0 set = standard map (town/dungeon); clear = overworld. */
 export const MAPFLAG_STANDARD = 0x01;
+/**
+ * mapflags ($2D) bit 1. In the disassembly this is the "draw column" map mode,
+ * but it is empirically set for the whole battle screen and clear once the
+ * party is back on the field (VERIFIED against the recorded battle
+ * save-states: battle frames always read $02/$03, post-battle field reads
+ * $00/$01). Use it to tell "the battle screen is drawn" apart from "the game
+ * is in battle" - btl_result and enemy HP go stale for many frames after the
+ * battle ends.
+ */
+export const MAPFLAG_BATTLE_SCREEN = 0x02;
 
 // Standard-map objects / NPCs live at $6F00.  16 objects, 16 bytes each. (VERIFIED)
 /** Base address of the standard-map object/NPC table. */
@@ -254,6 +264,18 @@ export const BATTLE_ENEMY_ID_OFFSET = 0x11;
 export const BATTLE_ENEMY_HP_OFFSET = 0x02;
 /** Index of the party member currently selecting a battle command. */
 export const ADDR_BATTLE_ACTIVE_INDEX = 0x6b7a;
+/**
+ * btl_curturn ($688E): the turn-order cursor for the current round. It is 0 at
+ * the start of a round and advances through the btl_turnorder list as the game
+ * resolves queued actions. Once the round is exhausted the game leaves this
+ * value at (or past) the turn-order length, so a value >= 13 means "no action
+ * is currently resolving" - the reliable round-executing vs command-window
+ * discriminator. VERIFIED against FF1Disassembly variables.inc and the
+ * recorded battle save-states (btl_turnorder has $D = 13 entries).
+ */
+export const ADDR_BATTLE_TURNORDER_INDEX = 0x688e;
+/** Number of btl_turnorder entries (9 enemies + 4 characters). */
+export const BATTLE_TURNORDER_LEN = 0x0d;
 /** Battle menu cursor X (menu position). */
 export const ADDR_BATTLE_CURSOR_X = 0x6aaa;
 /** Battle menu cursor Y (menu position). */

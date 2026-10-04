@@ -22,6 +22,11 @@ import {
   PathEscapeError,
   FileNotFoundError,
   ValidationError,
+  assertStepRecord,
+  writePlayStep,
+  listPlaySteps,
+  readPlayStep,
+  readRecentStepHistory,
 } from "./files.ts";
 import { useTempRepoRoot } from "./test-root.ts";
 
@@ -52,6 +57,7 @@ function seedGameConfig(): void {
         snippets: 4096,
         snippetCount: 50,
       },
+      recentHistoryLimit: 10,
     },
     prompt: {
       snippets: ["system", "commands", "state"],
@@ -470,6 +476,71 @@ describe("agent snippets", () => {
     try {
       expect(() => writePlayAgentSnippet(TEST_GAME, id, "../escape", { content: "x" })).toThrow(PathEscapeError);
       expect(() => writePlayAgentSnippet(TEST_GAME, id, "a/b", { content: "x" })).toThrow(PathEscapeError);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+});
+
+describe("step persistence and recent-action history", () => {
+  it("accepts a failed turn (error field) as a recorded step", () => {
+    const id = tmpPlayId("step_err");
+    createPlay(TEST_GAME, id);
+    try {
+      const record = writePlayStep(TEST_GAME, id, {
+        stepId: "",
+        ts: 1,
+        request: { gameId: TEST_GAME, playId: `${TEST_GAME}/${id}`, state: {}, options: [] },
+        response: { command: { name: "" }, reason: "" },
+        command: { name: "" },
+        macro: [],
+        error: "turn failed (400): invalid command",
+      } as never);
+      expect(record.stepId).toBe("000001");
+      const read = readPlayStep(TEST_GAME, id, record.stepId);
+      expect(read.error).toContain("turn failed");
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("rejects a non-string error field", () => {
+    expect(() =>
+      assertStepRecord({
+        stepId: "",
+        ts: 1,
+        request: { gameId: TEST_GAME, state: {}, options: [] },
+        response: { command: { name: "" }, reason: "" },
+        command: { name: "" },
+        error: 123,
+      }),
+    ).toThrow(ValidationError);
+  });
+
+  it("renders failed steps in the recent-action history", () => {
+    const id = tmpPlayId("step_hist");
+    createPlay(TEST_GAME, id);
+    try {
+      writePlayStep(TEST_GAME, id, {
+        stepId: "",
+        ts: 1,
+        request: { gameId: TEST_GAME, state: {}, options: [] },
+        response: { command: { name: "interact" }, reason: "searched" },
+        command: { name: "interact" },
+      } as never);
+      writePlayStep(TEST_GAME, id, {
+        stepId: "",
+        ts: 2,
+        request: { gameId: TEST_GAME, state: {}, options: [] },
+        response: { command: { name: "" }, reason: "" },
+        command: { name: "" },
+        error: "max tool rounds reached without a final command",
+      } as never);
+      expect(listPlaySteps(TEST_GAME, id)).toHaveLength(2);
+      const history = readRecentStepHistory(TEST_GAME, id, 10);
+      expect(history).toContain("- interact: searched");
+      expect(history).toContain("[FAILED:");
+      expect(history).toContain("max tool rounds");
     } finally {
       deletePlay(TEST_GAME, id);
     }

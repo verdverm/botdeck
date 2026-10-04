@@ -16,14 +16,30 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { Duration, Effect, Layer } from "effect";
-import { LLM, LLMClient, Auth, Message, ToolDefinition, ToolCallPart, type LLMResponse } from "@opencode-ai/llm";
+import {
+  LLM,
+  LLMClient,
+  Auth,
+  Message,
+  ToolDefinition,
+  ToolCallPart,
+  type LLMResponse,
+  type LLMRequest,
+} from "@opencode-ai/llm";
 import { RequestExecutor } from "@opencode-ai/llm/route";
 import * as OpenAICompatible from "@opencode-ai/llm/providers/openai-compatible";
-import type { TurnRequest, TurnResponse, TurnTranscript, ToolCall } from "./protocol.ts";
+import type { TurnRequest, TurnResponse, TurnTranscript, TurnTranscriptRound, ToolResult } from "./protocol.ts";
+import type { AgentConfig } from "./files.ts";
 import { resolveAgentConfig } from "./files.ts";
 import { renderPrompt } from "./prompts.ts";
-import { makeAgentTools, toolDefinitionsForRequest, executeTool, executeDurableCalls } from "./tools.ts";
-import { parseToolCallsFromText, parsedCallsToToolCalls, buildCorrectionMessage } from "./decision.ts";
+import { makeAgentTools, toolDefinitionsForRequest, executeTool, executeDurableCalls, type AgentTool } from "./tools.ts";
+import {
+  parseToolCallsFromText,
+  parsedCallsToToolCalls,
+  buildCorrectionMessage,
+  extractCommandArgs,
+  type ParsedToolCall,
+} from "./decision.ts";
 import { validateCommand } from "./validate.ts";
 
 // Project-level transport config (base URL), read once at startup.
@@ -53,14 +69,7 @@ function parsePlayId(rawPlayId: string | undefined): { game: string; id: string 
   return { game: DEFAULT_GAME, id: rawPlayId ?? DEFAULT_ID };
 }
 
-interface ParsedCall {
-  id: string;
-  name: string;
-  input?: Record<string, unknown>;
-  reason?: string;
-}
-
-export function toolCallsFromResponse(response: LLMResponse): ParsedCall[] {
+export function toolCallsFromResponse(response: LLMResponse): ParsedToolCall[] {
   const native = response.toolCalls.filter((event) => event.type === "tool-call");
   if (native.length > 0) {
     return native.map((event) => ({
@@ -69,6 +78,7 @@ export function toolCallsFromResponse(response: LLMResponse): ParsedCall[] {
       input: typeof event.input === "object" && event.input !== null && !Array.isArray(event.input)
         ? (event.input as Record<string, unknown>)
         : undefined,
+      reason: undefined,
     }));
   }
   return parseToolCallsFromText(response.text);
@@ -92,52 +102,89 @@ function buildToolRequest(
   });
 }
 
-function callsToToolCalls(calls: ParsedCall[]): ToolCall[] {
-  return parsedCallsToToolCalls(calls);
+function buildAssistantContent(text: string, calls: ParsedToolCall[]) {
+  const parts: Array<ReturnType<typeof Message.text> | ReturnType<typeof ToolCallPart.make>> = [];
+  if (text.trim().length > 0) parts.push(Message.text(text));
+  for (const call of calls) {
+    parts.push(ToolCallPart.make({ id: call.id, name: call.name, input: call.input }));
+  }
+  return parts;
 }
 
-export async function decide(req: TurnRequest): Promise<TurnResponse> {
-  const { system, user } = renderPrompt(req);
+function buildToolResultMessage(result: ToolResult) {
+  return Message.tool({
+    id: result.id,
+    name: result.name,
+    result: result.error ? { type: "error", value: result.error } : result.result,
+    resultType: result.error ? "error" : undefined,
+  });
+}
+
+export async function runDecideLoop(
+  req: TurnRequest,
+  deps: {
+    generate: (request: LLMRequest) => Promise<LLMResponse>;
+    config: AgentConfig;
+    tools: AgentTool[];
+    toolDefinitions: ReturnType<typeof ToolDefinition.make>[];
+    system: string;
+    user: string;
+    userPath: string;
+  },
+): Promise<TurnResponse> {
+  const { generate, config, tools, toolDefinitions, system, user, userPath } = deps;
   const prompt = { system, user };
   const { game, id } = parsePlayId(req.playId);
-  const config = resolveAgentConfig(game, id);
-  const tools = makeAgentTools({ game, id, config }, req.options);
+  const ctx = { game, id, config };
   const commandToolNames = new Set(tools.filter((t) => t.isCommand).map((t) => t.name));
-  const toolDefinitions = toolDefinitionsForRequest(tools).map((t) =>
-    ToolDefinition.make({
-      name: t.name,
-      description: t.description,
-      inputSchema: t.inputSchema,
-    }),
-  );
-
   const model = vllm.model(config.model);
-
-  const userPath = `/proj/vermbot-plays-games/${game}/${id}`;
 
   const transcript: TurnTranscript = { system, user, rounds: [] };
   let messages = [Message.user(user)];
   let request = buildToolRequest(model, system, messages, toolDefinitions, config, userPath);
 
   for (let round = 0; round < config.maxToolRounds; round++) {
-    const program = Effect.gen(function* () {
-      const response = yield* LLM.generate(request);
-      return response;
-    }).pipe(Effect.provide(Layer.mergeAll(requestExecutorLayer, llmClientLayer)));
-
-    const response = await Effect.runPromise(
-      Effect.timeout(program, Duration.millis(config.timeoutMs)),
-    );
+    const response = await generate(request);
     const calls = toolCallsFromResponse(response);
 
-    if (calls.length === 0) {
+    const commandCall = calls.find((call) => commandToolNames.has(call.name));
+    let validation = undefined;
+    let attemptedCommand = undefined;
+    let commandReason = undefined;
+    if (commandCall) {
+      const { args, reason } = extractCommandArgs(commandCall.input);
+      commandReason = reason ?? commandCall.reason;
+      attemptedCommand = { name: commandCall.name, args };
+      validation = validateCommand(attemptedCommand, req);
+    }
+
+    const durableResults = executeDurableCalls(calls, tools, ctx, commandToolNames);
+
+    const messageResults: ToolResult[] = calls.map((call) => {
+      if (commandCall && call.id === commandCall.id) {
+        if (validation) {
+          return { id: call.id, name: call.name, result: null, error: validation.error };
+        }
+        return { id: call.id, name: call.name, result: { accepted: true, command: call.name } };
+      }
+      return executeTool(tools, ctx, call);
+    });
+
+    const assistantContent = buildAssistantContent(response.text, calls);
+    messages = [...messages, Message.assistant(assistantContent), ...messageResults.map(buildToolResultMessage)];
+
+    const roundEntry: TurnTranscriptRound = {
+      assistantText: response.text,
+      toolCalls: parsedCallsToToolCalls(calls),
+      toolResults: durableResults,
+    };
+
+    if (!commandCall && calls.length === 0) {
       const correction = buildCorrectionMessage(req.options);
       const canRetry = round < config.maxToolRounds - 1;
-      transcript.rounds.push({
-        assistantText: response.text,
-        parseError: "no command tool call found",
-        correction: canRetry ? correction : undefined,
-      });
+      roundEntry.parseError = "no command tool call found";
+      roundEntry.correction = canRetry ? correction : undefined;
+      transcript.rounds.push(roundEntry);
       if (!canRetry) {
         return {
           command: { name: "" },
@@ -152,25 +199,12 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
       continue;
     }
 
-    const toolCalls = callsToToolCalls(calls);
-
-    // If the model called a command tool, that ends the turn - but only after
-    // the command passes semantic validation against the actual game state.
-    // The first command call wins; any accompanying durable calls are still
-    // executed so their side effects land.
-    const commandCall = calls.find((call) => commandToolNames.has(call.name));
     if (commandCall) {
-      const { args, reason } = extractCommandDecision(commandCall);
-      const attemptedCommand = { name: commandCall.name, args };
-      const validation = validateCommand(attemptedCommand, req);
       if (validation) {
         const canRetry = round < config.maxToolRounds - 1;
-        transcript.rounds.push({
-          assistantText: response.text,
-          toolCalls,
-          validationError: validation.error,
-          correction: canRetry ? validation.correction : undefined,
-        });
+        roundEntry.validationError = validation.error;
+        roundEntry.correction = canRetry ? validation.correction : undefined;
+        transcript.rounds.push(roundEntry);
         if (!canRetry) {
           return {
             command: { name: "" },
@@ -185,50 +219,20 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
         continue;
       }
 
-      const durableResults = executeDurableCalls(calls, tools, { game, id, config }, commandToolNames);
+      transcript.rounds.push(roundEntry);
       transcript.rounds.push({
-        assistantText: response.text,
-        toolCalls,
-        toolResults: durableResults,
+        assistantText: "Turn ended with valid command tool call.",
       });
       return {
-        command: attemptedCommand,
-        reason: reason ?? "selected via command tool",
+        command: attemptedCommand!,
+        reason: commandReason ?? "selected via command tool",
         prompt,
         raw: response.text,
         transcript,
       };
     }
 
-    const assistantContent = calls.map((call) =>
-      ToolCallPart.make({
-        id: call.id,
-        name: call.name,
-        input: call.input,
-      }),
-    );
-
-    const toolResults = calls.map((call) => executeTool(tools, { game, id, config }, call));
-
-    transcript.rounds.push({
-      assistantText: response.text,
-      toolCalls,
-      toolResults,
-    });
-
-    messages = [
-      ...messages,
-      Message.assistant(assistantContent),
-      ...toolResults.map((result) =>
-        Message.tool({
-          id: result.id,
-          name: result.name,
-          result: result.error ? { type: "error", value: result.error } : result.result,
-          resultType: result.error ? "error" : undefined,
-        }),
-      ),
-    ];
-
+    transcript.rounds.push(roundEntry);
     request = buildToolRequest(model, system, messages, toolDefinitions, config, userPath);
   }
 
@@ -240,34 +244,36 @@ export async function decide(req: TurnRequest): Promise<TurnResponse> {
   };
 }
 
-function extractCommandDecision(commandCall: ParsedCall): {
-  args: Record<string, unknown> | undefined;
-  reason: string | undefined;
-} {
-  let reason = commandCall.reason;
-  let args = commandCall.input;
-  if (args && typeof args === "object" && !Array.isArray(args)) {
-    if (typeof args.reason === "string") {
-      reason = args.reason;
-    }
-    args = omitKeys(args, ["reason"]);
-    if (args && "command" in args && typeof args.command === "object" && args.command !== null) {
-      const cmd = args.command as Record<string, unknown>;
-      if (typeof cmd.reason === "string") reason = cmd.reason;
-      if ("args" in cmd && typeof cmd.args === "object" && cmd.args !== null && !Array.isArray(cmd.args)) {
-        args = cmd.args as Record<string, unknown>;
-      } else {
-        args = omitKeys(cmd, ["name", "reason"]);
-      }
-    }
-  }
-  return { args: args && Object.keys(args).length > 0 ? args : undefined, reason };
-}
+export async function decide(req: TurnRequest): Promise<TurnResponse> {
+  const { system, user } = renderPrompt(req);
+  const { game, id } = parsePlayId(req.playId);
+  const config = resolveAgentConfig(game, id);
+  const tools = makeAgentTools({ game, id, config }, req.options);
+  const toolDefinitions = toolDefinitionsForRequest(tools).map((t) =>
+    ToolDefinition.make({
+      name: t.name,
+      description: t.description,
+      inputSchema: t.inputSchema,
+    }),
+  );
 
-function omitKeys(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(obj)) {
-    if (!keys.includes(k)) result[k] = v;
-  }
-  return result;
+  const userPath = `/proj/vermbot-plays-games/${game}/${id}`;
+
+  return runDecideLoop(req, {
+    generate: (request) =>
+      Effect.runPromise(
+        Effect.timeout(
+          Effect.gen(function* () {
+            return yield* LLM.generate(request);
+          }).pipe(Effect.provide(Layer.mergeAll(requestExecutorLayer, llmClientLayer))),
+          Duration.millis(config.timeoutMs),
+        ),
+      ),
+    config,
+    tools,
+    toolDefinitions,
+    system,
+    user,
+    userPath,
+  });
 }

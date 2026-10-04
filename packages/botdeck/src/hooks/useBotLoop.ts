@@ -2,6 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { CollectedState } from "@/emulator/collectState";
 import type { Emulator } from "@/emulator/emulator";
 import { fetchDiff, postState, stepsUrl } from "@/play";
+import {
+  isBattleOver,
+  isCommandEntryReady,
+  isRoundExecuting,
+  nextCommandableMember,
+  type BattleStateLike,
+} from "./battle-helpers";
 import type {
   ButtonStep,
   GameCommand,
@@ -104,6 +111,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   const autoRunRef = useRef(autoRun);
   const runModeRef = useRef(runMode);
   const pendingMessageRef = useRef(pendingMessage);
+  const battleRoundAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     autoRunRef.current = autoRun;
@@ -116,6 +124,14 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   useEffect(() => {
     pendingMessageRef.current = pendingMessage;
   }, [pendingMessage]);
+
+  // If the user stops auto-run while we are waiting for a battle round to
+  // execute, abort that wait so the current turn ends cleanly.
+  useEffect(() => {
+    if (!autoRun && battleRoundAbortRef.current) {
+      battleRoundAbortRef.current.abort();
+    }
+  }, [autoRun]);
 
   // Keep macro status in sync with the emulator without polling every frame.
   useEffect(() => {
@@ -161,6 +177,127 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     return new Promise((resolve) => window.setTimeout(resolve, settleDelayMs));
   }, [settleDelayMs]);
 
+  /** Record a turn that never produced a playable command, so history is complete. */
+  const persistFailedStep = useCallback(
+    async (
+      seq: number,
+      ts: number,
+      request: TurnRequest,
+      message: string,
+      stateBefore?: string,
+      response?: TurnResponse,
+    ): Promise<void> => {
+      const record: StepRecord = {
+        stepId: "",
+        ts,
+        request,
+        response: response ?? { command: { name: "" }, reason: "" },
+        command: { name: "" },
+        macro: [],
+        stateBefore,
+        error: message,
+      };
+      try {
+        await persistStep(record);
+      } catch (persistErr) {
+        console.warn(`step ${seq} failure persist failed:`, persistErr);
+      }
+    },
+    [persistStep],
+  );
+
+  /**
+   * Advance the loop on real game conditions, not fixed delays.
+   *
+   * `waitForBattlePhase` samples the game state at the logically correct point
+   * - the emulated frame boundary, via the emulator's per-frame probe - and
+   * only resolves once the target condition has held for `confirmFrames`
+   * consecutive frames. That consecutive-frame requirement is what rejects the
+   * transient, mid-animation RAM states (the command buffer briefly reads as a
+   * fresh window, or a stale btl_result reads as battle-over) that a
+   * setInterval poll would latch onto. A slow fallback timer samples once per
+   * tick purely for robustness when frames are not advancing (e.g. the tab is
+   * backgrounded and requestAnimationFrame pauses); the wait still only ends on
+   * a satisfied condition, never on a timer. A wall-clock safety bound prevents
+   * an indefinite hang if the emulator stalls, mirroring the old behaviour.
+   */
+  const waitForBattlePhase = useCallback(
+    (
+      predicate: (state: Record<string, unknown>) => boolean,
+      opts?: { signal?: AbortSignal; confirmFrames?: number; timeoutMs?: number },
+    ): Promise<void> => {
+      const confirmFrames = opts?.confirmFrames ?? 2;
+      const signal = opts?.signal;
+      const timeout = opts?.timeoutMs ?? 30_000;
+      const fallbackInterval = 200;
+      const start = Date.now();
+      let confirmed = 0;
+
+      return new Promise<void>((resolve, reject) => {
+        let fallbackId: number | undefined;
+        let safetyId: number | undefined;
+        let removeProbe: (() => void) | undefined;
+        let settled = false;
+
+        const cleanup = () => {
+          settled = true;
+          if (fallbackId !== undefined) window.clearInterval(fallbackId);
+          if (safetyId !== undefined) window.clearTimeout(safetyId);
+          removeProbe?.();
+          signal?.removeEventListener("abort", onAbort);
+        };
+
+        const finish = () => {
+          if (settled) return;
+          cleanup();
+          resolve();
+        };
+
+        const onAbort = () => {
+          if (settled) return;
+          cleanup();
+          reject(new Error("battle phase wait cancelled"));
+        };
+
+        const sample = () => {
+          if (settled || signal?.aborted) {
+            if (signal?.aborted && !settled) onAbort();
+            return;
+          }
+          const state = plugin.readState();
+          if (predicate(state)) {
+            confirmed += 1;
+            if (confirmed >= confirmFrames) finish();
+            return;
+          }
+          confirmed = 0;
+          if (Date.now() - start > timeout) finish();
+        };
+
+        signal?.addEventListener("abort", onAbort);
+        removeProbe = emulator.onFrameProbe(sample);
+        fallbackId = window.setInterval(sample, fallbackInterval);
+        safetyId = window.setTimeout(finish, timeout);
+        sample();
+      });
+    },
+    [plugin, emulator],
+  );
+
+  /** Resolve once the executing battle round finishes (command entry or battle over). */
+  const waitForBattleRound = useCallback(
+    (signal?: AbortSignal): Promise<void> => {
+      return waitForBattlePhase(
+        (state) => {
+          const s = state as unknown as BattleStateLike;
+          return !isRoundExecuting(s) && (isBattleOver(s) || isCommandEntryReady(s));
+        },
+        { signal },
+      );
+    },
+    [waitForBattlePhase],
+  );
+
   const callAgent = useCallback(
     async (request: TurnRequest): Promise<TurnResponse> => {
       const controller = new AbortController();
@@ -190,10 +327,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       mode: string,
       actor?: string,
     ): TurnRequest => {
-      const userMessage = pendingMessageRef.current.trim();
-      if (userMessage) {
-        pluginState.userMessage = userMessage;
-      }
+      const userMessage = pendingMessageRef.current.trim() || undefined;
       return {
         gameId: game,
         playId,
@@ -202,9 +336,42 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         screenshot: getScreenshot?.(),
         options: plugin.availableCommands(pluginState, { actor }),
         actor,
+        userMessage,
       };
     },
     [game, playId, plugin, getScreenshot],
+  );
+
+  /**
+   * After a battle command macro, wait for the game condition that proves the
+   * command landed: the actor's slot in the command buffer reads as queued,
+   * the round started executing, command entry advanced, or the battle ended.
+   * Short safety bound so a stub macro that did nothing cannot hang the loop.
+   */
+  const waitForCommandLatch = useCallback(
+    (actor: string | undefined, before: Record<string, unknown>): Promise<void> => {
+      const beforeBattle = before as unknown as BattleStateLike;
+      const wasExecuting = isRoundExecuting(beforeBattle);
+      return waitForBattlePhase(
+        (s) => {
+          const b = s as unknown as BattleStateLike;
+          if (isBattleOver(b)) return true;
+          if (isRoundExecuting(b) && !wasExecuting) return true;
+          if (!isRoundExecuting(b)) {
+            if (wasExecuting) return true;
+            if (isCommandEntryReady(b)) {
+              const next = nextCommandableMember(b);
+              if (!actor || next?.name !== actor) return true;
+              const member = (b.ff1?.battle?.party ?? []).find((m) => m.name === actor);
+              if (member && member.pendingAction !== undefined) return true;
+            }
+          }
+          return false;
+        },
+        { confirmFrames: 1, timeoutMs: 2_000 },
+      );
+    },
+    [waitForBattlePhase],
   );
 
   const executeCommand = useCallback(
@@ -216,11 +383,13 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       stateBefore?: string,
     ): Promise<TurnLogEntry> => {
       let macro: ButtonStep[];
+      let macroError: string | undefined;
       try {
         macro = plugin.compile(response.command);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         response.error = message;
+        macroError = message;
         macro = [];
       }
 
@@ -240,12 +409,18 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       // If a dialog box is open after the macro, keep sampling through the
       // settle delay so post-macro pages (e.g. the next page after
       // dialog_advance) are captured before persisting the step.
-      // In battle mode, wait briefly so the command buffer and active actor
-      // index have time to latch before the after-state snapshot.
+      // In battle mode, wait on the game condition - the issued command has
+      // latched into the command buffer (or the round has started, or command
+      // entry moved on) - instead of a fixed delay, so the after-state
+      // snapshot never lands mid-transition. The dialog probe stays attached
+      // during the wait so late dialog pages are still captured.
       let postState = plugin.readState();
       const postDialogOpen =
         (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
-      if (postDialogOpen || request.mode === "battle") {
+      if (request.mode === "battle") {
+        await waitForCommandLatch(request.actor, postState);
+        postState = plugin.readState();
+      } else if (postDialogOpen) {
         await waitSettle();
         postState = plugin.readState();
       }
@@ -269,6 +444,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         macro,
         stateBefore,
         stateAfter,
+        ...(macroError !== undefined ? { error: macroError } : {}),
       };
       await persistStep(record);
 
@@ -297,7 +473,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastResponse(response);
       return entry;
     },
-    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle],
+    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch],
   );
 
   const decideAndMaybeExecute = useCallback(
@@ -312,9 +488,21 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
 
       const request = buildRequest(pluginState, mode, actor);
       setLastRequest(request);
-      const response = await callAgent(request);
+      let response: TurnResponse;
+      try {
+        response = await callAgent(request);
+      } catch (err) {
+        // A failed turn is still a turn: persist the request with the error so
+        // the play history and the agent's recent-actions prompt section
+        // reflect it. Dropping failures silently is what made the history
+        // section never appear while the loop kept erroring.
+        const message = err instanceof Error ? err.message : String(err);
+        await persistFailedStep(seq, ts, request, message, stateBefore);
+        throw err;
+      }
       setLastResponse(response);
       if (response.error) {
+        await persistFailedStep(seq, ts, request, response.error, stateBefore, response);
         throw new Error(response.error);
       }
 
@@ -335,39 +523,81 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
 
       return executeCommand(seq, ts, request, response, stateBefore);
     },
-    [buildRequest, callAgent, collectStates, executeCommand, saveStepState],
+    [buildRequest, callAgent, collectStates, executeCommand, persistFailedStep, saveStepState],
   );
 
-  const runBattleRound = useCallback(async (): Promise<void> => {
-    // Battle-state offsets are VERIFIED (see @games/ff1-state reader.ts
-    // VERIFIED_BATTLE_NOTE). The remaining limitation is the compile stub for
-    // battle actions: they do not yet navigate the actor/target/spell menus.
-    // This loop trusts the state reader enough to call the agent once per active
-    // party member index reported, and it guards against re-asking for the same
-    // actor if the stub macro fails to advance the game's cursor.
-    let state = plugin.readState();
-    let guard = 0;
-    let lastActorIndex: number | undefined;
-    while (guard++ < 4) {
-      const ff1 = state.ff1 as { battle?: { inBattle?: boolean; activePartyIndex?: number; party?: { name: string; canAct?: boolean }[] } } | undefined;
-      if (!ff1?.battle?.inBattle) break;
-      const activeIndex = ff1.battle.activePartyIndex;
-      if (activeIndex === lastActorIndex) break;
-      const actor = activeIndex !== undefined ? ff1.battle.party?.[activeIndex]?.name : undefined;
-      if (!actor) break;
-      lastActorIndex = activeIndex;
+  const runBattleRound = useCallback(
+    async (opts?: { signal?: AbortSignal }): Promise<void> => {
+      // Battle-state offsets are VERIFIED (see @games/ff1-state reader.ts
+      // VERIFIED_BATTLE_NOTE). The remaining limitation is the compile stub for
+      // battle actions: they do not yet navigate the actor/target/spell menus.
+      // This loop trusts the state reader enough to call the agent once per active
+      // party member index reported, and it guards against re-asking for the same
+      // actor if the stub macro fails to advance the game's cursor.
+      let state = plugin.readState();
+      let guard = 0;
 
-      const result = await decideAndMaybeExecute(state, "battle", actor);
-      if ("macro" in result) {
-        // executed immediately (TurnLogEntry has macro)
-      } else {
-        // paused for step mode (PendingDecision has no macro)
-        return;
+      const waitForCommandEntry = async (): Promise<Record<string, unknown> | null> => {
+        try {
+          if (isRoundExecuting(state as unknown as BattleStateLike)) {
+            await waitForBattleRound(opts?.signal);
+            state = plugin.readState();
+          }
+          if (!isCommandEntryReady(state as unknown as BattleStateLike)) {
+            await waitForBattlePhase(
+              (s) => {
+                const b = s as unknown as BattleStateLike;
+                return isCommandEntryReady(b) || isBattleOver(b);
+              },
+              { signal: opts?.signal },
+            );
+            state = plugin.readState();
+          }
+        } catch {
+          return null;
+        }
+        return state;
+      };
+
+      // Condition-driven sequencing: ask the agent exactly when the game has
+      // entered a corroborated command-entry window, for exactly the member
+      // the command buffer says is still waiting. Between decisions the loop
+      // waits on game conditions (next command entry / round resolved /
+      // battle ended) sampled at frame boundaries, never on elapsed time.
+      let lastActor: string | undefined;
+      while (guard++ < 4) {
+        if (isBattleOver(state as unknown as BattleStateLike)) break;
+
+        const entryState = await waitForCommandEntry();
+        if (!entryState) return;
+        state = entryState;
+        if (isBattleOver(state as unknown as BattleStateLike)) break;
+        if (!isCommandEntryReady(state as unknown as BattleStateLike)) continue;
+
+        const member = nextCommandableMember(state as unknown as BattleStateLike);
+        const actor = member?.name;
+        if (!actor) break;
+        // Do not re-ask for the same actor if the macro did not advance the
+        // game (e.g. a compile stub that failed to latch the command buffer).
+        if (actor === lastActor) break;
+        lastActor = actor;
+
+        const result = await decideAndMaybeExecute(state, "battle", actor);
+        if (!("macro" in result)) {
+          // Paused for step mode (PendingDecision has no macro field).
+          return;
+        }
+
+        // The macro has been played and the after-state captured; re-read and
+        // loop. If the queued command completed the round, waitForCommandEntry
+        // drives the game-condition wait until the next command window or the
+        // battle's end - this is what prevents the agent from being called
+        // again while the round is still executing.
+        state = plugin.readState();
       }
-      await waitSettle();
-      state = plugin.readState();
-    }
-  }, [plugin, decideAndMaybeExecute, waitSettle]);
+    },
+    [plugin, decideAndMaybeExecute, waitForBattlePhase, waitForBattleRound],
+  );
 
   const runOneTurn = useCallback(async (): Promise<void> => {
     if (runningRef.current) return;
@@ -381,12 +611,14 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     setIsThinking(true);
     setError(undefined);
 
+    const controller = new AbortController();
+    battleRoundAbortRef.current = controller;
     try {
       const state = plugin.readState();
       const mode = plugin.getMode(state);
 
       if (mode === "battle") {
-        await runBattleRound();
+        await runBattleRound({ signal: controller.signal });
       } else {
         await decideAndMaybeExecute(state, mode);
       }
@@ -400,6 +632,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setError(msg);
       setAutoRunState(false);
     } finally {
+      battleRoundAbortRef.current = null;
       setIsThinking(false);
       setIsPlayingMacro(false);
       runningRef.current = false;
@@ -419,10 +652,27 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         pending.response,
         pending.stateBefore,
       );
-      // If we were in the middle of a battle round, continue it.
-      const state = plugin.readState();
-      if (plugin.getMode(state) === "battle") {
-        await runBattleRound();
+      // In step mode one approval = one executed turn. Do not continue the
+      // battle round automatically. If the approved command completed the
+      // round's command queue, wait on the game condition (command entry or
+      // battle end, frame-sampled) before returning control to the user.
+      let state = plugin.readState();
+      if (
+        plugin.getMode(state) === "battle" &&
+        isRoundExecuting(state as unknown as BattleStateLike)
+      ) {
+        try {
+          await waitForBattlePhase(
+            (s) => {
+              const b = s as unknown as BattleStateLike;
+              return isCommandEntryReady(b) || isBattleOver(b);
+            },
+            { signal: battleRoundAbortRef.current?.signal },
+          );
+        } catch {
+          // Cancelled wait: return control to the user.
+        }
+        state = plugin.readState();
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -433,7 +683,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setIsPlayingMacro(false);
       runningRef.current = false;
     }
-  }, [pendingDecision, executeCommand, plugin, runBattleRound]);
+  }, [pendingDecision, executeCommand, plugin, waitForBattlePhase]);
 
   const clearPending = useCallback(() => {
     setPendingDecision(undefined);

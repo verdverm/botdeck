@@ -169,10 +169,12 @@ function TranscriptRoundView({ round }: { round: TurnTranscriptRound }) {
             ))}
         </div>
       )}
-      {round.parseError && (
+      {(round.parseError || round.validationError) && (
         <div className="rounded bg-rose-900/20 p-2">
-          <p className="text-xs font-medium text-rose-300">parse error</p>
-          <p className="text-xs text-rose-300">{round.parseError}</p>
+          <p className="text-xs font-medium text-rose-300">
+            {round.parseError ? "parse error" : "validation error"}
+          </p>
+          <p className="text-xs text-rose-300">{round.parseError ?? round.validationError}</p>
           {round.correction && (
             <div className="mt-1">
               <p className="text-xs font-medium text-amber-300">retry prompt</p>
@@ -475,13 +477,13 @@ export function AgentTab({
 
       <div className="flex flex-col gap-1">
         <label className="text-xs text-neutral-500">
-          Message injected into next turn state
+          Message from the user for the next turn
         </label>
         <input
           type="text"
           value={pendingMessage}
           onChange={(e) => onPendingMessageChange?.(e.target.value)}
-          placeholder="optional note injected into plugin state..."
+          placeholder="optional message from the user for the next turn..."
           className="rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-500 focus:outline-none"
         />
       </div>

@@ -192,4 +192,144 @@ describe("renderPrompt", () => {
     const { user } = renderPrompt(req);
     expect(user).toBe("user body");
   });
+
+  it("appends the user message as a clearly marked section at the end of the user prompt", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    const req: TurnRequest = {
+      gameId: game,
+      playId: `${game}/${id}`,
+      state: {},
+      options: [],
+      userMessage: "Stop spamming interact",
+    };
+    const { user } = renderPrompt(req);
+    expect(user).toContain("user body");
+    expect(user).toContain("Message from the user");
+    expect(user).toContain("Stop spamming interact");
+    expect(user.indexOf("user body")).toBeLessThan(user.indexOf("Message from the user"));
+  });
+
+  it("omits the user message section when no user message is provided", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user).not.toContain("Message from the user");
+  });
+
+  it("appends recent persisted steps as a compact history section", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    const stepsDir = join(playDir(game, id), "steps");
+    mkdirSync(stepsDir, { recursive: true });
+    const step1 = {
+      stepId: "000001",
+      ts: 1,
+      request: { gameId: game, state: {}, options: [] },
+      response: { command: { name: "interact" }, reason: "searched the tile" },
+      command: { name: "interact" },
+    };
+    const step2 = {
+      stepId: "000002",
+      ts: 2,
+      request: { gameId: game, state: {}, options: [] },
+      response: { command: { name: "dialog_advance" }, reason: "advanced dialog" },
+      command: { name: "dialog_advance" },
+    };
+    writeFileSync(join(stepsDir, "000001.step.json"), JSON.stringify(step1));
+    writeFileSync(join(stepsDir, "000002.step.json"), JSON.stringify(step2));
+
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user).toContain("Recent actions");
+    expect(user).toContain("interact: searched the tile");
+    expect(user).toContain("dialog_advance: advanced dialog");
+    expect(user.indexOf("interact:")).toBeLessThan(user.indexOf("dialog_advance:"));
+  });
+
+  it("renders step history when the game agent config omits recentHistoryLimit", () => {
+    // Regression: the committed game configs predate recentHistoryLimit. The
+    // strict AgentConfig schema must not require it, otherwise resolveAgentConfig
+    // throws on every turn and the model never sees any history at runtime.
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    writeFileSync(
+      join(gameDir(game), "config.json"),
+      JSON.stringify({
+        agent: {
+          model: "small",
+          maxToolRounds: 5,
+          maxTokens: 512,
+          timeoutMs: 1000,
+          limits: { goals: 1024, memory: 2048, journal: 8192, memoryCount: 10, snippets: 4096, snippetCount: 50 },
+          tools: ["memory_write"],
+        },
+        prompt: { snippets: ["system", "state"] },
+      }),
+    );
+    const stepsDir = join(playDir(game, id), "steps");
+    mkdirSync(stepsDir, { recursive: true });
+    writeFileSync(
+      join(stepsDir, "000001.step.json"),
+      JSON.stringify({
+        stepId: "000001",
+        ts: 1,
+        request: { gameId: game, state: {}, options: [] },
+        response: { command: { name: "interact" }, reason: "searched the tile" },
+        command: { name: "interact" },
+      }),
+    );
+
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user).toContain("Recent actions");
+    expect(user).toContain("interact: searched the tile");
+  });
+
+  it("respects recentHistoryLimit when rendering step history", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, {
+      system: "sys",
+      state: "user body",
+    });
+    writeFileSync(
+      join(playDir(game, id), "config.json"),
+      JSON.stringify({ id, game, agent: { recentHistoryLimit: 1 }, prompt: { snippets: ["system", "state"] } }),
+    );
+    const stepsDir = join(playDir(game, id), "steps");
+    mkdirSync(stepsDir, { recursive: true });
+    const step1 = {
+      stepId: "000001",
+      ts: 1,
+      request: { gameId: game, state: {}, options: [] },
+      response: { command: { name: "interact" }, reason: "first" },
+      command: { name: "interact" },
+    };
+    const step2 = {
+      stepId: "000002",
+      ts: 2,
+      request: { gameId: game, state: {}, options: [] },
+      response: { command: { name: "dialog_advance" }, reason: "second" },
+      command: { name: "dialog_advance" },
+    };
+    writeFileSync(join(stepsDir, "000001.step.json"), JSON.stringify(step1));
+    writeFileSync(join(stepsDir, "000002.step.json"), JSON.stringify(step2));
+
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user).toContain("dialog_advance: second");
+    expect(user).not.toContain("interact: first");
+  });
 });

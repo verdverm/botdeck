@@ -9,9 +9,12 @@ import {
   resolveAgentConfig,
   readPlayMemory,
   readPlayGoals,
+  readRecentStepHistory,
   listPlayAgentSnippets,
   readPlayAgentSnippet,
   PathEscapeError,
+  DEFAULT_RECENT_HISTORY_LIMIT,
+  type AgentConfig,
 } from "./files.ts";
 
 export interface PromptParts {
@@ -98,6 +101,8 @@ interface RenderContext {
   memory: string;
   goals: string;
   agentSnippets: string;
+  userMessage: string;
+  recentHistory: string;
   memoryLimit: string;
   memoryCount: string;
   goalsLimit: string;
@@ -110,18 +115,10 @@ function buildContext(
   req: TurnRequest,
   game: string,
   id: string | undefined,
-  config?: {
-    limits: {
-      memory: number;
-      memoryCount: number;
-      goals: number;
-      journal: number;
-      snippets: number;
-      snippetCount: number;
-    };
-  },
+  config?: AgentConfig,
 ): RenderContext {
   const limits = config?.limits;
+  const recentHistoryLimit = config?.recentHistoryLimit ?? DEFAULT_RECENT_HISTORY_LIMIT;
   return {
     gameId: req.gameId,
     playId: req.playId ?? "",
@@ -131,6 +128,8 @@ function buildContext(
     memory: id ? readPlayMemory(game, id) : "",
     goals: id ? readPlayGoals(game, id) : "",
     agentSnippets: readAgentSnippets(game, id),
+    userMessage: req.userMessage ?? "",
+    recentHistory: id ? readRecentStepHistory(game, id, recentHistoryLimit) : "",
     memoryLimit: String(limits?.memory ?? 2048),
     memoryCount: String(limits?.memoryCount ?? 10),
     goalsLimit: String(limits?.goals ?? 1024),
@@ -186,6 +185,14 @@ export function renderPrompt(req: TurnRequest): PromptParts {
   // guidance without rewriting the prompt constitution.
   if (ctx.agentSnippets) {
     userParts.push(`## Agent-authored snippets\n\n${ctx.agentSnippets}`);
+  }
+
+  if (ctx.recentHistory) {
+    userParts.push(`## Recent actions\n\n${ctx.recentHistory}`);
+  }
+
+  if (ctx.userMessage) {
+    userParts.push(`## Message from the user\n\n${ctx.userMessage}`);
   }
 
   return { system, user: userParts.join("\n\n") };

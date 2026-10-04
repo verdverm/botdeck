@@ -133,4 +133,10 @@ describe("buildCorrectionMessage", () => {
     const msg = buildCorrectionMessage([]);
     expect(msg).toContain("Do not write command JSON, XML, or explanations");
   });
+
+  it("falls back gracefully when no commands are available", () => {
+    const msg = buildCorrectionMessage([]);
+    expect(msg).toContain("No commands are available this turn");
+    expect(msg).not.toContain("exactly ONE command tool from the list above");
+  });
 });

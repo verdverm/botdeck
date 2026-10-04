@@ -101,7 +101,7 @@ function formatBattleTarget(target: unknown, enemies: BattleEnemy[], party: Part
     }
     case "player": {
       const slot = t.slot ?? 0;
-      const member = party[slot];
+      const member = party.find((m) => m.index === slot);
       return `${member?.name ?? `party slot ${slot}`} (slot ${slot})`;
     }
     case "all_enemies":
@@ -142,6 +142,11 @@ function formatPendingAction(action: Record<string, unknown> | undefined, enemie
 function formatBattle(state: FF1GameState): string {
   const battle = state.battle;
   if (!battle?.inBattle) return "Not in battle.";
+  const phaseLabels: Record<string, string> = {
+    commandEntry: "COMMAND ENTRY (a living member can be given a command)",
+    roundExecuting: "ROUND EXECUTING (queued actions are resolving; do NOT issue commands)",
+    battleEnding: "BATTLE ENDING (outcome decided)",
+  };
   const enemies = battle.enemies.length > 0
     ? battle.enemies
         .map((e) => {
@@ -152,13 +157,20 @@ function formatBattle(state: FF1GameState): string {
     : "- Enemy roster unread (offsets TODO)";
   const party = battle.party
     .map((m) => {
-      const base = `- ${m.name}: ${m.canAct ? "can act" : "cannot act"} (row ${m.position.row})`;
+      const liveness = m.alive ? "alive" : "DOWN";
+      const base = `- ${m.name}: ${liveness}, ${m.canAct ? "can act" : "cannot act"} (row ${m.position.row})`;
       const pending = formatPendingAction(m.pendingAction, battle.enemies, state.party);
       return pending ? `${base} [queued: ${pending}]` : base;
     })
     .join("\n");
+  const nextActor =
+    battle.nextCommandableIndex !== undefined
+      ? state.party[battle.nextCommandableIndex]?.name ?? "?"
+      : "none";
   return [
+    `Phase: ${phaseLabels[battle.phase ?? "commandEntry"] ?? battle.phase}`,
     `Active actor: ${battle.activePartyIndex !== undefined ? state.party[battle.activePartyIndex]?.name ?? "?" : "unknown"}`,
+    `Next commandable: ${nextActor}`,
     "Enemies:",
     enemies,
     "Party:",

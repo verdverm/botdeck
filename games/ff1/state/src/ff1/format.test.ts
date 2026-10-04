@@ -43,11 +43,16 @@ function makeState(overrides: Partial<FF1GameState> = {}): FF1GameState {
         { slot: 1, id: 1, name: "Wolf", hp: 15, maxHp: undefined, alive: true, position: { row: 0, col: 1 } },
       ],
       party: [
-        { index: 0, name: "Stu", canAct: false, pendingAction: { command: "attack", target: { kind: "enemy", slot: 1 } }, position: { row: 0, col: 0 } },
-        { index: 1, name: "Rias", canAct: true, pendingAction: undefined, position: { row: 0, col: 1 } },
-        { index: 2, name: "Zing", canAct: false, pendingAction: { command: "magic", effect: 4, target: { kind: "all_enemies" } }, position: { row: 1, col: 0 } },
-        { index: 3, name: "Jaki", canAct: false, pendingAction: { command: "drink", item: 3, target: { kind: "player", slot: 0 } }, position: { row: 1, col: 1 } },
+        { index: 0, name: "Stu", alive: true, canAct: false, pendingAction: { command: "attack", target: { kind: "enemy", slot: 1 } }, position: { row: 0, col: 0 } },
+        { index: 1, name: "Rias", alive: true, canAct: true, pendingAction: undefined, position: { row: 0, col: 1 } },
+        { index: 2, name: "Zing", alive: true, canAct: false, pendingAction: { command: "magic", effect: 4, target: { kind: "all_enemies" } }, position: { row: 1, col: 0 } },
+        { index: 3, name: "Jaki", alive: true, canAct: false, pendingAction: { command: "drink", item: 3, target: { kind: "player", slot: 0 } }, position: { row: 1, col: 1 } },
       ],
+      phase: "roundExecuting",
+      roundExecuting: true,
+      commandEntryAvailable: false,
+      battleOver: false,
+      nextCommandableIndex: undefined,
       activePartyIndex: 1,
       note: "",
     },
@@ -61,26 +66,31 @@ function makeState(overrides: Partial<FF1GameState> = {}): FF1GameState {
 describe("formatFF1GameInfo battle section", () => {
   it("shows queued attack actions with enemy target", () => {
     const info = formatFF1GameInfo(makeState());
-    expect(info).toContain("Stu: cannot act");
+    expect(info).toContain("Stu: alive, cannot act");
     expect(info).toContain("[queued: ATTACK -> Wolf (slot 1)]");
   });
 
   it("shows queued magic actions with spell and target", () => {
     const info = formatFF1GameInfo(makeState());
-    expect(info).toContain("Zing: cannot act");
+    expect(info).toContain("Zing: alive, cannot act");
     expect(info).toContain("[queued: MAGIC FIRE -> all enemies]");
   });
 
   it("shows queued drink/item actions with consumable and ally target", () => {
     const info = formatFF1GameInfo(makeState());
-    expect(info).toContain("Jaki: cannot act");
+    expect(info).toContain("Jaki: alive, cannot act");
     expect(info).toContain("[queued: DRINK Potion -> Stu (slot 0)]");
   });
 
   it("omits queued action text when a member has no pending action", () => {
     const info = formatFF1GameInfo(makeState());
-    expect(info).toContain("Rias: can act");
+    expect(info).toContain("Rias: alive, can act");
     expect(info).not.toMatch(/Rias:.*queued/);
+  });
+
+  it("surfaces the derived battle phase", () => {
+    const info = formatFF1GameInfo(makeState());
+    expect(info).toContain("ROUND EXECUTING");
   });
 
   it("keeps dead markers on enemies while showing queued actions", () => {

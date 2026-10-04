@@ -97,7 +97,7 @@ export function parseToolCallsFromText(text: string): ParsedToolCall[] {
   return calls;
 }
 
-function extractCommandArgs(value: unknown): { args?: Record<string, unknown>; reason?: string } {
+export function extractCommandArgs(value: unknown): { args?: Record<string, unknown>; reason?: string } {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const obj = value as Record<string, unknown>;
   let reason: string | undefined;
@@ -107,16 +107,20 @@ function extractCommandArgs(value: unknown): { args?: Record<string, unknown>; r
     const cmd = obj.command as Record<string, unknown>;
     if (typeof cmd.reason === "string") reason = cmd.reason;
     if ("args" in cmd && typeof cmd.args === "object" && cmd.args !== null && !Array.isArray(cmd.args)) {
-      return { args: { ...(cmd.args as Record<string, unknown>) }, reason };
+      return { args: nonEmptyObject(cmd.args as Record<string, unknown>), reason };
     }
-    return { args: omitKeys(cmd, ["name", "reason"]), reason };
+    return { args: nonEmptyObject(omitKeys(cmd, ["name", "reason"])), reason };
   }
 
   if ("args" in obj && typeof obj.args === "object" && obj.args !== null && !Array.isArray(obj.args)) {
-    return { args: { ...(obj.args as Record<string, unknown>) }, reason };
+    return { args: nonEmptyObject(obj.args as Record<string, unknown>), reason };
   }
 
-  return { args: omitKeys(obj, ["name", "reason"]), reason };
+  return { args: nonEmptyObject(omitKeys(obj, ["name", "reason"])), reason };
+}
+
+function nonEmptyObject(obj: Record<string, unknown>): Record<string, unknown> | undefined {
+  return Object.keys(obj).length > 0 ? obj : undefined;
 }
 
 function omitKeys(obj: Record<string, unknown>, keys: string[]): Record<string, unknown> {
@@ -141,6 +145,13 @@ export function parsedCallsToToolCalls(calls: ParsedToolCall[]): ToolCall[] {
 }
 
 export function buildCorrectionMessage(options: CommandSpec[]): string {
+  if (options.length === 0) {
+    return [
+      "Your previous response did not call a command tool.",
+      "No commands are available this turn. Use durable tools (e.g. memory_write) to record what you observe, or reply with prose.",
+      "Do not write command JSON, XML, or explanations as a substitute for a tool call.",
+    ].join("\n");
+  }
   const list = options.map((o) => `- ${o.name}: ${o.description}`).join("\n");
   return [
     "Your previous response did not call a command tool.",

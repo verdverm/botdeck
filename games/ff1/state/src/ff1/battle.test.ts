@@ -26,6 +26,7 @@ describe("readFF1State battle and context shape", () => {
 
   it("detects battle and reads the live enemy roster", () => {
     const mem = new Uint8Array(0x10000);
+    mem[0x2d] = 0x02; // battle screen drawn (mapflags bit 1)
     mem[0x6b86] = 0; // btl_result == 0 means battle is active
     mem[0x6c93] = 3; // btl_enemycount
     mem[0x6b7a] = 1; // btlcmd_curchar
@@ -50,6 +51,7 @@ describe("readFF1State battle and context shape", () => {
 
   it("marks dead enemies as not alive while preserving their slots", () => {
     const mem = new Uint8Array(0x10000);
+    mem[0x2d] = 0x02; // battle screen drawn
     mem[0x6b86] = 0; // battle active
     mem[0x6c93] = 3; // 3 enemies
     // Enemy stat records at $6BD3 + slot * $14; ID at +$11, HP at +$02/$03.
@@ -73,6 +75,7 @@ describe("readFF1State battle and context shape", () => {
 
   it("marks living party members as able to act before commands are queued", () => {
     const mem = new Uint8Array(0x10000);
+    mem[0x2d] = 0x02; // battle screen drawn
     // Set up a living party in unsram character slots.
     mem[0x6100 + 0x0a] = 35; // char 0 current HP low
     mem[0x6100 + 0x0b] = 0;
@@ -91,14 +94,14 @@ describe("readFF1State battle and context shape", () => {
 
   it("reads a queued attack command and clears canAct for that character", () => {
     const mem = new Uint8Array(0x10000);
+    mem[0x2d] = 0x02; // battle screen drawn
     mem[0x6100 + 0x0a] = 35; // char 0 current HP low
     mem[0x6100 + 0x0b] = 0;
     mem[0x6100 + 0x40 + 0x0a] = 28; // char 1 current HP low
     mem[0x6100 + 0x40 + 0x0b] = 0;
     mem[0x6b86] = 0; // battle active
     mem[0x6c93] = 2; // 2 enemies
-    mem[0x6b7a] = 1; // now character 1 is selecting
-    // Character 0 has queued an attack on enemy slot 2.
+    // Character 0 has queued an attack on enemy slot 2; character 1 has no queued command.
     const base0 = 0x688f + 0 * 4;
     mem[base0 + 0] = 0x04; // attack
     mem[base0 + 1] = 0xff; // no effect

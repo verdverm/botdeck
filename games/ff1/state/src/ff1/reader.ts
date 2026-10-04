@@ -54,6 +54,7 @@ import {
   ADDR_SM_Y,
   ADDR_MAPFLAGS,
   MAPFLAG_STANDARD,
+  MAPFLAG_BATTLE_SCREEN,
   ADDR_VEHICLE,
   ADDR_SHIP_VIS,
   ADDR_SHIP_X,
@@ -83,6 +84,8 @@ import {
   BATTLE_ENEMY_ID_OFFSET,
   BATTLE_ENEMY_HP_OFFSET,
   ADDR_BATTLE_ACTIVE_INDEX,
+  ADDR_BATTLE_TURNORDER_INDEX,
+  BATTLE_TURNORDER_LEN,
   ADDR_BATTLE_CURSOR_X,
   ADDR_BATTLE_CURSOR_Y,
   ADDR_BATTLE_CHAR_CMDBUF,
@@ -139,6 +142,7 @@ import type {
   GameContext,
   MenuContext,
   MenuState,
+  BattlePhase,
   KnownLocation,
   Reachability,
   CharacterStats,
@@ -664,15 +668,57 @@ function readBattleCommand(view: MemoryView, index: number): Record<string, unkn
 function readBattleParty(view: MemoryView, party: PartyCharacter[]): BattlePartyMember[] {
   return party.map((c) => {
     const pendingAction = readBattleCommand(view, c.index);
-    const isAlive = c.hp !== undefined && c.hp > 0 && c.status?.ailments.every((s) => s.key !== "dead");
+    // Corroborated liveness: HP from the stat record plus KO/Stone bits from
+    // the ailment byte. A member is alive only when both signals agree.
+    const ailmentsRaw = c.raw.statBytes[CHAR_AILMENTS_OFFSET] ?? 0;
+    const hpBlocked = (ailmentsRaw & (0x01 | 0x02)) !== 0; // KO | Stone masks
+    const alive = (c.hp ?? 0) > 0 && !hpBlocked;
     return {
       index: c.index,
       name: c.name,
-      canAct: isAlive && pendingAction === undefined ? true : false,
+      alive,
       pendingAction,
+      canAct: alive && pendingAction === undefined,
       position: partySlotPosition(c.index),
     };
   });
+}
+
+/**
+ * Derive the battle phase from corroborating signals. Single fields are not
+ * trusted: btl_result, enemy HP, and the command buffer all go stale or are
+ * transient mid-animation, so a phase must be supported by more than one of
+ * them, and the battle-screen mapflags bit separates "battle still drawn"
+ * from leftover values after the exit transition.
+ *
+ * Rules (VERIFIED against the recorded battle save-states):
+ * - outOfBattle: the battle screen is not drawn.
+ * - battleEnding: still on the battle screen but the outcome is decided -
+ *   btl_result != 0, or every generated enemy has 0 HP while the party lives.
+ * - commandEntry: no living member has a queued command (btl_charcmdbuf all
+ *   zero) and no queued action is resolving (btl_curturn is 0 or past the end
+ *   of the turn-order list).
+ * - roundExecuting: any other in-battle condition - the round's actions are
+ *   latched or animating. Mid-animation states where a single field looks
+ *   like command entry (e.g. a partially cleared command buffer) still show
+ *   btl_curturn inside the turn order, so the corroboration refuses to treat
+ *   them as command windows.
+ */
+export function deriveBattlePhase(signals: {
+  battleScreen: boolean;
+  resultByte: number;
+  enemyCount: number;
+  anyEnemyAlive: boolean;
+  anyCommandQueued: boolean;
+  turnOrderIndex: number;
+}): { phase: BattlePhase; inBattle: boolean } {
+  if (!signals.battleScreen) return { phase: "outOfBattle", inBattle: false };
+  if (signals.resultByte !== 0) return { phase: "battleEnding", inBattle: true };
+  if (signals.enemyCount === 0) return { phase: "outOfBattle", inBattle: false };
+  if (!signals.anyEnemyAlive) return { phase: "battleEnding", inBattle: true };
+  const resolving = signals.anyCommandQueued || (signals.turnOrderIndex > 0 && signals.turnOrderIndex < BATTLE_TURNORDER_LEN);
+  if (resolving) return { phase: "roundExecuting", inBattle: true };
+  return { phase: "commandEntry", inBattle: true };
 }
 
 function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
@@ -704,13 +750,38 @@ function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
 export function readBattleState(view: MemoryView, party: PartyCharacter[]): BattleState {
   const enemyCount = view.u8(ADDR_BATTLE_ENEMY_COUNT);
   const activeIndex = view.u8(ADDR_BATTLE_ACTIVE_INDEX);
-  const inBattle = view.u8(ADDR_BATTLE_RESULT) === 0 && enemyCount > 0;
+  const resultByte = view.u8(ADDR_BATTLE_RESULT);
+  const battleScreen = (view.u8(ADDR_MAPFLAGS) & MAPFLAG_BATTLE_SCREEN) !== 0;
+  const turnOrderIndex = view.u8(ADDR_BATTLE_TURNORDER_INDEX);
+  const partyView = readBattleParty(view, party);
+  const enemies = readBattleEnemies(view, Math.min(enemyCount, 9));
+  const anyEnemyAlive = enemies.some((e) => e.alive);
+  const anyCommandQueued = partyView.some((m) => m.pendingAction !== undefined);
+
+  const { phase, inBattle } = deriveBattlePhase({
+    battleScreen,
+    resultByte,
+    enemyCount,
+    anyEnemyAlive,
+    anyCommandQueued,
+    turnOrderIndex,
+  });
+
+  const nextCommandableIndex =
+    phase === "commandEntry"
+      ? partyView.find((m) => m.canAct)?.index
+      : undefined;
 
   return {
     inBattle,
+    phase,
+    roundExecuting: phase === "roundExecuting",
+    commandEntryAvailable: phase === "commandEntry" && nextCommandableIndex !== undefined,
+    battleOver: phase === "battleEnding" || phase === "outOfBattle",
+    nextCommandableIndex,
     enemyCount: inBattle ? enemyCount : 0,
-    enemies: inBattle ? readBattleEnemies(view, enemyCount) : [],
-    party: readBattleParty(view, party),
+    enemies: inBattle ? enemies : [],
+    party: partyView,
     activePartyIndex: inBattle ? (activeIndex < PARTY_SIZE ? activeIndex : undefined) : undefined,
     cursorX: inBattle ? view.u8(ADDR_BATTLE_CURSOR_X) : undefined,
     cursorY: inBattle ? view.u8(ADDR_BATTLE_CURSOR_Y) : undefined,

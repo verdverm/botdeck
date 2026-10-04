@@ -1,5 +1,5 @@
-import { describe, expect, it, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { describe, expect, it, afterEach, vi } from "vitest";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { AgentTab } from "./AgentTab";
 import type { TurnResponse, TurnTranscript } from "@/types";
 
@@ -51,5 +51,51 @@ describe("AgentTab transcript rendering", () => {
     expect(screen.getByTestId("tool-call-bubble")).toHaveTextContent("tool call: memory_write");
     expect(screen.getByText(/"slug": "x"/)).toBeInTheDocument();
     expect(screen.getByTestId("tool-result-bubble")).toHaveTextContent("tool result: memory_write");
+  });
+
+  it("renders validation errors and their correction prompts", () => {
+    const transcript: TurnTranscript = {
+      rounds: [
+        {
+          assistantText: "I will fight.",
+          toolCalls: [{ id: "c1", name: "fight", input: { actor: "Stu", target: "Dragon" } }],
+          validationError: "Target \"Dragon\" is not valid for fight.",
+          correction: "Valid targets: Goblin.",
+        },
+      ],
+    };
+
+    render(<AgentTab lastResponse={makeResponse(transcript)} messages={[]} />);
+
+    expect(screen.getByText("validation error")).toBeInTheDocument();
+    expect(screen.getByText(/Target "Dragon"/)).toBeInTheDocument();
+    expect(screen.getByText("retry prompt")).toBeInTheDocument();
+    expect(screen.getByText(/Valid targets: Goblin./)).toBeInTheDocument();
+  });
+
+  it("captures the pending user message input and notifies the parent", () => {
+    const onChange = vi.fn();
+    render(<AgentTab pendingMessage="" onPendingMessageChange={onChange} messages={[]} />);
+
+    const input = screen.getByPlaceholderText("optional message from the user for the next turn...");
+    fireEvent.change(input, { target: { value: "Stop spamming interact" } });
+
+    expect(onChange).toHaveBeenCalledWith("Stop spamming interact");
+  });
+
+  it("renders the user message in the prompt transcript", () => {
+    const response: TurnResponse = {
+      command: { name: "dialog_advance" },
+      reason: "test",
+      prompt: {
+        system: "sys",
+        user: "## Message from the user\n\nStop spamming interact",
+      },
+    };
+
+    render(<AgentTab lastResponse={response} messages={[]} />);
+
+    expect(screen.getByText(/## Message from the user/)).toBeInTheDocument();
+    expect(screen.getByText(/Stop spamming interact/)).toBeInTheDocument();
   });
 });

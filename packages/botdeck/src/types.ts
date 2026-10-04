@@ -46,6 +46,8 @@ export interface TurnRequest {
   options: CommandSpec[];
   /** In battle, the party member whose turn is being decided. */
   actor?: string;
+  /** Optional message from the user injected for this turn only. */
+  userMessage?: string;
 }
 
 export interface TurnTranscriptRound {
@@ -94,6 +96,8 @@ export interface StepRecord {
   macro?: ButtonStep[];
   stateBefore?: string;
   stateAfter?: string;
+  /** Set when the turn failed (agent error, validation, macro compile); the step was still recorded. */
+  error?: string;
 }
 
 export interface GamePlugin {

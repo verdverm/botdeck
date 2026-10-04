@@ -226,6 +226,8 @@ export class AgentConfig extends Schema.Class<AgentConfig>("AgentConfig")({
   /** Per-provider-turn timeout in milliseconds. */
   timeoutMs: Schema.Number,
   limits: AgentLimits,
+  /** Maximum number of recent persisted steps to include in the prompt. */
+  recentHistoryLimit: Schema.optional(Schema.Number),
   /**
    * Optional whitelist of durable tool names exposed to the agent this play. If
    * omitted, all registered durable tools are available. Command tools derived
@@ -244,12 +246,16 @@ class AgentLimitsPartial extends Schema.Class<AgentLimitsPartial>("AgentLimitsPa
   snippetCount: Schema.optional(Schema.Number),
 }) {}
 
+/** Default number of recent persisted steps included in the prompt. */
+export const DEFAULT_RECENT_HISTORY_LIMIT = 10;
+
 class AgentConfigPartial extends Schema.Class<AgentConfigPartial>("AgentConfigPartial")({
   model: Schema.optional(Schema.String),
   maxToolRounds: Schema.optional(Schema.Number),
   maxTokens: Schema.optional(Schema.Number),
   timeoutMs: Schema.optional(Schema.Number),
   limits: Schema.optional(AgentLimitsPartial),
+  recentHistoryLimit: Schema.optional(Schema.Number),
   tools: Schema.optional(Schema.Array(Schema.String)),
 }) {}
 
@@ -266,6 +272,7 @@ const DEFAULT_AGENT_CONFIG = new AgentConfig({
     snippets: 4096,
     snippetCount: 50,
   }),
+  recentHistoryLimit: DEFAULT_RECENT_HISTORY_LIMIT,
 });
 
 function decodeGameAgentConfig(game: string): AgentConfig {
@@ -304,6 +311,7 @@ export function resolveAgentConfig(game: string, id?: string): AgentConfig {
     maxTokens: playCfg.maxTokens ?? gameCfg.maxTokens,
     timeoutMs: playCfg.timeoutMs ?? gameCfg.timeoutMs,
     limits: new AgentLimits({ ...gameCfg.limits, ...playCfg.limits }),
+    recentHistoryLimit: playCfg.recentHistoryLimit ?? gameCfg.recentHistoryLimit,
     tools: mergeToolLists(gameCfg.tools, playCfg.tools),
   });
 }
@@ -644,6 +652,8 @@ export interface StepRecord {
   macro?: ButtonStep[];
   stateBefore?: string;
   stateAfter?: string;
+  /** Set when the turn failed (agent error, validation); still recorded as history. */
+  error?: string;
 }
 
 export interface StepDescriptor {
@@ -660,7 +670,7 @@ export function assertStepRecord(body: unknown): StepRecord {
   if (!isPlainObject(body)) {
     throw new ValidationError("body must be a JSON object");
   }
-  const { stepId, ts, request, response, command, macro, stateBefore, stateAfter } = body;
+  const { stepId, ts, request, response, command, macro, stateBefore, stateAfter, error } = body;
   if (typeof ts !== "number" || !Number.isFinite(ts)) {
     throw new ValidationError("ts must be a number");
   }
@@ -684,6 +694,9 @@ export function assertStepRecord(body: unknown): StepRecord {
   }
   if (typeof macro !== "undefined" && !Array.isArray(macro)) {
     throw new ValidationError("macro must be an array if provided");
+  }
+  if (typeof error !== "undefined" && typeof error !== "string") {
+    throw new ValidationError("error must be a string if provided");
   }
   return body as unknown as StepRecord;
 }
@@ -757,6 +770,53 @@ export function readPlayStep(game: string, id: string, stepId: string): StepReco
   const file = join(playDir(game, id), "steps", `${stepId}.step.json`);
   if (!existsSync(file)) throw new FileNotFoundError(file);
   return JSON.parse(readFileSync(file, "utf8")) as StepRecord;
+}
+
+function formatCommandArgs(args: Record<string, unknown> | undefined): string {
+  if (!args) return "";
+  const pairs: string[] = [];
+  for (const [key, value] of Object.entries(args)) {
+    if (value === null || value === undefined) continue;
+    const t = typeof value;
+    if (t === "string" || t === "number" || t === "boolean") {
+      pairs.push(`${key}=${String(value)}`);
+    }
+  }
+  return pairs.join(", ");
+}
+
+function formatStepAction(step: StepRecord): string {
+  const cmd = step.command;
+  const args = formatCommandArgs(cmd.args);
+  const name = cmd.name || "unknown";
+  const action = args ? `${name}(${args})` : name;
+  if (step.error) {
+    const err = step.error.length > 160 ? `${step.error.slice(0, 157)}...` : step.error;
+    return `- ${action} [FAILED: ${err}]`;
+  }
+  let reason = step.response.reason?.trim() ?? "";
+  if (reason.length > 120) reason = `${reason.slice(0, 117)}...`;
+  return reason ? `- ${action}: ${reason}` : `- ${action}`;
+}
+
+/** Read the most recent persisted steps and render them as a compact prompt section. */
+export function readRecentStepHistory(game: string, id: string, limit: number): string {
+  assertSegment("game", game);
+  assertSegment("id", id);
+  if (limit <= 0) return "";
+  const descriptors = listPlaySteps(game, id);
+  if (descriptors.length === 0) return "";
+  const recent = descriptors.slice(-limit);
+  const lines: string[] = [];
+  for (const descriptor of recent) {
+    try {
+      const step = readPlayStep(game, id, descriptor.stepId);
+      lines.push(formatStepAction(step));
+    } catch {
+      // Skip malformed or missing step files.
+    }
+  }
+  return lines.join("\n");
 }
 
 export function readPlayConfig(game: string, id: string): Record<string, unknown> {

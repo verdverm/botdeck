@@ -12,6 +12,7 @@
       "snippets": 4096,
       "snippetCount": 50
     },
+    "recentHistoryLimit": 10,
     "tools": [
       "journal_list",
       "journal_read",

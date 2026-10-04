@@ -24,6 +24,7 @@ const TEST_CONFIG: AgentConfig = {
   maxTokens: 1024,
   timeoutMs: 120_000,
   limits: { goals: 100, memory: 50, journal: 200, memoryCount: 3, snippets: 200, snippetCount: 3 },
+  recentHistoryLimit: 10,
 };
 
 const ALL_DURABLES = [

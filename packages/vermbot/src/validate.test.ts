@@ -96,6 +96,13 @@ describe("validateCommand", () => {
     expect(result).toBeUndefined();
   });
 
+  it("rejects the bare word 'slot' as an actor", () => {
+    const req = makeRequest(battleState(0), BATTLE_OPTIONS);
+    const result = validateCommand({ name: "fight", args: { actor: "slot", target: "Goblin" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("slot");
+  });
+
   it("rejects an unknown spell and lists known spells", () => {
     const req = makeRequest(battleState(0, { spells: { Stu: ["FIRE", "LIT"] } }), BATTLE_OPTIONS);
     const result = validateCommand({ name: "magic", args: { actor: "Stu", spell: "Black Belt", target: "Goblin" } }, req);
@@ -221,5 +228,107 @@ describe("validateCommand", () => {
     expect(result).toBeDefined();
     expect(result!.error).toContain("Rias");
     expect(result!.correction).toContain("The next actor is Rias");
+  });
+
+  it("accepts press_button with a valid button and no options", () => {
+    const req = makeRequest({}, [], "field");
+    const result = validateCommand({ name: "press_button", args: { button: "a" } }, req);
+    expect(result).toBeUndefined();
+  });
+
+  it("accepts press_button with explicit frames", () => {
+    const req = makeRequest({}, [], "field");
+    const result = validateCommand({ name: "press_button", args: { button: "start", frames: 60 } }, req);
+    expect(result).toBeUndefined();
+  });
+
+  it("rejects press_button with an unknown button", () => {
+    const req = makeRequest({}, [], "field");
+    const result = validateCommand({ name: "press_button", args: { button: "z" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("unknown button");
+    expect(result!.correction).toContain("a, b");
+  });
+
+  it("rejects press_button with out-of-range frames", () => {
+    const req = makeRequest({}, [], "field");
+    const result = validateCommand({ name: "press_button", args: { button: "a", frames: 999 } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("frames");
+  });
+});
+
+function realBattleState(overrides: {
+  nextActor?: string;
+  pending?: number[];
+  dead?: number[];
+  spells?: Record<string, string[]>;
+} = {}): Record<string, unknown> {
+  const names = ["Stu", "Rias", "Zing", "Jaki"];
+  const fullParty = names.map((name, index) => ({
+    index,
+    name,
+    classId: 0,
+    level: 1,
+    hp: 20,
+    maxHp: 20,
+    spellsKnown: (overrides.spells?.[name] ?? []).map((spell) => ({ name: spell, level: 1, slot: 1, school: "black" })),
+    status: { ailments: [] },
+  }));
+  const battleParty = names.map((name, index) => ({
+    index,
+    name,
+    canAct: !(overrides.dead?.includes(index) ?? false) && !(overrides.pending?.includes(index) ?? false),
+    pendingAction: overrides.pending?.includes(index) ? { command: "attack" } : undefined,
+    position: { row: 0, col: index },
+  }));
+  const activePartyIndex = overrides.nextActor ? names.indexOf(overrides.nextActor) : 0;
+  return {
+    ff1: {
+      party: fullParty,
+      battle: {
+        inBattle: true,
+        party: battleParty,
+        enemies: [{ slot: 0, name: "Goblin", hp: 10, alive: true, position: { row: 0, col: 0 } }],
+        activePartyIndex,
+      },
+    },
+  };
+}
+
+describe("validateCommand real battle state shape", () => {
+  it("rejects an out-of-order actor and names the expected next actor", () => {
+    const req = makeRequest(realBattleState({ nextActor: "Stu" }), BATTLE_OPTIONS, "battle", "Stu");
+    const result = validateCommand({ name: "fight", args: { actor: "Rias", target: "Goblin" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("Stu");
+    expect(result!.error).toContain("Rias");
+    expect(result!.correction).toContain("The next actor is Stu");
+  });
+
+  it("accepts every spell known by the full-party actor in battle", () => {
+    const spells = ["CURE", "LIT", "FIRE"];
+    const req = makeRequest(
+      realBattleState({ nextActor: "Rias", spells: { Rias: spells } }),
+      BATTLE_OPTIONS,
+      "battle",
+      "Rias",
+    );
+    for (const spell of spells) {
+      const result = validateCommand({ name: "magic", args: { actor: "Rias", spell, target: "Stu" } }, req);
+      expect(result).toBeUndefined();
+    }
+  });
+
+  it("rejects a spell the actor does not know even when the spell exists", () => {
+    const req = makeRequest(
+      realBattleState({ nextActor: "Rias", spells: { Rias: ["CURE"] } }),
+      BATTLE_OPTIONS,
+      "battle",
+      "Rias",
+    );
+    const result = validateCommand({ name: "magic", args: { actor: "Rias", spell: "LIT", target: "Stu" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("LIT");
   });
 });

@@ -7,7 +7,7 @@
  * message that lists the valid options derived from state.
  */
 
-import type { GameCommand, TurnRequest, CommandSpec } from "./protocol.ts";
+import { NES_BUTTONS, type GameCommand, type TurnRequest, type CommandSpec } from "./protocol.ts";
 
 interface ValidatedPartyMember {
   index: number;
@@ -45,7 +45,33 @@ export interface ValidationFailure {
   correction: string;
 }
 
+const VALID_BUTTONS = Object.keys(NES_BUTTONS).map((b) => b.toLowerCase());
+const MAX_PRESS_FRAMES = 600;
+
+function validatePressButton(command: GameCommand): ValidationFailure | undefined {
+  const args = command.args ?? {};
+  const button = String(args.button ?? "").toLowerCase();
+  if (!VALID_BUTTONS.includes(button)) {
+    return {
+      error: `press_button: unknown button "${button}".`,
+      correction: `Valid buttons: ${VALID_BUTTONS.join(", ")}.`,
+    };
+  }
+  const frames = args.frames;
+  if (frames !== undefined && (typeof frames !== "number" || frames < 1 || frames > MAX_PRESS_FRAMES)) {
+    return {
+      error: `press_button: invalid frames ${String(frames)} (expected 1-${MAX_PRESS_FRAMES}).`,
+      correction: "Omit frames for the default 4-frame hold, or pass 1-600.",
+    };
+  }
+  return undefined;
+}
+
 export function validateCommand(command: GameCommand, request: TurnRequest): ValidationFailure | undefined {
+  if (command.name === "press_button") {
+    return validatePressButton(command);
+  }
+
   const options = request.options;
   const spec = options.find((o) => o.name === command.name);
   if (!spec) {
@@ -65,7 +91,7 @@ export function validateCommand(command: GameCommand, request: TurnRequest): Val
   }
 
   if (command.name === "magic") {
-    const spellFailure = validateSpell(args, state);
+    const spellFailure = validateSpell(args, state, isBattle);
     if (spellFailure) return spellFailure;
   }
 
@@ -107,11 +133,11 @@ function validateActor(
   }
 
   if (isBattle) {
-    const nextActor = findNextActor(state);
-    if (nextActor && nextActor.name !== member.name) {
+    const nextActorName = expectedActor ?? findNextActor(state)?.name;
+    if (nextActorName && nextActorName !== member.name) {
       return {
-        error: `It is ${nextActor.name}'s turn, not ${member.name}'s. Battle commands must be entered in party order.`,
-        correction: `The next actor is ${nextActor.name}. Issue the command for ${nextActor.name}.`,
+        error: `It is ${nextActorName}'s turn, not ${member.name}'s. Battle commands must be entered in party order.`,
+        correction: `The next actor is ${nextActorName}. Issue the command for ${nextActorName}.`,
       };
     }
   }
@@ -119,10 +145,16 @@ function validateActor(
   return undefined;
 }
 
-function validateSpell(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+function validateSpell(
+  args: Record<string, unknown>,
+  state: ValidatedState,
+  isBattle: boolean,
+): ValidationFailure | undefined {
   const spellName = String(args.spell ?? "").trim();
   const actorName = String(args.actor ?? "").trim();
-  const actor = findPartyMember(state, actorName);
+  // The battle party member shape omits spellsKnown; use the full roster.
+  const party = state.party ?? state.battle?.party ?? [];
+  const actor = party.find((p) => p.name.toLowerCase() === actorName.toLowerCase());
   const spells = actor?.spellsKnown ?? [];
 
   if (spellName === "") {
@@ -192,8 +224,8 @@ function validateItemTarget(args: Record<string, unknown>, state: ValidatedState
 
   const match = party.find((m) => {
     if (m.name.toLowerCase() === targetName.toLowerCase()) return true;
-    const parsed = Number(targetName.replace(/^slot\s*/i, ""));
-    return Number.isFinite(parsed) && m.index === parsed;
+    const parsed = parseSlotIndex(targetName);
+    return parsed !== undefined && m.index === parsed;
   });
 
   if (!match) {
@@ -245,6 +277,12 @@ function extractState(request: TurnRequest): ValidatedState {
   return ff1 ?? {};
 }
 
+function parseSlotIndex(input: string): number | undefined {
+  const match = input.match(/^slot\s*(\d+)$/i);
+  if (!match) return undefined;
+  return Number(match[1]);
+}
+
 function findPartyMember(state: ValidatedState, name: string): ValidatedPartyMember | undefined {
   const normalized = name.toLowerCase();
   const party = state.battle?.party ?? state.party ?? [];
@@ -254,8 +292,8 @@ function findPartyMember(state: ValidatedState, name: string): ValidatedPartyMem
   if (member) return member;
 
   // Numeric slot/index match (0-based).
-  const parsed = Number(normalized.replace(/^slot\s*/i, ""));
-  if (Number.isFinite(parsed)) {
+  const parsed = parseSlotIndex(normalized);
+  if (parsed !== undefined) {
     member = party.find((p) => p.index === parsed);
     if (member) return member;
   }
@@ -296,8 +334,8 @@ function findDeadEnemyMatch(targetName: string, state: ValidatedState): Validate
   return enemies.find((e) => {
     if (e.alive !== false) return false;
     if (e.name && e.name.toLowerCase() === normalized) return true;
-    const parsed = Number(normalized.replace(/^slot\s*/i, ""));
-    if (Number.isFinite(parsed) && e.slot === parsed) return true;
+    const parsed = parseSlotIndex(normalized);
+    if (parsed !== undefined && e.slot === parsed) return true;
     if (`slot ${e.slot}` === normalized) return true;
     return false;
   });
@@ -320,6 +358,9 @@ function isValidTarget(name: string, targets: string[]): boolean {
 }
 
 function buildCommandListCorrection(options: CommandSpec[]): string {
+  if (options.length === 0) {
+    return "No commands are available this turn. Use durable tools (e.g. memory_write) to record what you observe, or reply with prose.";
+  }
   const list = options.map((o) => `- ${o.name}: ${o.description}`).join("\n");
   return `Available commands this turn are:\n${list}\nCall exactly one of these command tools.`;
 }
