@@ -88,6 +88,8 @@ pnpm dev:botdeck
 
 Open `http://localhost:5173/?play=ff1/0000_dev` (the default play if no `?play=` is given). The emulator auto-loads the ROM derived from the play's game via the file API.
 
+To clean up dev servers left dangling by agent sessions, run `scripts/kill-dangling-servers.sh` (add `--dry-run` to preview). It targets only processes owned by this repo on ports :8787/:5173 and is safe to re-run.
+
 The agent talks to a homelab vLLM endpoint. The base URL is project-level in `packages/vermbot/config.json`; the model comes from the `model` field in the play's `config.json`. No hosted/proprietary provider keys are used.
 
 ## Build, typecheck, test, and benchmark

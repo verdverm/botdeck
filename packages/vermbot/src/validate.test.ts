@@ -96,6 +96,24 @@ describe("validateCommand", () => {
     expect(result).toBeUndefined();
   });
 
+  it("accepts the next actor by bare index (regression: not tightened)", () => {
+    const req = makeRequest(battleState(0), BATTLE_OPTIONS);
+    const result = validateCommand({ name: "fight", args: { actor: "0", target: "Goblin" } }, req);
+    expect(result).toBeUndefined();
+  });
+
+  it("accepts a use_item target by bare index (regression: not tightened)", () => {
+    const req = makeRequest(battleState(0), BATTLE_OPTIONS);
+    const result = validateCommand({ name: "use_item", args: { actor: "Stu", item: "Potion", target: "1" } }, req);
+    expect(result).toBeUndefined();
+  });
+
+  it("accepts a fight target by bare enemy slot (regression: not tightened)", () => {
+    const req = makeRequest(battleState(0, { enemies: [{ name: "Goblin" }, { name: "Wolf" }] }), BATTLE_OPTIONS);
+    const result = validateCommand({ name: "fight", args: { actor: "Stu", target: "1" } }, req);
+    expect(result).toBeUndefined();
+  });
+
   it("rejects the bare word 'slot' as an actor", () => {
     const req = makeRequest(battleState(0), BATTLE_OPTIONS);
     const result = validateCommand({ name: "fight", args: { actor: "slot", target: "Goblin" } }, req);
@@ -330,5 +348,24 @@ describe("validateCommand real battle state shape", () => {
     const result = validateCommand({ name: "magic", args: { actor: "Rias", spell: "LIT", target: "Stu" } }, req);
     expect(result).toBeDefined();
     expect(result!.error).toContain("LIT");
+  });
+
+  it("resolves spells for an actor referenced by slot (regression: validateSpell slot)", () => {
+    // Rias is index 1; the battle party shape omits spellsKnown, so the spell
+    // list must come from the full roster matched via the resolved member.
+    const req = makeRequest(
+      realBattleState({ nextActor: "Rias", spells: { Rias: ["CURE", "LIT"] } }),
+      BATTLE_OPTIONS,
+      "battle",
+      "Rias",
+    );
+    const ok = validateCommand({ name: "magic", args: { actor: "slot 1", spell: "LIT", target: "Goblin" } }, req);
+    expect(ok).toBeUndefined();
+    const bare = validateCommand({ name: "magic", args: { actor: "1", spell: "CURE", target: "Goblin" } }, req);
+    expect(bare).toBeUndefined();
+    const bad = validateCommand({ name: "magic", args: { actor: "slot 1", spell: "FIRE", target: "Goblin" } }, req);
+    expect(bad).toBeDefined();
+    expect(bad!.error).toContain("Rias");
+    expect(bad!.correction).toContain("LIT");
   });
 });

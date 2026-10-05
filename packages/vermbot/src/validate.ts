@@ -152,15 +152,25 @@ function validateSpell(
 ): ValidationFailure | undefined {
   const spellName = String(args.spell ?? "").trim();
   const actorName = String(args.actor ?? "").trim();
-  // The battle party member shape omits spellsKnown; use the full roster.
-  const party = state.party ?? state.battle?.party ?? [];
-  const actor = party.find((p) => p.name.toLowerCase() === actorName.toLowerCase());
+  // Resolve the actor through findPartyMember so slot references ("slot 1",
+  // "1") work, then prefer the full roster for spells: the battle party shape
+  // omits spellsKnown.
+  const resolved = findPartyMember(state, actorName);
+  const roster = state.party ?? state.battle?.party ?? [];
+  const actor =
+    (resolved
+      ? roster.find(
+          (p) => p.index === resolved.index || p.name.toLowerCase() === resolved.name.toLowerCase(),
+        )
+      : undefined) ??
+    roster.find((p) => p.name.toLowerCase() === actorName.toLowerCase());
   const spells = actor?.spellsKnown ?? [];
+  const displayName = actor?.name ?? resolved?.name ?? actorName;
 
   if (spellName === "") {
     return {
-      error: `Magic command requires a spell name for ${actorName}.`,
-      correction: buildSpellCorrection(actorName, spells),
+      error: `Magic command requires a spell name for ${displayName}.`,
+      correction: buildSpellCorrection(displayName, spells),
     };
   }
 
@@ -168,8 +178,8 @@ function validateSpell(
   const known = spells.find((s) => (s.name ?? "").toUpperCase() === normalized);
   if (!known) {
     return {
-      error: `Spell "${spellName}" is not known by ${actorName}.`,
-      correction: buildSpellCorrection(actorName, spells),
+      error: `Spell "${spellName}" is not known by ${displayName}.`,
+      correction: buildSpellCorrection(displayName, spells),
     };
   }
 
@@ -279,8 +289,10 @@ function extractState(request: TurnRequest): ValidatedState {
 
 function parseSlotIndex(input: string): number | undefined {
   const match = input.match(/^slot\s*(\d+)$/i);
-  if (!match) return undefined;
-  return Number(match[1]);
+  if (match) return Number(match[1]);
+  // Bare numeric references ("1", "2") were accepted before the regex rewrite;
+  // keep supporting them so the prompt/LLM contract is not silently tightened.
+  return /^\d+$/.test(input) ? Number(input) : undefined;
 }
 
 function findPartyMember(state: ValidatedState, name: string): ValidatedPartyMember | undefined {

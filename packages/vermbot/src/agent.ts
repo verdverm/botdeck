@@ -158,6 +158,10 @@ export async function runDecideLoop(
       validation = validateCommand(attemptedCommand, req);
     }
 
+    // Durable calls are executed even on rounds where the command fails
+    // validation, so a model's memory/journal notes still land. The play
+    // writers are name/slug-keyed overwrites, so a repeated call across retry
+    // rounds within one turn is idempotent rather than duplicating entries.
     const durableResults = executeDurableCalls(calls, tools, ctx, commandToolNames);
 
     const messageResults: ToolResult[] = calls.map((call) => {

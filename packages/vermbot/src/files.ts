@@ -652,7 +652,7 @@ export interface StepRecord {
   macro?: ButtonStep[];
   stateBefore?: string;
   stateAfter?: string;
-  /** Set when the turn failed (agent error, validation); still recorded as history. */
+  /** Set when the turn failed (agent error, validation, macro compile); still recorded as history. */
   error?: string;
 }
 

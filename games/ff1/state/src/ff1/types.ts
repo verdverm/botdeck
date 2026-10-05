@@ -176,11 +176,16 @@ export interface BattleState {
   inBattle: boolean;
   /** Derived from corroborating btl_result, enemy HP, and battle-screen flags. */
   phase: BattlePhase;
-  /** True while the round's queued actions are still resolving. */
+  /**
+   * The three flags below are a pure projection of `phase` (see reader.ts
+   * readBattleState) kept for consumers that read them directly; always derive
+   * from `phase` when possible to avoid drift with an older snapshot.
+   */
+  /** True while the round's queued actions are still resolving (phase === "roundExecuting"). */
   roundExecuting: boolean;
-  /** True when command entry is available for a living member. */
+  /** True when command entry is available for a living member (phase === "commandEntry" and a member can act). */
   commandEntryAvailable: boolean;
-  /** True when the battle outcome is decided (victory/defeat/flee in progress). */
+  /** True when the battle outcome is decided (phase === "battleEnding" or "outOfBattle"). */
   battleOver: boolean;
   /** First alive member without a queued command, when in commandEntry. */
   nextCommandableIndex: number | undefined;

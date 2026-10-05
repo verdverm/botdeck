@@ -249,6 +249,15 @@ Rendering uses simple `{{key}}` substitution against a context built from the
 | `memory` | Concatenated current memory entries |
 | `goals` | Current goals text |
 
+Beyond the `{{key}}` template context, vermbot appends a few fixed sections to
+the user prompt when they are non-empty: the agent-authored snippet store
+(`## Agent-authored snippets`), the recent persisted-step history rendered from
+`plays/<game>/<id>/steps` as a compact action log (`## Recent actions`, capped by
+`agent.recentHistoryLimit`; failed steps are shown with a `[FAILED: ...]`
+marker), and a single-turn operator note (`## Message from the user`, from
+`request.userMessage`). These are added after the configured snippets and never
+shadow a snippet.
+
 A play may shadow any game snippet by placing a file with the same name in
 `plays/<game>/<id>/snippets/user/`. This lets a single play specialize
 instructions, goals framing, or tool descriptions without forking the game
@@ -272,6 +281,7 @@ interface AgentConfig {
     journal: number;
     memoryCount: number;
   };
+  recentHistoryLimit?: number; // steps included in the "## Recent actions" section
 }
 ```
 
@@ -283,9 +293,15 @@ After each response vermbot checks for tool calls:
   blocks from the raw text.
 
 Tool results are appended to the message list and the request is re-sent, up to
-`maxToolRounds`. Once the model returns without tool calls, the final text is
-parsed into a `TurnResponse`. If no valid command is found, the response falls
-back to `{ name: "wait" }`.
+`maxToolRounds`. Command tools (derived from the turn's `CommandSpec`s plus the
+`press_button` escape hatch) represent the agent's final decision: on a valid
+call the loop ends with that `GameCommand`; on a call that fails semantic
+validation the loop retries with a correction message, and on the final round it
+returns the validation error. Durable calls (memory/journal/goals/snippets)
+executed alongside a rejected command still land (writers are name/slug-keyed
+overwrites, so repeated calls within a turn are idempotent). If no valid command
+is produced, the response falls back to a `{ name: "" }` command carrying an
+`error`.
 
 ### Tools
 
@@ -295,6 +311,11 @@ The agent currently exposes:
 - `memory_write` - short-term, always-included memory (limited by `memory` chars
   and `memoryCount` entries).
 - `goals_write` - overwrite the current goals.
+- `snippet_list` / `snippet_read` / `snippet_write` / `snippet_delete` - the
+  agent's own prompt-snippet store (appended as `## Agent-authored snippets`;
+  never shadows user/system snippets).
+- `press_button` - a raw single-button escape hatch (validated against the NES
+  button set and a frame bound); used only when no high-level command applies.
 
 All writes land under `plays/<game>/<id>/{journal,memory,goals}/` and enforce
 size limits from the resolved config.

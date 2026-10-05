@@ -694,15 +694,23 @@ function readBattleParty(view: MemoryView, party: PartyCharacter[]): BattleParty
  * Rules (VERIFIED against the recorded battle save-states):
  * - outOfBattle: the battle screen is not drawn.
  * - battleEnding: still on the battle screen but the outcome is decided -
- *   btl_result != 0, or every generated enemy has 0 HP while the party lives.
- * - commandEntry: no living member has a queued command (btl_charcmdbuf all
- *   zero) and no queued action is resolving (btl_curturn is 0 or past the end
- *   of the turn-order list).
- * - roundExecuting: any other in-battle condition - the round's actions are
- *   latched or animating. Mid-animation states where a single field looks
- *   like command entry (e.g. a partially cleared command buffer) still show
- *   btl_curturn inside the turn order, so the corroboration refuses to treat
- *   them as command windows.
+ *   btl_result != 0, or every generated enemy has 0 HP while the party lives,
+ *   or the party is wiped (no living member) while enemies remain.
+ * - commandEntry: the game is still selecting commands - btlcmd_curchar points
+ *   at a living member whose own command buffer is empty AND no queued action
+ *   is currently resolving (btl_curturn outside the turn-order list). Earlier
+ *   members may already have queued commands; that is a genuine command-entry
+ *   window for the *next* member, not round execution (btl_curturn stays 0 for
+ *   the entire selection phase, so anyCommandQueued alone cannot decide it).
+ * - roundExecuting: selection has closed and the round's queued actions are
+ *   latched or animating. This is corroborated either by an action resolving
+ *   (btl_curturn inside the turn order - which takes priority because
+ *   btlcmd_curchar can be stale at the tail of an animation) or by every queued
+ *   command being latched with no member still selecting. Mid-animation states
+ *   where a single field looks like command entry (e.g. a partially cleared
+ *   buffer, or the stale curturn=13 seen after a round resolves) still keep the
+ *   selecting-member's buffer nonzero or lack a living member to select, so the
+ *   corroboration refuses to treat them as command windows.
  */
 export function deriveBattlePhase(signals: {
   battleScreen: boolean;
@@ -711,13 +719,28 @@ export function deriveBattlePhase(signals: {
   anyEnemyAlive: boolean;
   anyCommandQueued: boolean;
   turnOrderIndex: number;
+  selectingMember: boolean;
+  partyWiped: boolean;
 }): { phase: BattlePhase; inBattle: boolean } {
   if (!signals.battleScreen) return { phase: "outOfBattle", inBattle: false };
   if (signals.resultByte !== 0) return { phase: "battleEnding", inBattle: true };
   if (signals.enemyCount === 0) return { phase: "outOfBattle", inBattle: false };
   if (!signals.anyEnemyAlive) return { phase: "battleEnding", inBattle: true };
-  const resolving = signals.anyCommandQueued || (signals.turnOrderIndex > 0 && signals.turnOrderIndex < BATTLE_TURNORDER_LEN);
+  // Party wipe with no decisive result written yet: the outcome is a
+  // corroborated defeat (no living member left to command and enemies still
+  // alive), so the loop can stop instead of burning a safety timeout each turn
+  // until the btl_result latch appears.
+  if (signals.partyWiped) return { phase: "battleEnding", inBattle: true };
+  // An action is actively resolving: the turn-order cursor is the authoritative
+  // signal here, and it outranks a possibly-stale btlcmd_curchar.
+  const resolving =
+    signals.turnOrderIndex > 0 && signals.turnOrderIndex < BATTLE_TURNORDER_LEN;
   if (resolving) return { phase: "roundExecuting", inBattle: true };
+  // Selection is open for a living member whose buffer is empty, even if
+  // earlier members already queued.
+  if (signals.selectingMember) return { phase: "commandEntry", inBattle: true };
+  // Selection closed and every command latched: the round is about to run.
+  if (signals.anyCommandQueued) return { phase: "roundExecuting", inBattle: true };
   return { phase: "commandEntry", inBattle: true };
 }
 
@@ -757,6 +780,18 @@ export function readBattleState(view: MemoryView, party: PartyCharacter[]): Batt
   const enemies = readBattleEnemies(view, Math.min(enemyCount, 9));
   const anyEnemyAlive = enemies.some((e) => e.alive);
   const anyCommandQueued = partyView.some((m) => m.pendingAction !== undefined);
+  const livingParty = partyView.filter((m) => m.alive);
+  // btlcmd_curchar points at the member the game is selecting a command for;
+  // selection is still open when that member is alive and their buffer is empty
+  // (even if earlier members already queued). activeIndex is 0-based for real
+  // members and 0xFF when no member is selecting.
+  const selectingMember =
+    activeIndex < PARTY_SIZE &&
+    (partyView[activeIndex]?.alive ?? false) &&
+    (partyView[activeIndex]?.pendingAction === undefined);
+  // Party wipe: no living member left to command. Corroborated with enemies
+  // still alive (checked before this in the derivation).
+  const partyWiped = livingParty.length === 0;
 
   const { phase, inBattle } = deriveBattlePhase({
     battleScreen,
@@ -765,6 +800,8 @@ export function readBattleState(view: MemoryView, party: PartyCharacter[]): Batt
     anyEnemyAlive,
     anyCommandQueued,
     turnOrderIndex,
+    selectingMember,
+    partyWiped,
   });
 
   const nextCommandableIndex =

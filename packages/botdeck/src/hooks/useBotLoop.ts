@@ -211,29 +211,41 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
    *
    * `waitForBattlePhase` samples the game state at the logically correct point
    * - the emulated frame boundary, via the emulator's per-frame probe - and
-   * only resolves once the target condition has held for `confirmFrames`
-   * consecutive frames. That consecutive-frame requirement is what rejects the
-   * transient, mid-animation RAM states (the command buffer briefly reads as a
-   * fresh window, or a stale btl_result reads as battle-over) that a
-   * setInterval poll would latch onto. A slow fallback timer samples once per
-   * tick purely for robustness when frames are not advancing (e.g. the tab is
-   * backgrounded and requestAnimationFrame pauses); the wait still only ends on
-   * a satisfied condition, never on a timer. A wall-clock safety bound prevents
-   * an indefinite hang if the emulator stalls, mirroring the old behaviour.
+   * resolves once the target condition has held for `confirmFrames` consecutive
+   * frames. That consecutive-frame requirement is what rejects the transient,
+   * mid-animation RAM states (the command buffer briefly reads as a fresh
+   * window, or a stale btl_result reads as battle-over) that a setInterval poll
+   * would latch onto.
+   *
+   * The wait resolves when EITHER the condition is confirmed OR the wall-clock
+   * safety bound elapses; it does not hang indefinitely on a stalled emulator.
+   * It resolves `true` when the condition was satisfied and `false` when it
+   * timed out, so callers can tell real progress from "gave up" rather than
+   * treating a timeout as success.
+   *
+   * A slow fallback poll exists purely for robustness when frames are NOT
+   * advancing (e.g. the tab is backgrounded and requestAnimationFrame pauses).
+   * It is only armed once the frame probe has gone quiet for longer than the
+   * stall threshold, so a healthy RAF never races the probe with mid-frame
+   * samples that would defeat the consecutive-frame guarantee.
    */
   const waitForBattlePhase = useCallback(
     (
       predicate: (state: Record<string, unknown>) => boolean,
       opts?: { signal?: AbortSignal; confirmFrames?: number; timeoutMs?: number },
-    ): Promise<void> => {
+    ): Promise<boolean> => {
       const confirmFrames = opts?.confirmFrames ?? 2;
       const signal = opts?.signal;
       const timeout = opts?.timeoutMs ?? 30_000;
       const fallbackInterval = 200;
+      // Consider frames stalled if no probe has fired for ~150ms; the fallback
+      // poll only runs beyond that. Comfortably above one 60fps frame (~16.7ms).
+      const stallThresholdMs = 150;
       const start = Date.now();
+      let lastProbeAt = Date.now();
       let confirmed = 0;
 
-      return new Promise<void>((resolve, reject) => {
+      return new Promise<boolean>((resolve, reject) => {
         let fallbackId: number | undefined;
         let safetyId: number | undefined;
         let removeProbe: (() => void) | undefined;
@@ -247,10 +259,11 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
           signal?.removeEventListener("abort", onAbort);
         };
 
-        const finish = () => {
+        // `satisfied` distinguishes "condition met" from "safety bound elapsed".
+        const finish = (satisfied: boolean) => {
           if (settled) return;
           cleanup();
-          resolve();
+          resolve(satisfied);
         };
 
         const onAbort = () => {
@@ -259,7 +272,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
           reject(new Error("battle phase wait cancelled"));
         };
 
-        const sample = () => {
+        const evaluate = () => {
           if (settled || signal?.aborted) {
             if (signal?.aborted && !settled) onAbort();
             return;
@@ -267,26 +280,43 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
           const state = plugin.readState();
           if (predicate(state)) {
             confirmed += 1;
-            if (confirmed >= confirmFrames) finish();
+            if (confirmed >= confirmFrames) finish(true);
             return;
           }
           confirmed = 0;
-          if (Date.now() - start > timeout) finish();
+          if (Date.now() - start > timeout) finish(false);
+        };
+
+        const onProbe = () => {
+          lastProbeAt = Date.now();
+          evaluate();
+        };
+
+        // Fallback: sample only while frames are stalled. When the probe is
+        // healthy this is a no-op, keeping the probe the sole sampler.
+        const onFallback = () => {
+          if (Date.now() - lastProbeAt < stallThresholdMs) return;
+          evaluate();
         };
 
         signal?.addEventListener("abort", onAbort);
-        removeProbe = emulator.onFrameProbe(sample);
-        fallbackId = window.setInterval(sample, fallbackInterval);
-        safetyId = window.setTimeout(finish, timeout);
-        sample();
+        removeProbe = emulator.onFrameProbe(onProbe);
+        fallbackId = window.setInterval(onFallback, fallbackInterval);
+        safetyId = window.setTimeout(() => finish(false), timeout);
+        evaluate();
       });
     },
     [plugin, emulator],
   );
 
-  /** Resolve once the executing battle round finishes (command entry or battle over). */
+  /**
+   * Resolve once the executing battle round finishes (command entry or battle
+   * over). Returns `true` if the round resolved to a usable phase, `false` if
+   * the wait timed out (a stalled or missequenced battle the loop should report
+   * rather than silently proceed on).
+   */
   const waitForBattleRound = useCallback(
-    (signal?: AbortSignal): Promise<void> => {
+    (signal?: AbortSignal): Promise<boolean> => {
       return waitForBattlePhase(
         (state) => {
           const s = state as unknown as BattleStateLike;
@@ -347,9 +377,10 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
    * command landed: the actor's slot in the command buffer reads as queued,
    * the round started executing, command entry advanced, or the battle ended.
    * Short safety bound so a stub macro that did nothing cannot hang the loop.
+   * Returns whether the command actually latched (vs the safety bound elapsing).
    */
   const waitForCommandLatch = useCallback(
-    (actor: string | undefined, before: Record<string, unknown>): Promise<void> => {
+    (actor: string | undefined, before: Record<string, unknown>): Promise<boolean> => {
       const beforeBattle = before as unknown as BattleStateLike;
       const wasExecuting = isRoundExecuting(beforeBattle);
       return waitForBattlePhase(
@@ -537,14 +568,29 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       let state = plugin.readState();
       let guard = 0;
 
-      const waitForCommandEntry = async (): Promise<Record<string, unknown> | null> => {
+      // Reach a command-entry window (or battle end). Returns the fresh state,
+      // or a stall reason string when the game never advanced to a usable phase
+      // before a safety bound elapsed (as opposed to an abort/cancel, which
+      // throws and is handled below). The distinction matters: a resolved wait
+      // is progress, a timed-out wait must be surfaced, not silently ignored.
+      type EntryResult =
+        | { kind: "ready"; state: Record<string, unknown> }
+        | { kind: "stall"; message: string }
+        | { kind: "cancelled" };
+      const waitForCommandEntry = async (): Promise<EntryResult> => {
         try {
           if (isRoundExecuting(state as unknown as BattleStateLike)) {
-            await waitForBattleRound(opts?.signal);
+            const roundResolved = await waitForBattleRound(opts?.signal);
             state = plugin.readState();
+            if (!roundResolved && !isBattleOver(state as unknown as BattleStateLike)) {
+              return { kind: "stall", message: "battle round did not resolve before the safety timeout" };
+            }
           }
-          if (!isCommandEntryReady(state as unknown as BattleStateLike)) {
-            await waitForBattlePhase(
+          if (
+            !isCommandEntryReady(state as unknown as BattleStateLike) &&
+            !isBattleOver(state as unknown as BattleStateLike)
+          ) {
+            const reached = await waitForBattlePhase(
               (s) => {
                 const b = s as unknown as BattleStateLike;
                 return isCommandEntryReady(b) || isBattleOver(b);
@@ -552,11 +598,19 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
               { signal: opts?.signal },
             );
             state = plugin.readState();
+            if (
+              !reached &&
+              !isBattleOver(state as unknown as BattleStateLike) &&
+              !isCommandEntryReady(state as unknown as BattleStateLike)
+            ) {
+              return { kind: "stall", message: "battle never reached a command-entry window before the safety timeout" };
+            }
           }
         } catch {
-          return null;
+          // Aborted/cancelled wait: end the turn cleanly with no stall report.
+          return { kind: "cancelled" };
         }
-        return state;
+        return { kind: "ready", state };
       };
 
       // Condition-driven sequencing: ask the agent exactly when the game has
@@ -568,15 +622,26 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       while (guard++ < 4) {
         if (isBattleOver(state as unknown as BattleStateLike)) break;
 
-        const entryState = await waitForCommandEntry();
-        if (!entryState) return;
-        state = entryState;
+        const entry = await waitForCommandEntry();
+        if (entry.kind === "cancelled") return;
+        if (entry.kind === "stall") {
+          setError(entry.message);
+          return;
+        }
+        state = entry.state;
         if (isBattleOver(state as unknown as BattleStateLike)) break;
         if (!isCommandEntryReady(state as unknown as BattleStateLike)) continue;
 
         const member = nextCommandableMember(state as unknown as BattleStateLike);
         const actor = member?.name;
-        if (!actor) break;
+        if (!actor) {
+          // Command entry is advertised but no living member is waiting for a
+          // command (e.g. every member already queued, or a corroborated wipe
+          // that the phase rules did not report as battleEnding). End the round
+          // with a specific reason rather than spinning on safety timeouts.
+          setError("battle command-entry window has no commandable member and the battle is not over");
+          return;
+        }
         // Do not re-ask for the same actor if the macro did not advance the
         // game (e.g. a compile stub that failed to latch the command buffer).
         if (actor === lastActor) break;

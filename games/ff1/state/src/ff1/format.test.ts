@@ -100,4 +100,20 @@ describe("formatFF1GameInfo battle section", () => {
     expect(info).toContain("Goblin (slot 0, HP 10) [DEAD]");
     expect(info).toContain("[queued: ATTACK -> Wolf (slot 1)]");
   });
+
+  it("resolves a queued ally target by character index, not array position", () => {
+    // pendingAction.target.slot is the character index; the full-party array is
+    // deliberately out of index order so a positional lookup would be wrong.
+    const state = makeState();
+    state.party = [
+      { index: 2, name: "Zing", classId: 2, level: 1, hp: 20, maxHp: 20, equipment: {} } as unknown as FF1GameState["party"][0],
+      { index: 0, name: "Stu", classId: 0, level: 1, hp: 35, maxHp: 35, equipment: {} } as unknown as FF1GameState["party"][0],
+      { index: 3, name: "Jaki", classId: 3, level: 1, hp: 25, maxHp: 25, equipment: {} } as unknown as FF1GameState["party"][0],
+      { index: 1, name: "Rias", classId: 1, level: 1, hp: 28, maxHp: 28, equipment: {} } as unknown as FF1GameState["party"][0],
+    ];
+    state.battle.party[3]!.pendingAction = { command: "drink", item: 3, target: { kind: "player", slot: 3 } };
+    const info = formatFF1GameInfo(state);
+    // index 3 is Jaki even though Jaki sits at array position 2 here.
+    expect(info).toContain("[queued: DRINK Potion -> Jaki (slot 3)]");
+  });
 });

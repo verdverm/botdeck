@@ -37,10 +37,16 @@ describe("battle phase from recorded save-states", () => {
   const cases: Array<[string, unknown, "commandEntry" | "roundExecuting" | "battleEnding" | "outOfBattle"]> = [
     ["battle start", battleStart, "commandEntry"],
     ["round 1 menu open", menuOpen, "commandEntry"],
-    ["Stu queued", stuActions, "roundExecuting"],
-    ["Rias queued", riasActions, "roundExecuting"],
-    ["Zing queued", zingActions, "roundExecuting"],
-    ["Jaki queued", jakiActions, "roundExecuting"],
+    // "X-queued" states are the member-N-menu-open shape (B1): the game has
+    // advanced to selecting the NEXT member (btlcmd_curchar), whose own command
+    // buffer is empty, while earlier members have queued. This is still a
+    // command-entry window, not round execution (btl_curturn stays 0 through
+    // the whole selection phase). These were mislabeled roundExecuting when
+    // captured by the old timer-driven loop.
+    ["Stu queued (menu open for Rias)", stuActions, "commandEntry"],
+    ["Rias queued (menu open for Zing)", riasActions, "commandEntry"],
+    ["Zing queued (menu open for Jaki)", zingActions, "commandEntry"],
+    ["Jaki queued (all four latched)", jakiActions, "roundExecuting"],
     ["first imp death (mid-round)", firstImpDeath, "roundExecuting"],
     ["round 2 menu returns", menuReturns, "commandEntry"],
     ["all actions selected", allActionsSelected, "roundExecuting"],
@@ -68,7 +74,7 @@ describe("battle phase from recorded save-states", () => {
   }
 
   it("command entry windows expose a living next commandable member", () => {
-    for (const snapshot of [battleStart, menuOpen, menuReturns, menuReturnsAgain]) {
+    for (const snapshot of [battleStart, menuOpen, stuActions, riasActions, zingActions, menuReturns, menuReturnsAgain]) {
       const state = readFF1StateFromSaveState(asState(snapshot));
       expect(state.battle.commandEntryAvailable).toBe(true);
       const next = state.battle.party[state.battle.nextCommandableIndex ?? -1];
@@ -78,11 +84,28 @@ describe("battle phase from recorded save-states", () => {
     }
   });
 
+  it("menu open for member N while earlier members are queued is command entry (B1)", () => {
+    // The bug: the first queued command used to flip the whole phase to
+    // roundExecuting, hiding the still-open window for the NEXT member.
+    // After Stu queues, the game opens Rias's menu (btlcmd_curchar=1,
+    // curturn=0, Rias's buffer empty).
+    const afterStu = readFF1StateFromSaveState(asState(stuActions));
+    expect(afterStu.battle.phase).toBe("commandEntry");
+    expect(afterStu.battle.party[0]?.pendingAction).toBeDefined(); // Stu queued
+    expect(afterStu.battle.party[1]?.canAct).toBe(true); // Rias is selecting
+    expect(afterStu.battle.nextCommandableIndex).toBe(1);
+    expect(afterStu.battle.commandEntryAvailable).toBe(true);
+
+    // After Stu+Rias queue, the game opens Zing's menu (btlcmd_curchar=2).
+    const afterRias = readFF1StateFromSaveState(asState(riasActions));
+    expect(afterRias.battle.party[0]?.pendingAction).toBeDefined();
+    expect(afterRias.battle.party[1]?.pendingAction).toBeDefined();
+    expect(afterRias.battle.nextCommandableIndex).toBe(2);
+    expect(afterRias.battle.commandEntryAvailable).toBe(true);
+  });
+
   it("mid-round states never advertise command entry", () => {
     for (const snapshot of [
-      stuActions,
-      riasActions,
-      zingActions,
       jakiActions,
       allActionsSelected,
       allFightActions,

@@ -73,6 +73,58 @@ describe("readFF1State battle and context shape", () => {
     expect(state.battle.enemies[2]!.alive).toBe(false);
   });
 
+  it("keeps roundExecuting when btl_curturn is resolving even if btlcmd_curchar is stale-clear", () => {
+    // B1 corroboration: btlcmd_curchar can point at a member whose own buffer
+    // reads empty at the tail of an animation (e.g. a member asleep/dead or a
+    // cleared slot), but btl_curturn is inside the turn-order list - the game
+    // is executing, not selecting. The turn-order signal must win.
+    const mem = new Uint8Array(0x10000);
+    mem[0x2d] = 0x02; // battle screen drawn
+    mem[0x6b86] = 0; // battle active
+    mem[0x6c93] = 2; // 2 enemies
+    for (let i = 0; i < 2; i++) {
+      mem[0x6bd3 + i * 0x14 + 0x02] = 0x10; // enemy HP alive
+    }
+    for (let i = 0; i < 4; i++) {
+      mem[0x6100 + i * 0x40 + 0x0a] = 20; // all party alive
+    }
+    // Members 1-3 queued; member 0 (which stale curchar points at) is empty.
+    mem[0x688f + 1 * 4] = 0x04;
+    mem[0x688f + 2 * 4] = 0x04;
+    mem[0x688f + 3 * 4] = 0x04;
+    mem[0x6b7a] = 0; // curchar -> member 0 (empty buffer, would look like selecting)
+    mem[0x688e] = 5; // curturn inside turn order: resolving
+    const state = readFF1State(createCpuMemoryView(mem));
+
+    expect(state.battle.phase).toBe("roundExecuting");
+    expect(state.battle.commandEntryAvailable).toBe(false);
+  });
+
+  it("classifies a party wipe with enemies alive as battleEnding before the result latch", () => {
+    const mem = new Uint8Array(0x10000);
+    mem[0x2d] = 0x02; // battle screen drawn
+    mem[0x6b86] = 0; // btl_result still 0 (result not yet latched)
+    mem[0x6c93] = 1; // one enemy
+    mem[0x6bd3 + 0x02] = 0x10; // enemy alive (HP 16)
+    // All four party members dead: current HP 0 and KO ailment bit set.
+    for (let i = 0; i < 4; i++) {
+      mem[0x6100 + i * 0x40 + 0x01] = 0x01; // KO ailment
+      mem[0x6100 + i * 0x40 + 0x0a] = 0; // HP low = 0
+      mem[0x6100 + i * 0x40 + 0x0b] = 0; // HP high = 0
+    }
+    // curchar points at a dead member (selection closed); nothing queued.
+    mem[0x6b7a] = 0;
+    mem[0x688e] = 0; // curturn 0
+    const view = createCpuMemoryView(mem);
+    const state = readFF1State(view);
+
+    expect(state.battle.phase).toBe("battleEnding");
+    expect(state.battle.inBattle).toBe(true);
+    expect(state.battle.battleOver).toBe(true);
+    expect(state.battle.commandEntryAvailable).toBe(false);
+    expect(state.battle.party.every((m) => !m.alive)).toBe(true);
+  });
+
   it("marks living party members as able to act before commands are queued", () => {
     const mem = new Uint8Array(0x10000);
     mem[0x2d] = 0x02; // battle screen drawn
