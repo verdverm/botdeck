@@ -10,6 +10,69 @@ function tmpName(prefix: string): string {
   return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// A minimal FF1GameState snapshot builder, shaped exactly as the extracted
+// `.ff1.json` sidecar the file API's diff step reads. Only the battle command
+// buffer fields the recent-action derivation consumes are populated.
+function battleSnapshot(
+  queued: { member: string; command: string; target: { kind: string; slot?: number } }[],
+  opts: { inBattle?: boolean; phase?: string } = {},
+): unknown {
+  const partyNames = ["Stu", "Rias", "Zing", "Jaki"];
+  return {
+    battle: {
+      inBattle: opts.inBattle ?? true,
+      phase: opts.phase ?? "commandEntry",
+      enemyCount: 2,
+      enemies: [
+        { slot: 0, name: "Goblin", hp: 8, alive: true },
+        { slot: 1, name: "Imp", hp: 8, alive: true },
+      ],
+      party: partyNames.map((name, index) => {
+        const q = queued.find((x) => x.member === name);
+        return {
+          index,
+          name,
+          alive: true,
+          canAct: !q,
+          pendingAction: q ? { command: q.command, target: q.target } : undefined,
+        };
+      }),
+    },
+    party: partyNames.map((name, index) => ({ index, name, hp: 50 })),
+  };
+}
+
+// Persist a before/after pair of ff1 sidecars plus a step referencing them, so
+// the recent-actions section is rendered purely from the state diff.
+function writeStepWithDiff(
+  game: string,
+  id: string,
+  stepId: string,
+  command: { name: string; args?: Record<string, unknown> },
+  before: unknown,
+  after: unknown,
+): void {
+  const stepsDir = join(playDir(game, id), "steps");
+  const statesDir = join(playDir(game, id), "states");
+  mkdirSync(stepsDir, { recursive: true });
+  mkdirSync(statesDir, { recursive: true });
+  const base = `step_${stepId}`;
+  writeFileSync(join(statesDir, `${base}_before.ff1.json`), JSON.stringify(before));
+  writeFileSync(join(statesDir, `${base}_after.ff1.json`), JSON.stringify(after));
+  writeFileSync(
+    join(stepsDir, `${stepId}.step.json`),
+    JSON.stringify({
+      stepId,
+      ts: 1,
+      request: { gameId: game, state: {}, options: [] },
+      response: { command, reason: "MODEL CLAIM SHOULD NOT APPEAR" },
+      command,
+      stateBefore: `plays/${game}/${id}/states/${base}_before.state.json`,
+      stateAfter: `plays/${game}/${id}/states/${base}_after.state.json`,
+    }),
+  );
+}
+
 function writeGamePrompts(game: string, files: Record<string, string>): void {
   const dir = join(gameDir(game), "prompts");
   mkdirSync(dir, { recursive: true });
@@ -224,37 +287,58 @@ describe("renderPrompt", () => {
     expect(user).not.toContain("Message from the user");
   });
 
-  it("appends recent persisted steps as a compact history section", () => {
+  it("appends state-derived recent steps as a compact history section", () => {
     setSnippetList(game, id, ["system", "state"]);
     writeGamePrompts(game, {
       system: "sys",
       state: "user body",
     });
-    const stepsDir = join(playDir(game, id), "steps");
-    mkdirSync(stepsDir, { recursive: true });
-    const step1 = {
-      stepId: "000001",
-      ts: 1,
-      request: { gameId: game, state: {}, options: [] },
-      response: { command: { name: "interact" }, reason: "searched the tile" },
-      command: { name: "interact" },
-    };
-    const step2 = {
-      stepId: "000002",
-      ts: 2,
-      request: { gameId: game, state: {}, options: [] },
-      response: { command: { name: "dialog_advance" }, reason: "advanced dialog" },
-      command: { name: "dialog_advance" },
-    };
-    writeFileSync(join(stepsDir, "000001.step.json"), JSON.stringify(step1));
-    writeFileSync(join(stepsDir, "000002.step.json"), JSON.stringify(step2));
+    // Step 1: the command buffer latched Stu's attack on enemy slot 0.
+    writeStepWithDiff(
+      game,
+      id,
+      "000001",
+      { name: "fight", args: { actor: "Stu", target: "Goblin (slot 0)" } },
+      battleSnapshot([]),
+      battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 0 } }]),
+    );
+    // Step 2: nothing observable changed.
+    writeStepWithDiff(
+      game,
+      id,
+      "000002",
+      { name: "menu" },
+      battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 0 } }]),
+      battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 0 } }]),
+    );
 
     const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
-    expect(user).toContain("Recent actions");
-    expect(user).toContain("interact: searched the tile");
-    expect(user).toContain("dialog_advance: advanced dialog");
-    expect(user.indexOf("interact:")).toBeLessThan(user.indexOf("dialog_advance:"));
+    expect(user).toContain("## Recent actions");
+    // Derived from the before/after battle-command-buffer diff, not the model.
+    expect(user).toContain("Stu queued ATTACK -> Goblin (enemy slot 0)");
+    expect(user).toContain("menu -> no observable state change");
+    expect(user.indexOf("fight(")).toBeLessThan(user.indexOf("menu ->"));
+    // The model's reason text must never leak into the section.
+    expect(user).not.toContain("MODEL CLAIM SHOULD NOT APPEAR");
+  });
+
+  it("flags target drift between the claimed target and the latched target", () => {
+    setSnippetList(game, id, ["system", "state"]);
+    writeGamePrompts(game, { system: "sys", state: "user body" });
+    // The agent asked slot 0; the game latched slot 1 (the macro-navigation bug).
+    writeStepWithDiff(
+      game,
+      id,
+      "000001",
+      { name: "fight", args: { actor: "Stu", target: "Goblin (slot 0)" } },
+      battleSnapshot([]),
+      battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 1 } }]),
+    );
+    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const { user } = renderPrompt(req);
+    expect(user).toContain("TARGET DRIFT: asked slot 0, landed slot 1");
+    expect(user).not.toContain("MODEL CLAIM SHOULD NOT APPEAR");
   });
 
   it("renders step history when the game agent config omits recentHistoryLimit", () => {
@@ -279,23 +363,19 @@ describe("renderPrompt", () => {
         prompt: { snippets: ["system", "state"] },
       }),
     );
-    const stepsDir = join(playDir(game, id), "steps");
-    mkdirSync(stepsDir, { recursive: true });
-    writeFileSync(
-      join(stepsDir, "000001.step.json"),
-      JSON.stringify({
-        stepId: "000001",
-        ts: 1,
-        request: { gameId: game, state: {}, options: [] },
-        response: { command: { name: "interact" }, reason: "searched the tile" },
-        command: { name: "interact" },
-      }),
+    writeStepWithDiff(
+      game,
+      id,
+      "000001",
+      { name: "interact" },
+      battleSnapshot([]),
+      battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 0 } }]),
     );
 
     const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toContain("Recent actions");
-    expect(user).toContain("interact: searched the tile");
+    expect(user).toContain("Stu queued ATTACK");
   });
 
   it("respects recentHistoryLimit when rendering step history", () => {
@@ -308,28 +388,27 @@ describe("renderPrompt", () => {
       join(playDir(game, id), "config.json"),
       JSON.stringify({ id, game, agent: { recentHistoryLimit: 1 }, prompt: { snippets: ["system", "state"] } }),
     );
-    const stepsDir = join(playDir(game, id), "steps");
-    mkdirSync(stepsDir, { recursive: true });
-    const step1 = {
-      stepId: "000001",
-      ts: 1,
-      request: { gameId: game, state: {}, options: [] },
-      response: { command: { name: "interact" }, reason: "first" },
-      command: { name: "interact" },
-    };
-    const step2 = {
-      stepId: "000002",
-      ts: 2,
-      request: { gameId: game, state: {}, options: [] },
-      response: { command: { name: "dialog_advance" }, reason: "second" },
-      command: { name: "dialog_advance" },
-    };
-    writeFileSync(join(stepsDir, "000001.step.json"), JSON.stringify(step1));
-    writeFileSync(join(stepsDir, "000002.step.json"), JSON.stringify(step2));
+    writeStepWithDiff(
+      game,
+      id,
+      "000001",
+      { name: "interact", args: { note: "first" } },
+      battleSnapshot([]),
+      battleSnapshot([{ member: "Rias", command: "attack", target: { kind: "enemy", slot: 2 } }]),
+    );
+    writeStepWithDiff(
+      game,
+      id,
+      "000002",
+      { name: "dialog_advance", args: { note: "second" } },
+      battleSnapshot([]),
+      battleSnapshot([{ member: "Zing", command: "attack", target: { kind: "enemy", slot: 1 } }]),
+    );
 
     const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
-    expect(user).toContain("dialog_advance: second");
-    expect(user).not.toContain("interact: first");
+    // Only the latest step is included (limit 1), derived from its state diff.
+    expect(user).toContain("Zing queued ATTACK -> Imp (enemy slot 1)");
+    expect(user).not.toContain("Rias queued ATTACK");
   });
 });

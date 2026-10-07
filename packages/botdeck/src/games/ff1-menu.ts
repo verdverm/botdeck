@@ -71,38 +71,6 @@ export function navigateVertical(
   return navigateDirection(delta > 0 ? "down" : "up", Math.abs(delta));
 }
 
-export function navigateGrid(
-  current: { x: number; y: number } | undefined,
-  target: { x: number; y: number },
-  options: { width?: number; height?: number; wrap?: boolean } = {},
-): ButtonStep[] {
-  const start = current ?? { x: 0, y: 0 };
-  const steps: ButtonStep[] = [];
-  const dx = target.x - start.x;
-  const dy = target.y - start.y;
-  const width = options.width ?? 3;
-  const height = options.height ?? 3;
-
-  function axisMove(delta: number, axisSize: number, positiveDir: string, negativeDir: string): ButtonStep[] {
-    if (delta === 0) return [];
-    if (options.wrap && axisSize > 0) {
-      const positive = ((delta % axisSize) + axisSize) % axisSize;
-      const negative = ((-delta % axisSize) + axisSize) % axisSize;
-      if (positive <= negative) {
-        return navigateDirection(positiveDir, positive);
-      }
-      return navigateDirection(negativeDir, negative);
-    }
-    return navigateDirection(delta > 0 ? positiveDir : negativeDir, Math.abs(delta));
-  }
-
-  // Move horizontal first, then vertical. Either order is acceptable for a
-  // first pass because the cursor is free-moving in target selection.
-  steps.push(...axisMove(dx, width, "right", "left"));
-  steps.push(...axisMove(dy, height, "down", "up"));
-  return steps;
-}
-
 export function indexFromLabel(label: string, labels: string[]): number | undefined {
   const normalized = label.toLowerCase().trim();
   const exact = labels.findIndex((l) => l.toLowerCase() === normalized);
@@ -127,34 +95,89 @@ export function resolveMenuIndex(
   return current ?? 0;
 }
 
-export function resolveGridTarget(
-  target: number | string | undefined,
-  labels: string[],
-): { x: number; y: number } | undefined {
-  if (typeof target === "number") {
-    return { x: target % 3, y: Math.floor(target / 3) };
-  }
-  if (typeof target === "string") {
-    const parsed = Number(target);
-    if (!Number.isNaN(parsed)) {
-      return { x: parsed % 3, y: Math.floor(parsed / 3) };
-    }
-    const fromLabel = indexFromLabel(target, labels);
-    if (fromLabel !== undefined) {
-      return { x: fromLabel % 3, y: Math.floor(fromLabel / 3) };
-    }
-    // Allow "enemy_N" slot labels.
-    const slotMatch = target.match(/(?:enemy[_\s]?|slot[_\s]?)(\d+)/i);
-    if (slotMatch) {
-      const slot = Number(slotMatch[1]) - 1;
-      if (slot >= 0) {
-        return { x: slot % 3, y: Math.floor(slot / 3) };
-      }
-    }
-  }
-  return undefined;
+/**
+ * Compile an enemy/ally target-slot request into the button presses the game's
+ * linear target cursor actually expects.
+ *
+ * Both `SelectEnemyTarget` (bank_0C.asm) and `SelectPlayerTarget` reset their
+ * cursor to the first *legal* stop when the menu opens, then move UP/DOWN only
+ * (never LEFT/RIGHT), skipping empty/dead slots, and wrap past the last stop
+ * back to the first. The cursor walks a fixed slot order (`cursorOrder`, the
+ * ROM's per-formation `lut_EnemyIndex*` for enemies, party index order for
+ * allies). So the only thing to compute is how many DOWN presses move from the
+ * first-legal cursor stop to the stop that lands on `targetSlot`.
+ *
+ * Returns the number of DOWN presses, or `undefined` when the requested slot is
+ * not selectable (dead/empty/not in the order), so callers can fail loud rather
+ * than press toward a cursor position that can never resolve.
+ */
+export function targetCursorDownPresses(
+  targetSlot: number,
+  cursorOrder: number[],
+  aliveSlots: number[],
+): number | undefined {
+  const alive = new Set(aliveSlots);
+  // The stops the cursor can actually land on, in navigation order: the slot
+  // order filtered to alive entries.
+  const stops = cursorOrder.filter((s) => alive.has(s));
+  if (stops.length === 0) return undefined;
+  const pos = stops.indexOf(targetSlot);
+  if (pos < 0) return undefined;
+  // Cursor enters on stops[0]; DOWN advances one stop at a time and wraps.
+  return pos % stops.length;
 }
 
-export function slotFromEnemyIndex(index: number): { x: number; y: number } {
-  return { x: index % 3, y: Math.floor(index / 3) };
+/**
+ * Resolve a target argument to a concrete enemy slot index from the live enemy
+ * roster. Accepts the canonical 0-based `"Name (slot N)"` label, a bare numeric
+ * slot, a `"slot N"` reference, or a leading-enemy name. Slot identity is
+ * preserved against dead slots so the returned index can be matched against the
+ * navigation order's alive filter.
+ */
+export function resolveEnemySlot(
+  target: number | string | undefined,
+  enemies: { slot: number; name?: string; alive?: boolean }[],
+): number | undefined {
+  if (typeof target === "number") return Number.isFinite(target) ? target : undefined;
+  if (typeof target !== "string") return undefined;
+  const raw = target.trim();
+  if (raw === "") return undefined;
+  // Canonical / explicit slot reference: "(slot N)" or "slot N". 0-based.
+  const slotMatch = raw.match(/slot\s*(\d+)/i);
+  if (slotMatch) return Number(slotMatch[1]);
+  // Bare numeric index (0-based), e.g. "1" or "enemy_2" -> 2 (1-based legacy).
+  const enemyN = raw.match(/(?:enemy[_\s]?)(\d+)/i);
+  if (enemyN) return Number(enemyN[1]) - 1;
+  const bare = Number(raw);
+  if (Number.isFinite(bare) && raw !== "") return bare;
+  // Name match against the roster (first alive with that name).
+  const normalized = raw.toLowerCase();
+  const byName = enemies.find(
+    (e) => (e.name ?? "").toLowerCase() === normalized || (e.name ?? "").toLowerCase().startsWith(normalized),
+  );
+  return byName?.slot;
 }
+
+/**
+ * Resolve a target argument to a party member index (0-based). Accepts a name
+ * or a `(slot N)` / bare-numeric index reference.
+ */
+export function resolveAllySlot(
+  target: number | string | undefined,
+  party: { index: number; name?: string; alive?: boolean }[],
+): number | undefined {
+  if (typeof target === "number") return Number.isFinite(target) ? target : undefined;
+  if (typeof target !== "string") return undefined;
+  const raw = target.trim();
+  if (raw === "") return undefined;
+  const slotMatch = raw.match(/slot\s*(\d+)/i);
+  if (slotMatch) return Number(slotMatch[1]);
+  const bare = Number(raw);
+  if (Number.isFinite(bare) && raw !== "") return bare;
+  const normalized = raw.toLowerCase();
+  const byName = party.find(
+    (m) => (m.name ?? "").toLowerCase() === normalized || (m.name ?? "").toLowerCase().startsWith(normalized),
+  );
+  return byName?.index;
+}
+

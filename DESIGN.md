@@ -258,6 +258,14 @@ marker), and a single-turn operator note (`## Message from the user`, from
 `request.userMessage`). These are added after the configured snippets and never
 shadow a snippet.
 
+The `## Recent actions` entries are derived from **game state, not model
+output**. Each step persists before/after `.ff1.json` sidecars, and the section
+is built from their `diffFF1States` result (which includes the battle command
+buffer, so it shows what actually latched). When the actor's claimed enemy
+target and the target the game actually queued diverge, the line is annotated
+`[TARGET DRIFT: asked slot N, landed slot M]` so macro-navigation failures are
+visible to the agent. The model's `reason` text is deliberately not rendered.
+
 A play may shadow any game snippet by placing a file with the same name in
 `plays/<game>/<id>/snippets/user/`. This lets a single play specialize
 instructions, goals framing, or tool descriptions without forking the game
@@ -345,9 +353,9 @@ interface GamePlugin {
 }
 ```
 
-Only a `GenericGamePlugin` (single-tap placeholders) and an FF1 state reader
-exist today. Real FF1 command compilers (menu navigation, travel, combat) are
-not yet written.
+Only a `GenericGamePlugin` (single-tap placeholders) and an FF1 plugin (state
+reading, menu/target compilation - see §9) exist today. Higher-level travel
+compilers (A* to a destination) are not yet written.
 
 ---
 
@@ -378,6 +386,37 @@ generate context-aware sequences (e.g., A* walking to a destination compiled int
 held d-pad segments, or adaptive combat sequences that pick spells based on
 current enemy state). The `GamePlugin.compile(command)` method is the boundary
 where a high-level `GameCommand` becomes concrete `ButtonStep`s.
+
+### Battle target navigation (VERIFIED against FF1Disassembly bank_0C.asm)
+
+FF1's battle menus are **NOT** free 2-D grids. Two distinct cursor mechanics
+exist and both reset the cursor to the first legal stop on entry:
+
+- **Command menu** (`MenuSelection_2x4`): 2-D 4-row × 2-col layout. `btlcurs_x`
+  ($6AAA) = column, `btlcurs_y` ($6AAB) = row; DOWN increments `y`, RIGHT
+  increments `x`; both `AND` mask on confirm. Left column = FIGHT / MAGIC /
+  DRINK / ITEM (rows 0..3); right column = RUN.
+- **Enemy-target menu** (`SelectEnemyTarget`): **linear** cursor at `btlcurs`
+  ($6AAA), max = `btlcurs_max` ($6AAB). Only UP/DOWN move it; dead/empty slots
+  are auto-skipped, and it wraps around. The cursor walks the formation-specific
+  `lut_EnemyIndex*` order (VERIFIED: 9-small = `[1,0,2,4,3,5,7,6,8]`, 4-large
+  = `[0,1,2,3]`, mix = `[0,1,3,2,4,6,5,7]`), **not** row-major slot order. The
+  reader exposes this as `battle.enemyCursorOrder` (derived from `battleType`).
+- **Ally-target menu** (`SelectPlayerTarget` → `MenuSelection_2x4`): 4 rows ×
+  1 col of party members. DOWN increments row = party index.
+- **Magic submenu** (`MenuSelection_Magic`): 4 rows (levels) × 3 cols (spell
+  slots), 2 pages (levels 1-4 / 5-8) toggled via UP/DOWN at page boundaries.
+
+The FF1 plugin compiles target requests as follows (see
+`packages/botdeck/src/games/ff1-menu.ts::targetCursorDownPresses`):
+
+1. Resolve the requested slot from the agent's `"Name (slot N)"` canonical
+   label (or bare numeric). **0-based**, no off-by-one.
+2. Compute `stops = enemyCursorOrder.filter(alive)`. The rank of the requested
+   slot in `stops` is the number of DOWN presses from the entry position
+   (stops[0]). If the target is not alive/selectable, `compile()` throws and
+   the loop records a failed step.
+3. Emit `[DOWN] * rank`, `[A]`. Never LEFT/RIGHT.
 
 ---
 

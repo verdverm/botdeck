@@ -785,18 +785,88 @@ function formatCommandArgs(args: Record<string, unknown> | undefined): string {
   return pairs.join(", ");
 }
 
-function formatStepAction(step: StepRecord): string {
-  const cmd = step.command;
-  const args = formatCommandArgs(cmd.args);
-  const name = cmd.name || "unknown";
-  const action = args ? `${name}(${args})` : name;
+function basename(path: string): string {
+  const normalized = path.replace(/\\/g, "/");
+  const idx = normalized.lastIndexOf("/");
+  return idx >= 0 ? normalized.slice(idx + 1) : normalized;
+}
+
+function stateLabel(args: Record<string, unknown> | undefined, key: string): string {
+  const v = args?.[key];
+  return typeof v === "string" ? v.toLowerCase().trim() : "";
+}
+
+/**
+ * Pull the enemy slot the agent CLAIMED to target from the command args,
+ * tolerating the "Name (slot N)" / bare-numeric / "slot N" shapes vermbot's
+ * validator accepts. `undefined` when no explicit slot was named.
+ */
+function claimedEnemySlot(args: Record<string, unknown> | undefined): number | undefined {
+  const raw = stateLabel(args, "target");
+  if (!raw) return undefined;
+  const slot = raw.match(/slot\s*(\d+)/);
+  if (slot) return Number(slot[1]);
+  const bare = Number(raw);
+  return Number.isFinite(bare) && raw !== "" ? bare : undefined;
+}
+
+/**
+ * The enemy slot the game actually latched for the actor, read from the
+ * state-derived battle queue diff. `undefined` when the diff carries no
+ * single-enemy target (area target, ally target, or no queued action).
+ */
+function landedEnemySlot(diff: FF1StateDiff): number | undefined {
+  const q = diff.battle?.queued;
+  if (!q || q.length !== 1) return undefined;
+  const m = q[0]!.target.match(/enemy slot (\d+)/);
+  return m ? Number(m[1]) : undefined;
+}
+
+/**
+ * Derive the game-state truth for a step from its before/after sidecars, then
+ * render a single compact line. The "what happened" portion is built entirely
+ * from the state diff (which the loop persisted from real emulator RAM), never
+ * from the model's `reason` or claimed command args. When the agent's claimed
+ * enemy target diverges from the target the game actually latched (the
+ * macro-navigation failures this section must surface), the line flags it.
+ */
+function formatStepAction(step: StepRecord, diff: FF1StateDiff | undefined): string {
+  const name = step.command.name || "unknown";
+  const args = step.command.args;
+  const action = args ? `${name}(${formatCommandArgs(args)})` : name;
+
   if (step.error) {
     const err = step.error.length > 160 ? `${step.error.slice(0, 157)}...` : step.error;
     return `- ${action} [FAILED: ${err}]`;
   }
-  let reason = step.response.reason?.trim() ?? "";
-  if (reason.length > 120) reason = `${reason.slice(0, 117)}...`;
-  return reason ? `- ${action}: ${reason}` : `- ${action}`;
+
+  if (!diff || !diff.changed || diff.summary === "No changes.") {
+    return `- ${action} -> no observable state change`;
+  }
+
+  const observed = diff.summary;
+
+  // Surface target-selection drift: claimed enemy slot vs the slot the game
+  // actually latched. This is exactly the failure the old model-derived
+  // section could never reveal.
+  const claimed = claimedEnemySlot(args);
+  const landed = landedEnemySlot(diff);
+  if (claimed !== undefined && landed !== undefined && claimed !== landed) {
+    return `- ${action} -> ${observed} [TARGET DRIFT: asked slot ${claimed}, landed slot ${landed}]`;
+  }
+
+  return `- ${action} -> ${observed}`;
+}
+
+/** Read the ff1 before/after sidecars for a step and diff them. */
+function stepStateDiff(game: string, id: string, step: StepRecord): FF1StateDiff | undefined {
+  if (!step.stateBefore || !step.stateAfter) return undefined;
+  try {
+    return diffPlayStates(game, id, basename(step.stateBefore), basename(step.stateAfter));
+  } catch {
+    // Older steps may not have persisted both sidecars; fall back to no diff.
+    return undefined;
+  }
 }
 
 /** Read the most recent persisted steps and render them as a compact prompt section. */
@@ -811,7 +881,7 @@ export function readRecentStepHistory(game: string, id: string, limit: number): 
   for (const descriptor of recent) {
     try {
       const step = readPlayStep(game, id, descriptor.stepId);
-      lines.push(formatStepAction(step));
+      lines.push(formatStepAction(step, stepStateDiff(game, id, step)));
     } catch {
       // Skip malformed or missing step files.
     }

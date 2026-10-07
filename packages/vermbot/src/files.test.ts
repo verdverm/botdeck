@@ -538,7 +538,7 @@ describe("step persistence and recent-action history", () => {
       } as never);
       expect(listPlaySteps(TEST_GAME, id)).toHaveLength(2);
       const history = readRecentStepHistory(TEST_GAME, id, 10);
-      expect(history).toContain("- interact: searched");
+      expect(history).toContain("- interact -> no observable state change");
       expect(history).toContain("[FAILED:");
       expect(history).toContain("max tool rounds");
     } finally {

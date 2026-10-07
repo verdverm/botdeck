@@ -280,6 +280,37 @@ export const BATTLE_TURNORDER_LEN = 0x0d;
 export const ADDR_BATTLE_CURSOR_X = 0x6aaa;
 /** Battle menu cursor Y (menu position). */
 export const ADDR_BATTLE_CURSOR_Y = 0x6aab;
+/**
+ * btl_battletype ($6C92): formation layout, 0=9-small, 1=4-large, 2=mix,
+ * 3=fiend, 4=chaos. VERIFIED against FF1Disassembly variables.inc.
+ */
+export const ADDR_BATTLE_TYPE = 0x6c92;
+
+/**
+ * Cursor-order-to-enemy-slot tables for each multi-target formation, taken
+ * verbatim from the ROM's `lut_EnemyIndex9Small` / `lut_EnemyIndex4Large` /
+ * `lut_EnemyIndexMix` (FF1Disassembly bank_0C.asm $9FF7). Enemy-target
+ * selection (`SelectEnemyTarget`) runs a single linear cursor (`btlcurs`,
+ * $6AAA) through this order, skipping empty/dead slots, UP/DOWN only, with
+ * wraparound at `btlcurs_max`. The order is NOT row-major: in the 9-small
+ * layout enemy slot 0 is drawn center-row but the first cursor stop is slot 1.
+ * Fiend/Chaos formations have a single auto-target (no menu), so they map to
+ * the trivial `[0]` order.
+ */
+export const BATTLE_ENEMY_CURSOR_ORDER: Readonly<Record<number, readonly number[]>> = {
+  0: [1, 0, 2, 4, 3, 5, 7, 6, 8],
+  1: [0, 1, 2, 3],
+  2: [0, 1, 3, 2, 4, 6, 5, 7],
+  3: [0],
+  4: [0],
+};
+
+/**
+ * Ally target order. `SelectPlayerTarget` mirrors a 2x4 command menu down one
+ * column (lut_PlayerTargetCursorPos), so the cursor advances strictly through
+ * party index 0..3 with DOWN (row index & 3 wraps).
+ */
+export const BATTLE_ALLY_CURSOR_ORDER: readonly number[] = [0, 1, 2, 3];
 
 /**
  * Per-character battle command buffer.

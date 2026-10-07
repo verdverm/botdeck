@@ -34,7 +34,13 @@ function baseState(context: "field" | "battle" | "menu" = "field", menu: string 
       battle: {
         inBattle: context === "battle",
         enemyCount: context === "battle" ? 2 : 0,
-        enemies: context === "battle" ? [{ slot: 0, name: "enemy_1", position: { row: 0, col: 0 } }] : [],
+        enemies: context === "battle"
+          ? [
+              { slot: 0, name: "Imp", alive: true, position: { row: 0, col: 0 } },
+              { slot: 1, name: "Goblin", alive: true, position: { row: 0, col: 1 } },
+            ]
+          : [],
+        enemyCursorOrder: context === "battle" ? [1, 0, 2, 4, 3, 5, 7, 6, 8] : [],
         party: battleParty,
         activePartyIndex: 0,
         cursorX: undefined,
@@ -153,12 +159,30 @@ describe("FF1GamePlugin", () => {
     expect(plugin.compile({ name: "heal" })).toHaveLength(2);
   });
 
-  it("compiles fight to menu navigation plus target confirm", () => {
+  it("compiles fight to menu navigation plus linear target-cursor navigation", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
-    const macro = plugin.compile({ name: "fight", args: { actor: "Stu", target: "enemy_1" } });
+    vi.spyOn(plugin, "readState").mockReturnValue(baseState("battle", "battle"));
 
-    expect(macro.length).toBeGreaterThan(1);
+    // enemyCursorOrder = [1,0,...]: cursor enters on slot 1 (the first stop),
+    // so targeting slot 1 needs zero target-cursor DOWN presses, then confirm.
+    const macro = plugin.compile({ name: "fight", args: { actor: "Stu", target: "Goblin (slot 1)" } });
+    expect(macro.filter((s) => s.button === NES_BUTTONS.DOWN)).toHaveLength(0);
     expect(macro[macro.length - 1]?.button).toBe(NES_BUTTONS.A);
+    expect(macro.some((s) => s.button === NES_BUTTONS.LEFT)).toBe(false);
+
+    const toSlot0 = plugin.compile({ name: "fight", args: { actor: "Stu", target: "Imp (slot 0)" } });
+    // menu DOWN (to MAGIC index would be wrong for fight) - fight is menu index 0,
+    // so the only DOWN presses are the target-cursor presses: slot0 = 1 stop past slot1.
+    expect(toSlot0.filter((s) => s.button === NES_BUTTONS.DOWN).length).toBe(1);
+  });
+
+  it("off-by-one regression: targeting 'slot 0' lands on enemy slot 0, not slot 1", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    vi.spyOn(plugin, "readState").mockReturnValue(baseState("battle", "battle"));
+    const macro = plugin.compile({ name: "fight", args: { actor: "Stu", target: "Imp (slot 0)" } });
+    expect(macro[macro.length - 1]?.button).toBe(NES_BUTTONS.A);
+    // No LEFT/RIGHT (the old grid model emitted them and mis-landed the target).
+    expect(macro.some((s) => s.button === NES_BUTTONS.LEFT || s.button === NES_BUTTONS.RIGHT)).toBe(false);
   });
 
   it("compiles run to RUN menu entry", () => {

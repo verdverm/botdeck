@@ -195,6 +195,19 @@ export interface BattleState {
   activePartyIndex: number | undefined;
   cursorX: number | undefined;
   cursorY: number | undefined;
+  /**
+   * btl_battletype ($6C92) formation: 0=9-small, 1=4-large, 2=mix, 3=fiend,
+   * 4=chaos. Drives the enemy-target cursor order the game actually navigates.
+   */
+  battleType: number | undefined;
+  /**
+   * The enemy-slot order the linear target cursor (`btlcurs`, $6AAA) walks
+   * through, from the ROM's per-formation `lut_EnemyIndex*` tables. Cursor
+   * index i lands on enemy slot `enemyCursorOrder[i]`, skipping empty/dead
+   * slots, with wraparound. VERIFIED against FF1Disassembly bank_0C.asm and a
+   * headless ROM probe.
+   */
+  enemyCursorOrder: number[];
   note: string;
 }
 

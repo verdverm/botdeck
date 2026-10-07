@@ -88,6 +88,8 @@ import {
   BATTLE_TURNORDER_LEN,
   ADDR_BATTLE_CURSOR_X,
   ADDR_BATTLE_CURSOR_Y,
+  ADDR_BATTLE_TYPE,
+  BATTLE_ENEMY_CURSOR_ORDER,
   ADDR_BATTLE_CHAR_CMDBUF,
   BATTLE_CHAR_CMD_STRIDE,
   BATTLE_CHAR_CMD_COMMAND_OFFSET,
@@ -822,6 +824,10 @@ export function readBattleState(view: MemoryView, party: PartyCharacter[]): Batt
     activePartyIndex: inBattle ? (activeIndex < PARTY_SIZE ? activeIndex : undefined) : undefined,
     cursorX: inBattle ? view.u8(ADDR_BATTLE_CURSOR_X) : undefined,
     cursorY: inBattle ? view.u8(ADDR_BATTLE_CURSOR_Y) : undefined,
+    battleType: inBattle ? view.u8(ADDR_BATTLE_TYPE) : undefined,
+    enemyCursorOrder: inBattle
+      ? Array.from(BATTLE_ENEMY_CURSOR_ORDER[view.u8(ADDR_BATTLE_TYPE)] ?? BATTLE_ENEMY_CURSOR_ORDER[0] ?? [0])
+      : [],
     note: VERIFIED_BATTLE_NOTE,
   };
 }

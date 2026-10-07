@@ -1,4 +1,41 @@
-import type { FF1GameState, InventoryItem, PartyCharacter, WorldState } from "./types.js";
+import type {
+  BattleEnemy,
+  BattlePartyMember,
+  BattleState,
+  FF1GameState,
+  InventoryItem,
+  PartyCharacter,
+  WorldState,
+} from "./types.js";
+
+export interface QueuedActionDiff {
+  /** Party member whose command buffer newly latched a command this step. */
+  member: string;
+  /** The command code as decoded by the reader (attack/magic/drink/item/run). */
+  command: string;
+  /** Human-readable resolved target, e.g. `enemy slot 1` / `Stu (ally 0)`. */
+  target: string;
+}
+
+export interface EnemyHpDiff {
+  slot: number;
+  name: string;
+  before: number | undefined;
+  after: number | undefined;
+  delta: number;
+}
+
+export interface BattleDiff {
+  inBattle?: { before: boolean; after: boolean };
+  phase?: { before: string | undefined; after: string | undefined };
+  /** Commands newly written into the btl_charcmdbuf between before and after. */
+  queued?: QueuedActionDiff[];
+  /** Commands that were queued before and cleared by the after snapshot. */
+  cleared?: string[];
+  /** Enemy HP deltas (damage the round actually dealt), only for changed slots. */
+  enemyHp?: EnemyHpDiff[];
+}
+
 
 export interface FF1StateDiff {
   changed: boolean;
@@ -31,7 +68,106 @@ export interface FF1StateDiff {
     };
     shop?: { before: string | undefined; after: string | undefined };
   };
+  /**
+   * Derived from the btl_charcmdbuf per snapshot: the game's authoritative
+   * record of which member queued which command against which slot. This is
+   * what actually happened, independent of what the agent said it did.
+   */
+  battle?: BattleDiff;
   summary: string;
+}
+
+function describeTarget(
+  target: { kind?: string; slot?: number } | undefined,
+  enemies: BattleEnemy[],
+  party: PartyCharacter[],
+): string {
+  const t = target;
+  if (!t) return "?";
+  switch (t.kind) {
+    case "enemy": {
+      const slot = t.slot ?? 0;
+      const enemy = enemies.find((e) => e.slot === slot);
+      return `${enemy?.name ?? "enemy"} (enemy slot ${slot})`;
+    }
+    case "player": {
+      const slot = t.slot ?? 0;
+      const member = party.find((p) => p.index === slot);
+      return `${member?.name ?? "ally"} (ally slot ${slot})`;
+    }
+    case "all_enemies":
+      return "all enemies";
+    case "all_players":
+      return "all allies";
+    default:
+      return "?";
+  }
+}
+
+function extractQueued(
+  battle: BattleState | undefined,
+  party: PartyCharacter[],
+): QueuedActionDiff[] {
+  if (!battle?.inBattle) return [];
+  const out: QueuedActionDiff[] = [];
+  for (const m of battle.party) {
+    const pa = m.pendingAction as
+      | { command?: string; target?: { kind?: string; slot?: number } }
+      | undefined;
+    if (!pa?.command) continue;
+    out.push({
+      member: m.name,
+      command: pa.command,
+      target: describeTarget(pa.target, battle.enemies, party),
+    });
+  }
+  return out;
+}
+
+function diffBattle(
+  before: FF1GameState,
+  after: FF1GameState,
+): BattleDiff | undefined {
+  const b = before.battle;
+  const a = after.battle;
+  if (b?.inBattle !== true && a?.inBattle !== true) return undefined;
+
+  const diff: BattleDiff = {};
+  if (b?.inBattle !== a?.inBattle) {
+    diff.inBattle = { before: b?.inBattle ?? false, after: a?.inBattle ?? false };
+  }
+  if (b?.phase !== a?.phase) {
+    diff.phase = { before: b?.phase, after: a?.phase };
+  }
+  const beforeQueued = extractQueued(b, before.party);
+  const afterQueued = extractQueued(a, after.party);
+  const beforeNames = new Set(beforeQueued.map((q) => q.member));
+  const afterNames = new Set(afterQueued.map((q) => q.member));
+  const newlyQueued = afterQueued.filter((q) => !beforeNames.has(q.member));
+  if (newlyQueued.length > 0) diff.queued = newlyQueued;
+  const cleared = beforeQueued.filter((q) => !afterNames.has(q.member)).map((q) => q.member);
+  if (cleared.length > 0) diff.cleared = cleared;
+
+  if (b?.enemies && a?.enemies) {
+    const enemyDiffs: EnemyHpDiff[] = [];
+    for (const ae of a.enemies) {
+      const be = b.enemies.find((e) => e.slot === ae.slot);
+      const beforeHp = be?.hp;
+      const afterHp = ae.hp;
+      if (beforeHp === undefined || afterHp === undefined) continue;
+      if (beforeHp === afterHp) continue;
+      enemyDiffs.push({
+        slot: ae.slot,
+        name: ae.name ?? `enemy ${ae.slot}`,
+        before: beforeHp,
+        after: afterHp,
+        delta: afterHp - beforeHp,
+      });
+    }
+    if (enemyDiffs.length > 0) diff.enemyHp = enemyDiffs;
+  }
+
+  return Object.keys(diff).length > 0 ? diff : undefined;
 }
 
 function formatPosition(world: WorldState | undefined): string {
@@ -176,9 +312,11 @@ export function diffFF1States(before: FF1GameState, after: FF1GameState): FF1Sta
   }
   const hasContextChange = Object.keys(context).length > 0;
 
+  const battle = diffBattle(before, after);
+
   const changed = partyDiffs.length > 0 || gold !== undefined || position !== undefined ||
     inventory.added.length > 0 || inventory.removed.length > 0 || inventory.changed.length > 0 ||
-    hasContextChange;
+    hasContextChange || battle !== undefined;
 
   const parts: string[] = [];
   if (gold) parts.push(`Gold: ${gold.before} -> ${gold.after} (${gold.delta >= 0 ? "+" : ""}${gold.delta})`);
@@ -196,6 +334,16 @@ export function diffFF1States(before: FF1GameState, after: FF1GameState): FF1Sta
     parts.push(`${item.item}: ${item.before} -> ${item.after} (${item.delta >= 0 ? "+" : ""}${item.delta})`);
   }
   if (context.battle) parts.push(`Battle: ${context.battle.before} -> ${context.battle.after}`);
+  if (battle?.phase) parts.push(`Phase: ${battle.phase.before ?? "?"} -> ${battle.phase.after ?? "?"}`);
+  for (const q of battle?.queued ?? []) {
+    parts.push(`${q.member} queued ${q.command.toUpperCase()} -> ${q.target}`);
+  }
+  for (const name of battle?.cleared ?? []) {
+    parts.push(`${name} command cleared (round ran)`);
+  }
+  for (const e of battle?.enemyHp ?? []) {
+    parts.push(`Enemy slot ${e.slot} (${e.name}) HP ${e.before ?? "?"} -> ${e.after ?? "?"} (${e.delta >= 0 ? "+" : ""}${e.delta})`);
+  }
   if (context.menu) parts.push(`Menu: ${context.menu.before ?? "none"} -> ${context.menu.after ?? "none"}`);
   if (context.dialog) parts.push(`Dialog: ${context.dialog.before} -> ${context.dialog.after}`);
   if (context.cursor) parts.push(`Cursor: ${context.cursor.before ?? "?"} -> ${context.cursor.after ?? "?"}`);
@@ -213,6 +361,7 @@ export function diffFF1States(before: FF1GameState, after: FF1GameState): FF1Sta
     position,
     inventory,
     context: hasContextChange ? context : undefined,
+    battle,
     summary: parts.length > 0 ? parts.join("; ") : "No changes.",
   };
 }

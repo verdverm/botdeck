@@ -27,9 +27,10 @@ import {
   pressSelect,
   navigateDirection,
   navigateVertical,
-  navigateGrid,
   resolveMenuIndex,
-  resolveGridTarget,
+  targetCursorDownPresses,
+  resolveEnemySlot,
+  resolveAllySlot,
   indexFromLabel,
   HOLD_FRAMES,
   GAP_FRAMES,
@@ -118,12 +119,31 @@ function getMenuCursor(state?: Record<string, unknown>): number | undefined {
   return typeof cursor === "number" ? cursor : undefined;
 }
 
-function getBattleCursor(state?: Record<string, unknown>): { x: number; y: number } | undefined {
-  const ff1 = state?.ff1 as { battle?: { cursorX?: number; cursorY?: number } } | undefined;
-  const x = ff1?.battle?.cursorX;
-  const y = ff1?.battle?.cursorY;
-  if (typeof x === "number" && typeof y === "number") return { x, y };
-  return undefined;
+interface BattleRoster {
+  enemies: { slot: number; name?: string; alive?: boolean; hp?: number }[];
+  cursorOrder: number[];
+  party: { index: number; name?: string; alive?: boolean }[];
+}
+
+function getBattleRoster(state?: Record<string, unknown>): BattleRoster {
+  const ff1 = state?.ff1 as
+    | {
+        battle?: {
+          enemies?: { slot: number; name?: string; alive?: boolean; hp?: number }[];
+          enemyCursorOrder?: number[];
+          party?: { index: number; name?: string; alive?: boolean }[];
+        };
+      }
+    | undefined;
+  const enemies = ff1?.battle?.enemies ?? [];
+  const cursorOrder = ff1?.battle?.enemyCursorOrder ?? [];
+  return {
+    enemies,
+    // Older or synthetic snapshots may not expose the ROM cursor order; fall
+    // back to ascending slot order so the linear model still resolves.
+    cursorOrder: cursorOrder.length > 0 ? cursorOrder : enemies.map((e) => e.slot),
+    party: ff1?.battle?.party ?? [],
+  };
 }
 
 function getInventory(state?: Record<string, unknown>): InventoryItem[] {
@@ -135,12 +155,6 @@ function getInventory(state?: Record<string, unknown>): InventoryItem[] {
 function getPartyNames(state?: Record<string, unknown>): string[] {
   const ff1 = state?.ff1 as { party?: { name: string }[] } | undefined;
   return ff1?.party?.map((c) => c.name) ?? [];
-}
-
-function getEnemyNames(state?: Record<string, unknown>): string[] {
-  const ff1 = state?.ff1 as { battle?: { enemies?: { name?: string; slot: number }[] } } | undefined;
-  const enemies = ff1?.battle?.enemies ?? [];
-  return enemies.map((e) => e.name ?? `Enemy ${e.slot + 1}`);
 }
 
 function getInventoryLabels(state?: Record<string, unknown>): string[] {
@@ -640,16 +654,61 @@ export class FF1GamePlugin implements GamePlugin {
 
     if (name === "fight" || name === "magic" || name === "use_item") {
       const targetName = String(command.args?.target ?? "");
-      const enemyNames = getEnemyNames(state);
-      const target = resolveGridTarget(targetName, enemyNames);
-      const currentCursor = getBattleCursor(state);
-      if (target) {
-        steps.push(...navigateGrid(currentCursor, target));
-      } else if (name === "fight") {
-        // Default to first enemy slot.
-        steps.push(...navigateGrid(currentCursor, { x: 0, y: 0 }));
+      const roster = getBattleRoster(state);
+      const enemySlots = roster.enemies.map((e) => e.slot);
+      const aliveEnemySlots = roster.enemies.filter((e) => e.alive !== false).map((e) => e.slot);
+      const aliveAllySlots = roster.party.filter((m) => m.alive !== false).map((m) => m.index);
+
+      // Magic may target an ally (heal) or an enemy; fight/item are enemy
+      // actions. Resolve the requested slot against the enemy roster first,
+      // then the ally roster, and pick the matching target domain.
+      const enemySlot = resolveEnemySlot(targetName, roster.enemies);
+      const isEnemyTarget =
+        enemySlot !== undefined &&
+        (name !== "magic" || enemySlots.includes(enemySlot));
+
+      if (name === "magic" && !isEnemyTarget) {
+        const allySlot = resolveAllySlot(targetName, roster.party);
+        if (allySlot === undefined || !aliveAllySlots.includes(allySlot)) {
+          throw new Error(
+            `magic: target "${targetName}" is not a living ally or selectable enemy. ` +
+              `Allies: ${roster.party.map((m) => `${m.name} (slot ${m.index})`).join(", ") || "none"}.`,
+          );
+        }
+        // Ally target cursor (SelectPlayerTarget) walks party index 0..3 with
+        // DOWN only, resetting to the first live member on entry.
+        const down = targetCursorDownPresses(allySlot, [0, 1, 2, 3], aliveAllySlots);
+        if (down === undefined) {
+          throw new Error(`magic: ally slot ${allySlot} is not selectable`);
+        }
+        steps.push(...navigateDirection("down", down));
+        steps.push(pressA());
+      } else {
+        const resolved = isEnemyTarget ? enemySlot : undefined;
+        if (targetName !== "" && resolved === undefined) {
+          throw new Error(
+            `${name}: target "${targetName}" is not a selectable enemy. ` +
+              `Enemies: ${roster.enemies.map((e) => `${e.name ?? "enemy"} (slot ${e.slot})`).join(", ") || "none"}.`,
+          );
+        }
+        if (resolved === undefined) {
+          // No explicit target: press A immediately, which keeps the game's
+          // default first-legal-target cursor stop.
+          steps.push(pressA());
+        } else {
+          // The target cursor resets to the first alive stop on entry and moves
+          // DOWN through the formation slot order (enemyCursorOrder), skipping
+          // dead/empty slots, wrapping. Move from stops[0] to the requested slot.
+          const down = targetCursorDownPresses(resolved, roster.cursorOrder, aliveEnemySlots);
+          if (down === undefined) {
+            throw new Error(
+              `${name}: enemy slot ${resolved} is dead or not selectable. Alive: ${aliveEnemySlots.join(", ") || "none"}.`,
+            );
+          }
+          steps.push(...navigateDirection("down", down));
+          steps.push(pressA());
+        }
       }
-      steps.push(pressA());
     }
 
     return steps;
