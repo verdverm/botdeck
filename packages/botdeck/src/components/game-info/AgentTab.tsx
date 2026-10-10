@@ -4,6 +4,23 @@ import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse, TurnTranscrip
 import { parsePlayId, snippetUrl, snippetsUrl } from "@/play";
 import { SectionTitle } from "./shared";
 
+interface LastRoute {
+  mapId?: number | "overworld";
+  location?: { name?: string | null } | null;
+  from?: { x: number; y: number };
+  goal?: { x: number; y: number };
+  tiles?: number;
+  path?: { x: number; y: number }[];
+  runs?: { direction: string; tiles: number }[];
+}
+
+interface MacroProgress {
+  index: number;
+  total: number;
+  phase: "hold" | "gap";
+  remaining: number;
+}
+
 interface AgentTabProps {
   isThinking?: boolean;
   isPlayingMacro?: boolean;
@@ -27,6 +44,9 @@ interface AgentTabProps {
   onManualCommand?: (command: GameCommand) => void;
   pendingMessage?: string;
   onPendingMessageChange?: (value: string) => void;
+  macroProgress?: MacroProgress;
+  macroInterrupted?: boolean;
+  lastRoute?: LastRoute;
 }
 
 function StatusBadge({
@@ -366,6 +386,9 @@ export function AgentTab({
   onManualCommand,
   pendingMessage = "",
   onPendingMessageChange,
+  macroProgress,
+  macroInterrupted,
+  lastRoute,
 }: AgentTabProps) {
   const [tab, setTab] = useState<"request" | "response" | "log">("response");
   const [expandedTurns, setExpandedTurns] = useState<Set<number>>(new Set());
@@ -453,9 +476,7 @@ export function AgentTab({
             </span>
             <span className="text-xs text-neutral-400">{pendingDecision.command.name}</span>
           </div>
-          {pendingDecision.command.args && (
-            <JsonBlock value={pendingDecision.command.args} maxHeight="80px" />
-          )}
+          <JsonBlock value={pendingDecision.command} maxHeight="120px" />
           <div className="mt-2 flex gap-2">
             <button
               data-testid="pending-run"
@@ -522,12 +543,40 @@ export function AgentTab({
 
         {tab === "response" && (
           <div className="flex flex-col gap-3">
+            {lastRoute && (
+              <div className="rounded border border-blue-900/30 bg-blue-950/10 p-2">
+                <SectionTitle>Navigation Plan</SectionTitle>
+                <p className="text-xs text-blue-200">
+                  {lastRoute.location?.name ?? "unknown destination"} from ({lastRoute.from?.x ?? "?"}, {lastRoute.from?.y ?? "?"}) to ({lastRoute.goal?.x ?? "?"}, {lastRoute.goal?.y ?? "?"})
+                </p>
+                {lastRoute.runs && lastRoute.runs.length > 0 && (
+                  <p className="text-xs text-neutral-400">
+                    {lastRoute.runs.map((r) => `${r.tiles} ${r.direction}`).join(", ")} ({lastRoute.tiles ?? 0} tiles)
+                  </p>
+                )}
+                {isPlayingMacro && macroProgress && (
+                  <p className="text-xs text-amber-300">
+                    executing step {macroProgress.index + 1}/{macroProgress.total} ({macroProgress.phase}, {macroProgress.remaining} frames left)
+                  </p>
+                )}
+                {macroInterrupted && (
+                  <p className="text-xs text-rose-400">macro was interrupted</p>
+                )}
+                {lastRoute.path && lastRoute.path.length > 0 && (
+                  <p className="mt-1 break-all text-xs text-neutral-500">
+                    path: {lastRoute.path.map((t) => `(${t.x},${t.y})`).join(" ")}
+                  </p>
+                )}
+              </div>
+            )}
+
             {lastResponse ? (
               <>
                 <div>
                   <SectionTitle>Chosen Command</SectionTitle>
                   <JsonBlock value={lastResponse.command} />
                 </div>
+
                 {lastResponse.reason && (
                   <div>
                     <SectionTitle>Reason</SectionTitle>

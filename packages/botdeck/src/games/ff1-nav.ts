@@ -453,8 +453,12 @@ export function reachableNamedLocations(from: Tile, vehicle: Vehicle): MapLocati
   return list;
 }
 
-/** A planned route, ready to compile into buttons. */
+/**
+ * A planned route, ready to compile into buttons.
+ */
 export interface RoutePlan {
+  /** Map the plan was computed on: overworld or a standard-map id. */
+  mapId: number | "overworld";
   location: MapLocation;
   from: Tile;
   goal: Tile;
@@ -479,7 +483,11 @@ const RUN_BUTTONS: Readonly<Record<MoveRun["direction"], number>> = {
  * @param plan - A planned route, from `gotoMacro`.
  * @param vehicle - Vehicle whose step timing applies.
  */
-export function routeToSteps(plan: RoutePlan, vehicle: Vehicle): ButtonStep[] {
+export function routeToSteps(plan: RoutePlan, vehicle?: Vehicle): ButtonStep[] {
+  // Step timing is the same for every overworld move_speed except the
+  // airship; nothing currently routes by airship, so keep the parameter for
+  // call sites that name the vehicle and mark it intentionally unused.
+  void vehicle;
   const steps: ButtonStep[] = [];
   let cursor = plan.from;
   for (const step of plan.path) {
@@ -505,6 +513,7 @@ export function gotoMacro(
   const planned = planRoute(name, from, vehicle);
   if ("error" in planned) throw new Error(planned.error);
   const plan: RoutePlan = {
+    mapId: "overworld",
     location: planned.location,
     from,
     goal: planned.goal,
@@ -513,4 +522,708 @@ export function gotoMacro(
     tiles: planned.result.path.length,
   };
   return { steps: routeToSteps(plan, vehicle), plan };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Standard maps (towns / castles / dungeon floors).
+ *
+ * The grid comes from `games/ff1/maps/standard-maps.json`, produced by
+ * `games/ff1/scripts/extract-sm-map.mjs` (same process as the overworld map:
+ * lut_SMPtrTbl pointer -> DecompressMap -> 64x64 tiles, tile properties from
+ * lut_SMTilesetProp). Same coordinate system as the overworld: the party's
+ * tile is $68/$69 directly in RAM, wrapped mod 64 on every axis (AND #$3F).
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface SmTileProps {
+  noMove: boolean;
+  battle: boolean;
+  special: number;
+  param: number;
+  walkable: boolean;
+}
+
+/** A doorway/teleport cluster or POI inside a standard map. */
+export interface SmLocation {
+  /** normal = teleport to another standard map; exit = to the overworld; warp = back one floor via stack; poi = a door/tile the party walks onto to interact. */
+  type: "normal" | "exit" | "warp" | "poi";
+  destMapId: number | null;
+  destScroll: { x: number; y: number } | null;
+  teleportIds: (number | null)[];
+  x: number;
+  y: number;
+  warpTiles: [number, number][];
+  name: string | null;
+  /** True for synthesized out-of-map void exits (goal-only walkability). */
+  void?: boolean;
+  /** POI kind, when type === "poi". */
+  poiKind?: string;
+}
+
+interface RawSmPoi {
+  kind: string;
+  label: string;
+  param: number;
+  x: number;
+  y: number;
+  tiles: [number, number][];
+}
+
+interface RawSmMap {
+  id: number;
+  name: string | null;
+  nameVerified?: boolean;
+  tileset: number;
+  width: number;
+  height: number;
+  tiles: number[][];
+  tileProps: Record<string, SmTileProps>;
+  /** Out-of-map warp void clusters (stepping onto one exits the map). */
+  voidTiles?: { type: string; x: number; y: number; tiles: [number, number][] }[];
+  locations: SmLocation[];
+  /** Points of interest: shop/inn/clinic doors, chests, etc. */
+  poi?: RawSmPoi[];
+}
+
+const smModules = import.meta.glob("@games/ff1-map/*.json", { eager: true }) as Record<
+  string,
+  { default: unknown }
+>;
+const rawSmMaps: Record<string, RawSmMap> = {};
+for (const [, mod] of Object.entries(smModules)) {
+  const m = mod.default as unknown;
+  if (m && typeof m === "object" && "tiles" in (m as RawSmMap) && "locations" in (m as RawSmMap)) {
+    const map = m as RawSmMap;
+    rawSmMaps[String(map.id)] = map;
+  }
+}
+
+export function standardMap(mapId: number): RawSmMap | undefined {
+  return rawSmMaps[String(mapId)];
+}
+
+function mapPropsAt(map: RawSmMap, x: number, y: number): SmTileProps | undefined {
+  const tile = map.tiles[y]?.[x];
+  if (tile === undefined) return undefined;
+  return map.tileProps[String(tile)];
+}
+
+const voidSetCache = new Map<number, Set<string>>();
+
+/** Any four-neighbor of (x,y) that party-walkable (never into the void)? */
+function smHasWalkableNeighbor(map: RawSmMap, x: number, y: number): boolean {
+  for (const d of DIRECTIONS) {
+    const nx = (x + d.dx + map.width) % map.width;
+    const ny = (y + d.dy + map.height) % map.height;
+    if (smIsWalkable(map, nx, ny)) return true;
+  }
+  return false;
+}
+
+/** "x,y" keys of a map's out-of-map warp-void tiles (empty when none). */
+function smVoidSet(map: RawSmMap): Set<string> {
+  const hit = voidSetCache.get(map.id);
+  if (hit) return hit;
+  const set = new Set<string>();
+  for (const v of map.voidTiles ?? []) {
+    for (const [x, y] of v.tiles) set.add(`${x},${y}`);
+  }
+  voidSetCache.set(map.id, set);
+  return set;
+}
+
+/** Standard maps walk on foot only; TP_NOMOVE is the single walkability bit. */
+export function smIsWalkable(map: RawSmMap, x: number, y: number): boolean {
+  const props = mapPropsAt(map, x, y);
+  if (!props) return false;
+  if (!props.walkable) return false;
+  // Out-of-map warp-void tiles are not navigable steps: stepping on them
+  // exits the map, so A* must treat them as walls (they can only be a goal).
+  if (smVoidSet(map).has(`${x},${y}`)) return false;
+  return true;
+}
+
+/**
+ * Low-level A* over a 4-connected grid with optional per-axis wrap (the game
+ * wraps overworld coords mod 256 and standard-map coords mod 64 with AND #$3F,
+ * so both map families are toroidal).
+ */
+interface GridSpec {
+  width: number;
+  height: number;
+  wrapX: boolean;
+  wrapY: boolean;
+  passable(x: number, y: number): boolean;
+}
+
+/**
+ * A* options: `goalPass` loosens the passability check for the GOAL tile only
+ * (never for intermediate steps). Used when the goal is a tile the party can
+ * only stand on as a terminal action, e.g. a town's out-of-map warp void.
+ */
+interface AstarOptions {
+  goalPass?: (tile: Tile) => boolean;
+}
+
+function astarOnGrid(spec: GridSpec, from: Tile, to: Tile, opts?: AstarOptions): PathResult & { found: boolean } {
+  const mod = (v: number, n: number) => ((v % n) + n) % n;
+  const wrapTileTo = (s: GridSpec, x: number, y: number): Tile => ({
+    x: s.wrapX ? mod(x, s.width) : x,
+    y: s.wrapY ? mod(y, s.height) : y,
+  });
+  const start = wrapTileTo(spec, from.x, from.y);
+  const goal = wrapTileTo(spec, to.x, to.y);
+  if (!spec.passable(goal.x, goal.y) && !(opts?.goalPass?.(goal) ?? false)) {
+    return { found: false, path: [], cost: 0 };
+  }
+  if (start.x === goal.x && start.y === goal.y) return { found: true, path: [], cost: 0 };
+
+  const delta = (a: number, b: number, n: number) => {
+    if (spec.wrapX || spec.wrapY) return Math.min(Math.abs(a - b), n - Math.abs(a - b));
+    return Math.abs(a - b);
+  };
+  const heuristic = (x: number, y: number) => delta(x, goal.x, spec.width) + delta(y, goal.y, spec.height);
+
+  const key = (x: number, y: number) => y * spec.width + x;
+  const startKey = key(start.x, start.y);
+  const goalKey = key(goal.x, goal.y);
+
+  const cameFrom = new Map<number, number>();
+  const closed = new Set<number>();
+  const open = new OpenHeap();
+  open.push({ f: heuristic(start.x, start.y), g: 0, x: start.x, y: start.y });
+
+  while (open.size > 0) {
+    const node = open.pop()!;
+    const { g: currentG, x: cx, y: cy } = node;
+    const currentKey = key(cx, cy);
+    if (closed.has(currentKey)) continue;
+    closed.add(currentKey);
+
+    if (currentKey === goalKey) {
+      const path: Tile[] = [];
+      let walk = currentKey;
+      while (walk !== startKey) {
+        path.push({ x: walk % spec.width, y: Math.floor(walk / spec.width) });
+        const prev = cameFrom.get(walk);
+        if (prev === undefined) break;
+        walk = prev;
+      }
+      path.reverse();
+      return { found: true, path, cost: currentG };
+    }
+
+    for (const { dx, dy } of DIRECTIONS) {
+      // Standard maps do not wrap (they are hard-bounded by no-move void);
+      // the torus only applies where the spec says so.
+      if (spec.wrapX || spec.wrapY) {
+        // wrapped step below
+      } else if (cx + dx < 0 || cx + dx >= spec.width || cy + dy < 0 || cy + dy >= spec.height) {
+        continue;
+      }
+      const next = wrapTileTo(spec, cx + dx, cy + dy);
+      const nextKey = key(next.x, next.y);
+      // Normal walkability, except the goal tile may be a terminal-only step
+      // (goalPass) when the caller allows it, e.g. an out-of-map warp void.
+      const terminalGoal = nextKey === goalKey && (opts?.goalPass?.(next) ?? false);
+      if (!spec.passable(next.x, next.y) && !terminalGoal) continue;
+      if (closed.has(nextKey)) continue;
+      const g = currentG + 1;
+      if (cameFrom.has(nextKey)) continue;
+      cameFrom.set(nextKey, currentKey);
+      open.push({ f: g + heuristic(next.x, next.y), g, x: next.x, y: next.y });
+    }
+  }
+
+  return { found: false, path: [], cost: 0 };
+}
+
+/**
+ * A* for the current standard map.
+ *
+ * @param mapId - Standard-map id (`world.mapId`).
+ * @param from - Party tile (`world.standardMapX/Y`).
+ */
+export function findSmPath(mapId: number, from: Tile, to: Tile, opts?: AstarOptions): PathResult & { found: boolean } {
+  const map = standardMap(mapId);
+  if (!map) return { found: false, path: [], cost: 0 };
+  // Standard maps are hard-bounded by no-move void; the party cannot wrap
+  // around the edges. Only the overworld is a true torus.
+  return astarOnGrid(
+    { width: map.width, height: map.height, wrapX: false, wrapY: false, passable: (x, y) => smIsWalkable(map, x, y) },
+    from,
+    to,
+    opts,
+  );
+}
+
+/** POIs the party can walk onto to interact with (shops, inn, clinic, etc.).
+ *
+ * Door sprites in the ROM are marked TP_SPEC_DOOR (special 0x02) and are
+ * no-move. The walkable tile directly in front of the door (usually south)
+ * carries TP_SPEC_CLOSEROOM (special 0x06) and is the actual place the party
+ * stands to enter. The extractor labels the 0x06 tile "Close-rooms door",
+ * which is misleading; for navigation we want the sidewalk tile, so this
+ * function returns the walkable neighbor of each real door POI as the target.
+ */
+function smPoiLocations(mapId: number): SmLocation[] {
+  const map = standardMap(mapId);
+  if (!map || !map.poi) return [];
+  const doors = map.poi.filter((p) => p.kind === "door" || p.kind === "lockedDoor");
+  const out: SmLocation[] = [];
+  for (const d of doors) {
+    // The door itself may be no-move; find the adjacent walkable tile the
+    // party stands on to use it. Prefer the tile below, then any neighbor.
+    let entrance: { x: number; y: number } | null = null;
+    for (const { dx, dy } of [
+      { dx: 0, dy: 1 },
+      { dx: 0, dy: -1 },
+      { dx: 1, dy: 0 },
+      { dx: -1, dy: 0 },
+    ]) {
+      const ex = d.x + dx;
+      const ey = d.y + dy;
+      if (smIsWalkable(map, ex, ey)) {
+        entrance = { x: ex, y: ey };
+        break;
+      }
+    }
+    if (!entrance) continue;
+    out.push({
+      type: "poi" as const,
+      destMapId: null,
+      destScroll: null,
+      teleportIds: [],
+      // Keep the actual door tile as the POI origin; route planning will walk
+      // onto it as the terminal step and trigger the interior transition.
+      x: d.x,
+      y: d.y,
+      warpTiles: [[entrance.x, entrance.y]],
+      name: normalizePoiName(d.label ?? ""),
+      poiKind: d.kind,
+    });
+  }
+  return out;
+}
+
+function normalizePoiName(name: string): string {
+  return name.toLowerCase().replace(/\s+door\s*$/g, "").trim();
+}
+
+/**
+ * Candidate `goto` targets on the current standard map for a name.
+ *
+ * Normal teleports are matched by *destination map name* (they carry the name
+ * of the map they lead to) and are unambiguous; "exit" matches every exit and
+ * warp tile, which is inherently ambiguous, so the caller picks the nearest one
+ * (`planSmRoute` does) the same way the overworld picks the nearest door with
+ * `entranceFor`.
+ *
+ * POIs (shops, inn, clinic doors) are also valid targets: the party walks onto
+ * the door tile, which the game then uses as the entrance to the interior map.
+ */
+export function resolveSmLocation(mapId: number, name: string): SmLocation[] {
+  const map = standardMap(mapId);
+  if (!map) return [];
+  const wanted = trimLoc(name);
+  const named = map.locations.filter(
+    (loc) => loc.type === "normal" && loc.name &&
+      (loc.name.toLowerCase() === wanted || loc.name.toLowerCase().startsWith(wanted)),
+  );
+  if (named.length > 0) return named;
+  if (wanted === "exit" || wanted === "overworld" || wanted === "world map") {
+    return map.locations.filter((loc) => loc.type !== "normal");
+  }
+  // Match POIs by their full label or by the "Weapon Shop" part of "Weapon Shop door".
+  const pois = smPoiLocations(mapId).filter((loc) => {
+    if (!loc.name) return false;
+    const base = normalizePoiName(loc.name);
+    const lower = loc.name.toLowerCase();
+    return lower === wanted || lower.startsWith(wanted) || base === wanted || base.startsWith(wanted);
+  });
+  if (pois.length > 0) return pois;
+  return [];
+}
+
+function trimLoc(name: string): string {
+  return name.trim().toLowerCase().replace(/[_\s-]+/g, " ");
+}
+
+/** Walkability spec for a standard map, ready for `astarOnGrid`. */
+export function smGridSpec(mapId: number): GridSpec | undefined {
+  const map = standardMap(mapId);
+  if (!map) return undefined;
+  // Standard maps do not wrap; see findSmPath.
+  return { width: map.width, height: map.height, wrapX: false, wrapY: false, passable: (x, y) => smIsWalkable(map, x, y) };
+}
+
+/** Walkability spec for the overworld for one vehicle. */
+function owGridSpec(vehicle: Vehicle): GridSpec {
+  return {
+    width: MAP_WIDTH,
+    height: MAP_HEIGHT,
+    wrapX: true,
+    wrapY: true,
+    passable: (x, y) => isWalkable(x, y, vehicle),
+  };
+}
+
+/**
+ * Plan a route to one of the current standard map's teleport clusters.
+ *
+ * @param name - "exit", a destination map name ("Coneria Castle"), or prefix.
+ * @param from - Party tile on the standard map.
+ */
+export function planSmRoute(
+  mapId: number,
+  name: string,
+  from: Tile,
+): { location: SmLocation; goal: Tile; result: PathResult & { found: boolean } } | { error: string } {
+  const cands = resolveSmLocation(mapId, name);
+  const map = standardMap(mapId)!;
+  let voidExit = false;
+  const wantedExit = ["exit/end of map", "exit", "overworld", "world map"].includes(trimLoc(name));
+  if (cands.length === 0 && wantedExit && (map.voidTiles?.length ?? 0) > 0) {
+    // No explicit exit doorways: the map is left through its out-of-map warp
+    // void (e.g. Coneria town). Route to the nearest void tile; stepping on it
+    // is the terminal action.
+    voidExit = true;
+  } else if (cands.length === 0) {
+    return { error: `goto: no such doorway "${name}" on this map. Use one of the available locations listed in the state.` };
+  }
+  const ambiguous = cands.filter((loc) => loc.type === "normal");
+  if (ambiguous.length > 1) {
+    return { error: `goto: "${name}" matches ${ambiguous.length} named teleports; be more specific.` };
+  }
+
+  if (voidExit) {
+    // Nearest void tile adjacent to walkable ground, by torus distance.
+    const cands: { tile: Tile; d: number }[] = [];
+    for (const v of map.voidTiles!) {
+      for (const [x, y] of v.tiles) {
+        if (!smHasWalkableNeighbor(map, x, y)) continue;
+        cands.push({ tile: { x, y }, d: Math.abs(x - from.x) + Math.abs(y - from.y) });
+      }
+    }
+    cands.sort((a, b) => a.d - b.d);
+    if (cands.length === 0) {
+      return { error: `goto: no reachable void exit found on this map.` };
+    }
+    // Try candidates in distance order until one is path-reachable.
+    let goal: Tile | null = null;
+    let result: PathResult & { found: boolean } = { found: false, path: [], cost: 0 };
+    for (const cand of cands) {
+      const finalAction = (t: Tile) => t.x === cand.tile.x && t.y === cand.tile.y;
+      const attempt = findSmPath(mapId, from, cand.tile, { goalPass: finalAction });
+      if (attempt.found) {
+        goal = cand.tile;
+        result = attempt;
+        break;
+      }
+    }
+    if (!goal) {
+      return { error: `goto: no path from (${from.x},${from.y}) to the ${map.name ?? "map"} exit.` };
+    }
+    const voidLoc: SmLocation = {
+      type: "warp",
+      destMapId: null,
+      destScroll: null,
+      teleportIds: [null],
+      x: goal.x,
+      y: goal.y,
+      warpTiles: [[goal.x, goal.y]],
+      name: (map.name ? `${map.name} exit` : "exit"),
+      void: true,
+    };
+    return { location: voidLoc, goal, result };
+  }
+
+  // Doorway clusters resolve to the nearest tile of the nearest cluster,
+  // mirroring the overworld's entranceFor().
+  const loc = pickSmDoor(cands, from);
+  // For POI doors, the goal is the door tile itself: the party walks onto it
+  // as the terminal step, which triggers the transition into the building.
+  // For normal exits/teleports, the goal is the nearest usable warp tile.
+  const goal = loc.type === "poi" ? { x: loc.x, y: loc.y } : nearestSmWarpTile(loc, from);
+
+  // POI door tiles and out-of-map warp void tiles are no-move as intermediate
+  // steps, but walking onto them is the terminal action. Treat the goal tile as
+  // passable only as the final step.
+  const isPoi = loc.type === "poi";
+  const result = findSmPath(
+    mapId,
+    from,
+    goal,
+    isPoi || loc.void ? { goalPass: (t) => t.x === goal.x && t.y === goal.y } : undefined,
+  );
+  if (!result.found) {
+    return { error: `goto: no path from (${from.x},${from.y}) to the ${loc.type} at (${goal.x},${goal.y}).` };
+  }
+  return { location: loc, goal, result };
+}
+
+/**
+ * Pick the nearest of the candidate clusters (same nearest-door rule as the
+ * overworld's entranceFor).
+ */
+function smDist(a: Tile, b: Tile): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function pickSmDoor(cands: SmLocation[], from: Tile): SmLocation {
+  if (cands.length === 1) return cands[0]!;
+  let loc = cands[0]!;
+  let best = nearestSmWarpTile(loc, from);
+  let bestD = smDist(best, from);
+  for (const cand of cands.slice(1)) {
+    const t = nearestSmWarpTile(cand, from);
+    const d = smDist(t, from);
+    if (d < bestD) {
+      bestD = d;
+      best = t;
+      loc = cand;
+    }
+  }
+  return loc;
+}
+
+function smallerDoor(a: SmLocation, b: SmLocation, from: Tile): SmLocation {
+  const da = nearestSmWarpTile(a, from);
+  const db = nearestSmWarpTile(b, from);
+  return smDist(db, from) < smDist(da, from) ? b : a;
+}
+void smallerDoor;
+
+/** Entrance tile for a standard-map location: the warp tile nearest the party. */
+export function nearestSmWarpTile(loc: SmLocation, from: Tile): Tile {
+  let best: Tile = { x: loc.x, y: loc.y };
+  let bestD = Infinity;
+  for (const [wx, wy] of loc.warpTiles) {
+    const d = smDist({ x: wx, y: wy }, from);
+    if (d < bestD) {
+      bestD = d;
+      best = { x: wx, y: wy };
+    }
+  }
+  return best;
+}
+
+/** Signed difference folded into the shortest direction across a torus. */
+export function wrapDelta(d: number, size: number): number {
+  if (Math.abs(d) <= size / 2) return d;
+  return d > 0 ? d - size : d + size;
+}
+
+/** Human-readable list of the doors/teleports/POIs one standard map offers. */
+export function smAvailableLocations(mapId: number): { id: string; name: string; type: "point" }[] {
+  const map = standardMap(mapId);
+  if (!map) return [];
+  const out: { id: string; name: string; type: "point" }[] = [];
+  for (const loc of map.locations) {
+    if (loc.type === "normal") {
+      const name = loc.name ?? `map 0x${loc.destMapId?.toString(16) ?? "?"}`;
+      out.push({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, "_"), name, type: "point" });
+    } else if (loc.type === "exit") {
+      out.push({ id: "exit", name: "Exit", type: "point" });
+    }
+  }
+  for (const poi of smPoiLocations(mapId)) {
+    if (!poi.name) continue;
+    const name = normalizePoiName(poi.name);
+    out.push({ id: name.toLowerCase().replace(/[^a-z0-9]+/g, "_"), name, type: "point" });
+  }
+  // Dedup by name: several doors can lead to the same destination.
+  const seen = new Set<string>();
+  return out.filter((l) => (seen.has(l.name) ? false : (seen.add(l.name), true)));
+}
+
+/**
+ * Goal for `goto`-in-a-town: the party walks onto a teleport/exit tile, which
+ * the game then turns into the map transition itself (no extra A press).
+ */
+export function gotoSmMacro(
+  mapId: number,
+  name: string,
+  from: Tile,
+): { steps: ButtonStep[]; plan: RoutePlan } {
+  const planned = planSmRoute(mapId, name, from);
+  if ("error" in planned) throw new Error(planned.error);
+  const plan: RoutePlan = {
+    mapId,
+    location: { destMapId: planned.location.destMapId ?? -1, teleportIds: [], x: planned.location.x, y: planned.location.y, warpTiles: planned.location.warpTiles, name: planned.location.name, glyph: "" },
+    from,
+    goal: planned.goal,
+    path: planned.result.path,
+    runs: toMoveRuns(from, planned.result.path),
+    tiles: planned.result.path.length,
+  };
+  return { steps: routeToSteps(plan, "foot"), plan };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+ * Random walk ("grind").
+ *
+ * Steps are chosen randomly among legal directions, confined to tiles within
+ * `distance` (Manhattan, walked-torus metric) of the center. The macro aborts
+ * on battle, so "walk around until a battle is encountered" needs no explicit
+ * stop condition: the abort ends the macro when the encounter arrives.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Deterministic PRNG (mulberry32) so a plan can be replayed from its seed. */
+export function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+export interface GrindSpec {
+  /** Center of the walk area. */
+  center: Tile;
+  /** Max torus-Manhattan distance from center the walk may leave. */
+  distance: number;
+  /** Grid topology and walkability. */
+  grid: GridSpec;
+  /** Cap on compiled random steps; the macro aborts on battle before this. */
+  maxSteps?: number;
+  /** Optional PRNG; defaults to a fresh mulberry32 from Date.now(). */
+  rng?: () => number;
+}
+
+/** Where on the grid can the walk step? Never steps onto an impassable tile. */
+function grindNeighborOk(spec: GrindSpec, node: Tile, next: Tile): boolean {
+  const { grid, center, distance } = spec;
+  if (!grid.passable(next.x, next.y)) return false;
+  const pos = { x: grid.wrapX ? ((next.x % grid.width) + grid.width) % grid.width : next.x, y: grid.wrapY ? ((next.y % grid.height) + grid.height) % grid.height : next.y };
+  const d = Math.abs(wrapDelta(pos.x - center.x, grid.width)) + Math.abs(wrapDelta(pos.y - center.y, grid.height));
+  if (d > distance) return false;
+  void node;
+  return true;
+}
+
+/**
+ * Compile a random-walk drive on the given grid. Returns one pad-press per
+ * tile, one step at a time; the walk prefers to keep walking (it only turns
+ * back when the distance cap or the terrain forces it).
+ *
+ * @returns `steps` to press plus the tiles actually walked (deduped cursor),
+ *   counted separately so the caller can log "distance walked".
+ */
+export function randomWalkSteps(spec: GrindSpec): ButtonStep[] {
+  const {
+    center, grid, maxSteps = 160, rng = mulberry32(Date.now()),
+  } = spec;
+  const hold = OW_STEP_HOLD_FRAMES;
+  const gap = OW_STEP_GAP_FRAMES;
+  const steps: ButtonStep[] = [];
+
+  // Bias the first steps toward the center from outside the radius.
+  let cursor = clampToTile(grid, center);
+  let biased = true;
+
+  for (let n = 0; n < maxSteps; n++) {
+    const options = DIRECTIONS.map((d, i) => ({ d, i }))
+      .map(({ d, i }) => ({ d, i, next: wrapTileOn(grid, cursor.x + d.dx, cursor.y + d.dy) }))
+      .filter(({ next }) => grindNeighborOk(spec, cursor, next));
+    if (options.length === 0) break;
+
+    let chosen: { next: Tile; i: number };
+    if (biased) {
+      // Step toward the center while any toward-center option remains legal.
+      const dir = biasedStep(grid, cursor, center, options.map((o) => o.i));
+      chosen = dir !== undefined
+        ? options[dir]!
+        : options[Math.floor(rng() * options.length)]!;
+      const distNow = manhattanOnTorus(cursor, center, grid);
+      if (distNow <= 1) biased = false;
+    } else {
+      chosen = options[Math.floor(rng() * options.length)]!;
+    }
+    cursor = chosen.next;
+    const d = DIRECTIONS[chosen.i]!;
+    steps.push(press(buttonForD(d), hold, gap));
+  }
+  return steps;
+}
+
+function clampToTile(grid: GridSpec, t: Tile): Tile {
+  return wrapTileOn(grid, t.x, t.y);
+}
+
+function wrapTileOn(grid: GridSpec, x: number, y: number): Tile {
+  const w = (v: number, n: number, wrap: boolean) => (wrap ? ((v % n) + n) % n : Math.min(Math.max(v, 0), n - 1));
+  return { x: w(x, grid.width, grid.wrapX), y: w(y, grid.height, grid.wrapY) };
+}
+
+function manhattanOnTorus(a: Tile, b: Tile, grid: GridSpec): number {
+  const dx = Math.abs(wrapDelta(a.x - b.x, grid.width));
+  const dy = Math.abs(wrapDelta(a.y - b.y, grid.height));
+  return dx + dy;
+}
+
+function biasedStep(grid: GridSpec, cursor: Tile, center: Tile, allowed: number[]): number | undefined {
+  const dx = wrapDelta(center.x - cursor.x, grid.width);
+  const dy = wrapDelta(center.y - cursor.y, grid.height);
+  if (Math.abs(dx) >= Math.abs(dy) && dx !== 0) {
+    const idx = dx > 0 ? 3 : 2; // right, left
+    if (allowed.includes(idx)) return idx;
+  }
+  if (dy !== 0) {
+    const idx = dy > 0 ? 1 : 0; // down, up
+    if (allowed.includes(idx)) return idx;
+  }
+  return undefined;
+}
+
+function buttonForD(d: { dx: number; dy: number }): number {
+  if (d.dy === -1) return NES_BUTTONS.UP;
+  if (d.dy === 1) return NES_BUTTONS.DOWN;
+  if (d.dx === -1) return NES_BUTTONS.LEFT;
+  return NES_BUTTONS.RIGHT;
+}
+
+/**
+ * Plan and compile a `grind` in one call: A* to the center on the current map
+ * family, then random walk inside the radius until the macro abort hits.
+ *
+ * @param coords - Center coordinate to walk around.
+ * @param distance - Max Manhattan distance from the center. Required.
+ * @param from - The party's tile on the current map.
+ * @param where - "overworld" with a vehicle, or a standard-map id.
+ */
+export function grindMacro(
+  coords: Tile,
+  distance: number,
+  from: Tile,
+  where: { kind: "overworld"; vehicle: Vehicle } | { kind: "standard"; mapId: number },
+): { steps: ButtonStep[]; plan: { center: Tile; distance: number; approach: Tile[]; walkSteps: number } } {
+  if (!Number.isFinite(distance) || distance < 0) {
+    throw new Error("grind: distance must be a non-negative number of tiles.");
+  }
+  const grid = where.kind === "overworld" ? owGridSpec(where.vehicle) : smGridSpec(where.mapId);
+  if (!grid) throw new Error(`grind: unknown standard map ${where.kind === "standard" ? where.mapId : ""}.`);
+
+  // A* approach to the center (skip when already on it).
+  const approach = findPathOnGrid(grid, from, coords);
+  if (!approach.found) {
+    throw new Error(
+      `grind: the walk-area center (${coords.x},${coords.y}) is unreachable from (${from.x},${from.y}) on this map.`,
+    );
+  }
+  const approachSteps = approach.found ? routeToSteps({ mapId: where.kind === "overworld" ? "overworld" : where.mapId, location: { destMapId: -1, teleportIds: [], x: coords.x, y: coords.y, warpTiles: [], name: null, glyph: "" }, from, goal: coords, path: approach.path, runs: [], tiles: approach.path.length }, "foot") : [];
+
+  const center = wrapTileOn(grid, coords.x, coords.y);
+  const walk = randomWalkSteps({ center, distance, grid });
+  return {
+    steps: [...approachSteps, ...walk],
+    plan: { center, distance, approach: approach.path, walkSteps: walk.length },
+  };
+}
+
+/** Route a path over a spec'd grid by reusing it through astarOnGrid. */
+function findPathOnGrid(spec: GridSpec, from: Tile, to: Tile): PathResult & { found: boolean } {
+  return astarOnGrid(spec, from, to);
 }

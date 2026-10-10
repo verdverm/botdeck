@@ -176,7 +176,7 @@ export function GameInfoPanel({
       <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-neutral-800 bg-neutral-900 p-3 text-sm">
         {tab === "overview" && <OverviewTab data={data} />}
         {tab === "party" && <PartyTab ff1={data?.ff1} />}
-        {tab === "location" && <LocationTab ff1={data?.ff1} />}
+        {tab === "location" && <LocationTab data={data ?? undefined} />}
         {tab === "battle" && <BattleTab ff1={data?.ff1} />}
         {tab === "menu" && <MenuTab ff1={data?.ff1} />}
         {tab === "agent" && (
@@ -203,6 +203,9 @@ export function GameInfoPanel({
             onManualCommand={onManualCommand}
             pendingMessage={agent?.pendingMessage}
             onPendingMessageChange={agent?.setPendingMessage}
+            macroProgress={data?.macroProgress}
+            macroInterrupted={data?.macroInterrupted}
+            lastRoute={data?.lastRoute}
           />
         )}
         {tab === "snippets" && playId && onRunSnippet && (

@@ -101,6 +101,7 @@ export class Emulator {
   } | null = null;
   private macroInterrupt: (() => boolean) | undefined;
   private macroInterrupted = false;
+  private lastRoute: unknown = undefined;
 
   constructor() {
     const audioSampleRate = this.audio.getSampleRate();
@@ -277,6 +278,27 @@ export class Emulator {
   /** True when the most recent macro stopped early on its interrupt predicate. */
   wasMacroInterrupted(): boolean {
     return this.macroInterrupted;
+  }
+
+  /** Snapshot of the running macro's progress (index, phase, total steps). */
+  getMacroProgress(): { index: number; total: number; phase: "hold" | "gap"; remaining: number } | undefined {
+    if (!this.macro) return undefined;
+    return {
+      index: this.macro.index,
+      total: this.macro.steps.length,
+      phase: this.macro.phase,
+      remaining: this.macro.remaining,
+    };
+  }
+
+  /** Store the last compiled travel route so the UI can display the plan. */
+  setLastRoute(route: unknown): void {
+    this.lastRoute = route;
+  }
+
+  /** Retrieve the last compiled travel route. */
+  getLastRoute(): unknown {
+    return this.lastRoute;
   }
 
   /**

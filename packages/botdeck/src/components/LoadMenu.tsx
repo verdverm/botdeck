@@ -4,6 +4,7 @@ import type { PlayStateEntry, PlayStateSort } from "@/types";
 interface LoadMenuProps {
   states: PlayStateEntry[] | null;
   loading: boolean;
+  playId: string;
   onLoad: (entry: PlayStateEntry) => void;
   onRename: (entry: PlayStateEntry, name: string) => Promise<void>;
   onDelete: (entry: PlayStateEntry) => Promise<void>;
@@ -183,6 +184,7 @@ function LoadMenuItem({
 export function LoadMenu({
   states,
   loading,
+  playId,
   onLoad,
   onRename,
   onDelete,
@@ -253,6 +255,9 @@ export function LoadMenu({
           </div>
         </div>
       </div>
+      <p className="px-2 py-0.5 text-[10px] text-neutral-600">
+        play: {playId} ({states?.length ?? "?"} states)
+      </p>
       {loading ? (
         <p className="px-2 py-1.5 text-xs text-neutral-500">loading...</p>
       ) : displayedStates && displayedStates.length === 0 ? (

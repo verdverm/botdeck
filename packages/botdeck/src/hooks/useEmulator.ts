@@ -18,6 +18,14 @@ const KEY_BUTTONS: Record<string, number> = {
 
 const KEY_DEBOUNCE_MS = 50;
 
+function isTypingElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  const tag = target.tagName.toLowerCase();
+  if (["input", "textarea", "select"].includes(tag)) return true;
+  if (target.isContentEditable) return true;
+  return false;
+}
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -50,6 +58,9 @@ export interface UseEmulatorResult {
   loadStateFromFile: (file: File) => Promise<CollectedState>;
   loadState: (state: object) => Promise<CollectedState>;
   setMuted: (muted: boolean) => void;
+  gameFocused: boolean;
+  onCanvasFocus: () => void;
+  onCanvasBlur: () => void;
 }
 
 /**
@@ -70,6 +81,8 @@ export function useEmulator(game: string): UseEmulatorResult {
   const [hasRom, setHasRom] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [muted, setMutedState] = useState(false);
+  const [gameFocused, setGameFocused] = useState(false);
+  const gameFocusedRef = useRef(false);
   const bootPromiseRef = useRef<Promise<void> | null>(null);
 
   // Render loop: draw each emulated frame onto the canvas.
@@ -126,6 +139,7 @@ export function useEmulator(game: string): UseEmulatorResult {
     if (!hasRom) return;
     const pressed = new Map<number, number>();
     const down = (e: KeyboardEvent) => {
+      if (!gameFocusedRef.current) return;
       const button = KEY_BUTTONS[e.code];
       if (button === undefined) return;
       e.preventDefault();
@@ -136,6 +150,7 @@ export function useEmulator(game: string): UseEmulatorResult {
       emulator.buttonDown(button);
     };
     const up = (e: KeyboardEvent) => {
+      if (!gameFocusedRef.current) return;
       const button = KEY_BUTTONS[e.code];
       if (button === undefined) return;
       e.preventDefault();
@@ -160,6 +175,16 @@ export function useEmulator(game: string): UseEmulatorResult {
     [emulator],
   );
 
+  const onCanvasFocus = useCallback(() => {
+    gameFocusedRef.current = true;
+    setGameFocused(true);
+  }, []);
+
+  const onCanvasBlur = useCallback(() => {
+    gameFocusedRef.current = false;
+    setGameFocused(false);
+  }, []);
+
   const loadRom = useCallback(
     (data: ArrayBuffer, name?: string) => {
       emulator.loadROM(data, name);
@@ -180,6 +205,7 @@ export function useEmulator(game: string): UseEmulatorResult {
     setError(undefined);
     emulator.start();
     setPower(true);
+    canvasRef.current?.focus();
   }, [emulator]);
 
   const powerOff = useCallback(() => {
@@ -325,5 +351,8 @@ export function useEmulator(game: string): UseEmulatorResult {
     loadStateFromFile,
     loadState,
     setMuted,
+    gameFocused,
+    onCanvasFocus,
+    onCanvasBlur,
   };
 }

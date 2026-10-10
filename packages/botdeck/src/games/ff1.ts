@@ -42,6 +42,9 @@ import {
 } from "./ff1-menu";
 import {
   gotoMacro,
+  gotoSmMacro,
+  grindMacro,
+  smAvailableLocations,
   reachableNamedLocations,
   type RoutePlan,
   type Vehicle,
@@ -140,6 +143,22 @@ function locationType(name: string): KnownLocation["type"] {
   return "town";
 }
 
+/**
+ * Doors/teleports the party can walk into on the current standard map, from the
+ * extracted standard-maps grid. Offered as `goto` targets while inside a town,
+ * castle, or dungeon: `exit`, or a destination map ("Coneria Castle").
+ */
+function standardMapLocations(mapId: number): KnownLocation[] {
+  return smAvailableLocations(mapId).map((loc) => ({
+    id: loc.id,
+    name: loc.name,
+    mapId,
+    type: "point" as const,
+    reachable: "reachable" as const,
+    note: `A* on the extracted standard-map grid walks to this doorway; stepping on the door tile triggers the game's own teleport.`,
+  }));
+}
+
 /** The reader's world block, or undefined when no FF1 state is available. */
 function getWorld(state?: Record<string, unknown>): WorldState | undefined {
   return (state?.ff1 as { world?: WorldState } | undefined)?.world;
@@ -153,6 +172,19 @@ function getWorld(state?: Record<string, unknown>): WorldState | undefined {
 function vehicleOf(world: WorldState): Vehicle {
   const name = (world.currentVehicle ?? "Foot").toLowerCase();
   return name === "canoe" || name === "ship" || name === "airship" ? name : "foot";
+}
+
+/**
+ * Standard-map player tile. The disassembly sets sm_player_x/y ($68/$69) to
+ * sm_scroll_x/y ($29/$2A) + 7, but $68/$69 can hold stale values. The scroll
+ * is the authoritative camera origin, so derive the tile the same way the
+ * overworld does: scroll + 7, wrapped to the 64x64 map.
+ */
+function standardMapPlayerTile(world: WorldState): { x: number; y: number } {
+  return {
+    x: (world.standardMapScrollX + 7) & 0x3f,
+    y: (world.standardMapScrollY + 7) & 0x3f,
+  };
 }
 
 function isInBattle(state?: Record<string, unknown>): boolean {
@@ -283,15 +315,9 @@ export class FF1GamePlugin implements GamePlugin {
 
   constructor(private emulator: Emulator) {}
 
-  /**
-   * The route the last `goto` compiled, kept so the step log and the UI can show
-   * where the party was headed. Reset by nothing: the most recent goto wins.
-   */
-  private lastRoute: RoutePlan | undefined;
-
   /** The most recent compiled travel route, if any. */
   getLastRoute(): RoutePlan | undefined {
-    return this.lastRoute;
+    return this.emulator.getLastRoute() as RoutePlan | undefined;
   }
 
   /** Reset the per-turn dialog accumulator. Called before a macro plays. */
@@ -385,8 +411,14 @@ export class FF1GamePlugin implements GamePlugin {
       {
         name: "goto",
         description:
-          "Walk the party to a known location. The location must be one of the available locations listed in the state.",
+          "Walk the party to a known location. The location must be one of the available locations listed in the state. Works on the overworld, and inside town/castle/dungeon maps (doors and exits).",
         args: '{ "location": "string" }',
+      },
+      {
+        name: "grind",
+        description:
+          'Walk to the given tile coordinate, then randomly walk around within the given Manhattan distance of it until a battle starts (the macro aborts on battle). x/y are tile coordinates on the current map (overworld 0-255, standard maps 0-63).',
+        args: '{ "x": "number", "y": "number", "distance": "number" }',
       },
       {
         name: "talk_to",
@@ -532,6 +564,8 @@ export class FF1GamePlugin implements GamePlugin {
       ff1.dialog = this.readCapturedDialog();
       if (ff1.world.isOverworld) {
         ff1.availableLocations = overworldLocations(ff1.world);
+      } else if (ff1.world.isStandardMap) {
+        ff1.availableLocations = standardMapLocations(ff1.world.mapId);
       }
     }
     const mode = this.getMode({ ff1 });
@@ -539,6 +573,8 @@ export class FF1GamePlugin implements GamePlugin {
       romName: this.emulator.getRomName(),
       running: this.emulator.isRunning(),
       macroActive: this.emulator.isPlayingMacro(),
+      macroProgress: this.emulator.getMacroProgress(),
+      lastRoute: this.emulator.getLastRoute(),
       mode,
       ff1,
       gameInfo: ff1 ? formatFF1GameInfo(ff1) : "No FF1 state available.",
@@ -551,6 +587,8 @@ export class FF1GamePlugin implements GamePlugin {
         return this.compilePressButton(command);
       case "goto":
         return this.compileGoto(command);
+      case "grind":
+        return this.compileGrind(command);
       case "talk_to":
         return [pressA(HOLD_FRAMES, GAP_FRAMES)];
       case "move": {
@@ -606,14 +644,33 @@ export class FF1GamePlugin implements GamePlugin {
    * battle menu or the new map. Abort on either condition, using the two
    * single-bit `mapflags` ($2D) signals rather than a full state read, since
    * this runs once per emulated frame.
+   *
+   * Semantics per context:
+   * - overworld goto/grind: abort on a battle OR on entering a standard map
+   *   (town/castle/dungeon entrance or warp) - both end the walk.
+   * - standard-map goto/grind: abort on a battle only. The STANDARD bit is
+   *   already set while navigating inside the map, and map switches (exit
+   *   teleport, warp) legitimately end the walk even though the flags byte
+   *   keeps the bit set.
    */
   macroAbort(command: GameCommand): (() => boolean) | undefined {
-    if (command.name !== "goto") return undefined;
+    if (command.name !== "goto" && command.name !== "grind") return undefined;
     const mem = this.emulator.getMemory();
     if (!mem || mem.length < 0x10000) return undefined;
+    const view = createCpuMemoryView(mem);
+    const initial = readFF1State(view);
+    const startedOnStandardMap = initial.world.isStandardMap;
     return () => {
-      const flags = mem[ADDR_MAPFLAGS] ?? 0;
-      return (flags & (MAPFLAG_BATTLE_SCREEN | MAPFLAG_STANDARD)) !== 0;
+      const state = readFF1State(view);
+      if (startedOnStandardMap) {
+        // Inside a standard map: abort when the party leaves it or a battle
+        // actually starts. Using parsed game state avoids false positives from
+        // mapflags flicker during tile transitions.
+        if (!state.world.isStandardMap) return true;
+        return state.battle.inBattle;
+      }
+      // Overworld: abort on battle or on entering a standard map.
+      return state.battle.inBattle || state.world.isStandardMap;
     };
   }
 
@@ -622,10 +679,12 @@ export class FF1GamePlugin implements GamePlugin {
     if (!location) throw new Error('goto: missing "location"');
 
     const world = getWorld(this.readState());
-    if (!world || world.isStandardMap) {
-      throw new Error(
-        "goto: the party is not on the overworld. Exit the current building/town first; only overworld travel is pathfound.",
-      );
+    if (!world) throw new Error("goto: no game state available.");
+
+    if (world.isStandardMap) {
+      const { steps, plan } = gotoSmMacro(world.mapId, location, standardMapPlayerTile(world));
+      this.emulator.setLastRoute(plan);
+      return steps;
     }
 
     const { steps, plan } = gotoMacro(
@@ -633,7 +692,52 @@ export class FF1GamePlugin implements GamePlugin {
       { x: world.overworldPlayerX, y: world.overworldPlayerY },
       vehicleOf(world),
     );
-    this.lastRoute = plan;
+    this.emulator.setLastRoute(plan);
+    return steps;
+  }
+
+  /**
+   * Compile a `grind`: A* approach to the center coordinate on the current map
+   * family, then a random walk confined to the distance radius. The macro
+   * aborts on battle; the agent sees the encounter on the next turn.
+   */
+  private compileGrind(command: GameCommand): ButtonStep[] {
+    if (command.args == null) throw new Error('grind: missing args, needs { "x", "y", "distance" }');
+    const parsed = command.args as unknown;
+    if (!isPlainObject(parsed)) throw new Error("grind: args must be an object with x, y, distance");
+    const x = Number(parsed.x);
+    const y = Number(parsed.y);
+    const distance = Number(parsed.distance);
+    if (!(Number.isFinite(x) && Number.isFinite(y))) {
+      throw new Error('grind: missing numeric "x"/"y" coordinates.');
+    }
+
+    const world = getWorld(this.readState());
+    if (!world) throw new Error("grind: no game state available.");
+
+    const { steps, plan } = world.isStandardMap
+      ? grindMacro(
+          { x, y },
+          distance,
+          standardMapPlayerTile(world),
+          { kind: "standard", mapId: world.mapId },
+        )
+      : grindMacro(
+          { x, y },
+          distance,
+          { x: world.overworldPlayerX, y: world.overworldPlayerY },
+          { kind: "overworld", vehicle: vehicleOf(world) },
+        );
+    const from = world.isStandardMap ? standardMapPlayerTile(world) : { x: world.overworldPlayerX, y: world.overworldPlayerY };
+    this.emulator.setLastRoute({
+      mapId: world.isStandardMap ? world.mapId : "overworld",
+      location: { destMapId: -1, teleportIds: [], x: plan.center.x, y: plan.center.y, warpTiles: [], name: `grind @ (${x},${y}) d${distance}`, glyph: "g" },
+      from,
+      goal: plan.center,
+      path: plan.approach,
+      runs: [],
+      tiles: plan.approach.length,
+    });
     return steps;
   }
 

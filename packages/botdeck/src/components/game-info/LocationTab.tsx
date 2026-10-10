@@ -3,6 +3,21 @@ import { getNpcNameById } from "@games/ff1-state";
 import { formatContext, formatPosition } from "./helpers";
 import { SectionTitle } from "./shared";
 
+interface LocationTabData {
+  ff1?: FF1GameState;
+  macroActive?: boolean;
+  macroProgress?: { index: number; total: number; phase: "hold" | "gap"; remaining: number };
+  lastRoute?: {
+    mapId: number | "overworld";
+    location?: { name?: string | null } | null;
+    from?: { x: number; y: number };
+    goal?: { x: number; y: number };
+    tiles?: number;
+    path?: { x: number; y: number }[];
+    runs?: { direction: string; tiles: number }[];
+  };
+}
+
 function describeObject(obj: MapObject): string {
   const name = getNpcNameById(obj.id);
   if (name) return `${name} (id 0x${obj.id.toString(16).padStart(2, "0")})`;
@@ -50,11 +65,14 @@ function menuActionLabels(menu: MenuContext): string[] {
   }
 }
 
-export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
+export function LocationTab({ data }: { data: LocationTabData | undefined }) {
+  const ff1 = data?.ff1;
   const world = ff1?.world;
   const objects = world?.mapObjects ?? [];
   const context = ff1?.context;
   const locations = ff1?.availableLocations ?? [];
+  const macroProgress = data?.macroProgress;
+  const lastRoute = data?.lastRoute;
 
   return (
     <div className="space-y-4 text-sm">
@@ -88,6 +106,30 @@ export function LocationTab({ ff1 }: { ff1: FF1GameState | undefined }) {
           </p>
         </div>
       </section>
+
+      {lastRoute && (
+        <section>
+          <SectionTitle>Navigation Plan</SectionTitle>
+          <p className="text-neutral-200">
+            {lastRoute.location?.name ?? "unknown destination"} from ({lastRoute.from?.x ?? "?"}, {lastRoute.from?.y ?? "?"}) to ({lastRoute.goal?.x ?? "?"}, {lastRoute.goal?.y ?? "?"})
+          </p>
+          {lastRoute.runs && lastRoute.runs.length > 0 && (
+            <p className="text-xs text-neutral-400">
+              {lastRoute.runs.map((r) => `${r.tiles} ${r.direction}`).join(", ")} ({lastRoute.tiles ?? 0} tiles)
+            </p>
+          )}
+          {macroProgress && (
+            <p className="text-xs text-emerald-400">
+              step {macroProgress.index + 1}/{macroProgress.total} ({macroProgress.phase}, {macroProgress.remaining} frames left)
+            </p>
+          )}
+          {lastRoute.path && lastRoute.path.length > 0 && (
+            <p className="mt-1 break-all text-xs text-neutral-500">
+              path: {lastRoute.path.map((t) => `(${t.x},${t.y})`).join(" ")}
+            </p>
+          )}
+        </section>
+      )}
 
       <section>
         <SectionTitle>

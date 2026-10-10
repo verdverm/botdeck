@@ -15,13 +15,11 @@ import {
   readGameId,
   readPlayId,
   stateUrl,
-  statesUrl,
 } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
 import type {
   GameCommand,
   PlaySnippet,
-  PlayStateEntry,
   SnippetRunResult,
   SnippetStep,
 } from "@/types";
@@ -55,6 +53,9 @@ export function App() {
     loadStateFromFile,
     loadState,
     setMuted,
+    gameFocused,
+    onCanvasFocus,
+    onCanvasBlur,
   } = useEmulator(game);
 
   const plugin = useMemo(() => {
@@ -146,27 +147,14 @@ export function App() {
     [loadState],
   );
 
-  // Switch the active play: update state + URL, then load that play's newest
-  // snapshot so the emulator reflects the selected play (no page reload).
-  const switchPlay = useCallback(
-    async (nextPlayId: string) => {
-      setPlayId(nextPlayId);
-      const url = new URL(window.location.href);
-      url.searchParams.set("play", nextPlayId);
-      window.history.replaceState({}, "", url);
-      try {
-        const res = await fetch(statesUrl(nextPlayId, "newest"));
-        if (!res.ok) return;
-        const list = (await res.json()) as PlayStateEntry[];
-        if (list.length > 0) {
-          await onLoadSaved(list[0]!.stateUrl);
-        }
-      } catch (e) {
-        console.error("failed to load play snapshot on switch", e);
-      }
-    },
-    [onLoadSaved],
-  );
+  // Switch the active play: update state + URL only. The user chooses whether
+  // to load a snapshot via the Load menu.
+  const switchPlay = useCallback((nextPlayId: string) => {
+    setPlayId(nextPlayId);
+    const url = new URL(window.location.href);
+    url.searchParams.set("play", nextPlayId);
+    window.history.replaceState({}, "", url);
+  }, []);
 
   const onRefreshState = useCallback(() => {
     const collected = refreshState();
@@ -404,6 +392,9 @@ export function App() {
             canPlay={hasRom && !power}
             splashUrl={splashUrl}
             onPlay={powerOn}
+            focused={gameFocused}
+            onFocus={onCanvasFocus}
+            onBlur={onCanvasBlur}
           />
 
           <div className="flex justify-center">

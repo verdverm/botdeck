@@ -20,6 +20,18 @@ export interface CollectedState {
   saveRam: number[];
   saveState: unknown;
   ff1?: FF1GameState;
+  macroActive?: boolean;
+  macroProgress?: { index: number; total: number; phase: "hold" | "gap"; remaining: number };
+  macroInterrupted?: boolean;
+  lastRoute?: {
+    mapId: number | "overworld";
+    location?: { name?: string | null } | null;
+    from?: { x: number; y: number };
+    goal?: { x: number; y: number };
+    tiles?: number;
+    path?: { x: number; y: number }[];
+    runs?: { direction: string; tiles: number }[];
+  };
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -67,6 +79,10 @@ export function collectState(em: Emulator | null): CollectedState | null {
     rom,
     saveRam,
     saveState,
+    macroActive: em.isPlayingMacro(),
+    macroProgress: em.getMacroProgress(),
+    macroInterrupted: em.wasMacroInterrupted(),
+    lastRoute: em.getLastRoute() as CollectedState["lastRoute"],
   };
 
   if (looksLikeFF1(rom)) {

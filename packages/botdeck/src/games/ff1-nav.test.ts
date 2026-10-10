@@ -4,12 +4,22 @@ import {
   allLocations,
   entranceFor,
   findPath,
+  grindMacro,
+  mulberry32,
   namedLocations,
   planRoute,
-  playerTile,
+  randomWalkSteps,
   resolveLocation,
+  resolveSmLocation,
+  findSmPath,
+  planSmRoute,
+  playerTile,
+  smIsWalkable,
+  standardMap,
   toMoveRuns,
 } from "./ff1-nav";
+import { NES_BUTTONS } from "@/types";
+import { OW_STEP_GAP_FRAMES, OW_STEP_HOLD_FRAMES } from "./ff1-nav";
 
 describe("ff1 overworld grid", () => {
   it("loads the extracted 256x256 grid", () => {
@@ -93,5 +103,121 @@ describe("ff1 A* pathfinding", () => {
   it("keeps a run going across a world wrap", () => {
     const runs = toMoveRuns({ x: 255, y: 10 }, [{ x: 0, y: 10 }, { x: 1, y: 10 }]);
     expect(runs).toEqual([{ direction: "right", tiles: 2 }]);
+  });
+});
+
+describe("ff1 standard-map nav", () => {
+  it("loads extracted standard maps", () => {
+    expect(standardMap(0)?.name).toBe("Coneria");
+    expect(standardMap(0)?.tiles.length).toBe(64);
+    expect(standardMap(0)?.locations.length).toBe(0);
+    expect((standardMap(0)?.voidTiles?.length ?? 0)).toBeGreaterThan(0);
+  });
+
+  it("coneria town has no doorway clusters, only the warp void", () => {
+    // Coneria Castle itself is entered from the overworld; inside Coneria town
+    // the only leave-route is the out-of-map warp void.
+    expect(standardMap(0)!.locations).toEqual([]);
+    expect(resolveSmLocation(0, "exit")).toEqual([]);
+  });
+
+  it("resolves 'exit' doorways and picks the nearest tile", () => {
+    const list = resolveSmLocation(8, "exit");
+    expect(list.length).toBe(2);
+    expect(list.every((l) => l.type === "exit")).toBe(true);
+
+    // From (4,22) the nearer of the two exit doors is the southern one.
+    const planned = planSmRoute(8, "exit", { x: 4, y: 22 });
+    if ("error" in planned) throw new Error(planned.error);
+    expect(planned.goal).toEqual({ x: 10, y: 36 });
+  });
+
+  it("paths inside Coneria town", () => {
+    // Walk between plain town tiles (fountain/promenade area).
+    const result = findSmPath(0, { x: 12, y: 6 }, { x: 12, y: 7 });
+    expect(result.found).toBe(true);
+    expect(smIsWalkable(standardMap(0)!, 12, 6)).toBe(true);
+    // Void tiles are NOT navigable through, only terminable goals.
+    expect(smIsWalkable(standardMap(0)!, 32, 0)).toBe(false);
+  });
+
+  it("routes via the warp void and errors for unknown doorways", () => {
+    const planned = planSmRoute(0, "exit", { x: 12, y: 14 });
+    if ("error" in planned) throw new Error(planned.error);
+    expect(planned.result.found).toBe(true);
+    expect(planned.location.type).toBe("warp");
+    expect(planned.location.void).toBe(true);
+    // The void goal tile itself is a terminal-only step.
+    expect(smIsWalkable(standardMap(0)!, planned.goal.x, planned.goal.y)).toBe(false);
+
+    expect(planSmRoute(0, "coneria_castle", { x: 12, y: 14 })).toHaveProperty("error");
+  });
+
+  it("routes from Coneria entrance to weapon shop", () => {
+    // Entrance from dev save: scroll (9,16) -> player tile (16,23).
+    const planned = planSmRoute(0, "weapon shop", { x: 16, y: 23 });
+    if ("error" in planned) throw new Error(planned.error);
+    expect(planned.result.found).toBe(true);
+    expect(planned.location.name).toBe("weapon shop");
+    // Goal is the door tile itself; the final step walks onto it and triggers
+    // the interior transition.
+    expect(planned.goal).toEqual({ x: 11, y: 10 });
+    expect(planned.result.path.length).toBeGreaterThan(3);
+  });
+});
+
+describe("ff1 grind (random walk)", () => {
+  it("compiles only d-pad steps with the standard step timing", () => {
+    const steps = randomWalkSteps({
+      center: { x: 20, y: 20 },
+      distance: 3,
+      grid: { width: 64, height: 64, wrapX: true, wrapY: true, passable: () => true },
+      maxSteps: 40,
+      rng: mulberry32(1234),
+    });
+    expect(steps.length).toBe(40);
+    for (const step of steps) {
+      expect([NES_BUTTONS.UP, NES_BUTTONS.DOWN, NES_BUTTONS.LEFT, NES_BUTTONS.RIGHT]).toContain(step.button);
+      expect(step.holdFrames).toBe(OW_STEP_HOLD_FRAMES);
+      expect(step.gapFrames).toBe(OW_STEP_GAP_FRAMES);
+    }
+  });
+
+  it("random walk from the center never leaves the radius", () => {
+    const center = { x: 32, y: 32 };
+    const distance = 3;
+    let cursor = center;
+    const hold = { [NES_BUTTONS.UP]: [0, -1], [NES_BUTTONS.DOWN]: [0, 1], [NES_BUTTONS.LEFT]: [-1, 0], [NES_BUTTONS.RIGHT]: [1, 0] } as Record<number, [number, number]>;
+    const steps = randomWalkSteps({
+      center,
+      distance,
+      grid: { width: 64, height: 64, wrapX: true, wrapY: true, passable: () => true },
+      maxSteps: 50,
+      rng: mulberry32(99),
+    });
+    for (const step of steps) {
+      const [dx, dy] = hold[step.button]!;
+      cursor = { x: (cursor.x + dx + 64) % 64, y: (cursor.y + dy + 64) % 64 };
+      const d = Math.abs(cursor.x - center.x) + Math.abs(cursor.y - center.y);
+      expect(d).toBeLessThanOrEqual(distance);
+    }
+  });
+
+  it("respects walkability from a spec'd grid", () => {
+    // Coneria town: walk from a solid area to a walkable one only where possible.
+    const map = standardMap(0)!;
+    const blocked = { width: 64, height: 64, wrapX: true, wrapY: true, passable: (x: number, y: number) => smIsWalkable(map, x, y) };
+    const steps = randomWalkSteps({ center: { x: 8, y: 8 }, distance: 2, grid: blocked, maxSteps: 10, rng: mulberry32(7) });
+    expect(steps.length).toBeGreaterThan(0);
+  });
+
+  it("grindMacro walks to the center then random walks", () => {
+    const from = playerTile(146, 158); // dev start tile (153,165)
+    // Center a few tiles away on Coneria's south door tile (154,162), known
+    // walkable from the dev save 000015 assertion in the overworld tests.
+    const res = grindMacro({ x: 154, y: 162 }, 3, from, { kind: "overworld", vehicle: "foot" });
+    expect(res.plan.approach.length).toBeGreaterThan(0);
+    expect(res.plan.walkSteps).toBeGreaterThan(0);
+    expect(res.steps.length).toBe(res.plan.approach.length + res.plan.walkSteps);
   });
 });

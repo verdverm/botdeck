@@ -59,7 +59,7 @@ export function SaveControls({
     const next = !showLoad;
     setShowLoad(next);
     if (!next) return;
-    if (states === null && !loadingStates) {
+    if (!loadingStates) {
       await fetchStates(sort);
     }
   };
@@ -172,6 +172,7 @@ export function SaveControls({
             <LoadMenu
               states={states}
               loading={loadingStates}
+              playId={playId}
               onLoad={handleLoadSaved}
               onRename={handleRename}
               onDelete={handleDelete}

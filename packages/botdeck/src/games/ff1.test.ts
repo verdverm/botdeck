@@ -17,19 +17,36 @@ function makeNametable(): { data: Uint8Array; width: number; height: number } {
 function makeEmulator(
   scrollX?: number,
   scrollY?: number,
-  options: { standardMap?: boolean; battle?: boolean } = {},
+  options: { standardMap?: boolean; battle?: boolean; smX?: number; smY?: number } = {},
 ): Emulator {
   const mem = new Uint8Array(0x10000);
   if (scrollX !== undefined) mem[0x0027] = scrollX;
   if (scrollY !== undefined) mem[0x0028] = scrollY;
   // mapflags ($2D): bit 0 = standard map, bit 1 = battle screen.
   mem[0x002d] = (options.standardMap ? 0x01 : 0) | (options.battle ? 0x02 : 0);
+  // SM party tile ($68/$69). The authoritative camera origin is the scroll
+  // at $29/$2A; the player tile is scroll + 7. Keep all three consistent.
+  if (options.smX !== undefined) {
+    mem[0x0068] = options.smX;
+    mem[0x0029] = (options.smX - 7) & 0x3f;
+  }
+  if (options.smY !== undefined) {
+    mem[0x0069] = options.smY;
+    mem[0x002a] = (options.smY - 7) & 0x3f;
+  }
+  let lastRoute: unknown = undefined;
   return {
     getMemory: vi.fn(() => mem),
     getNametable: vi.fn(() => makeNametable()),
     getRomName: vi.fn(() => "ff1"),
     isRunning: vi.fn(() => true),
     isPlayingMacro: vi.fn(() => false),
+    getMacroProgress: vi.fn(() => undefined),
+    wasMacroInterrupted: vi.fn(() => false),
+    getLastRoute: vi.fn(() => lastRoute),
+    setLastRoute: vi.fn((route: unknown) => {
+      lastRoute = route;
+    }),
   } as unknown as Emulator;
 }
 
@@ -149,7 +166,11 @@ describe("FF1GamePlugin", () => {
     expect(abort).toBeDefined();
     expect(abort!()).toBe(false);
 
-    mem[0x002d] = 0x02; // battle screen drawn
+    // Real battle: battle screen drawn + active result + at least one enemy.
+    mem[0x002d] = 0x02;
+    mem[0x6b86] = 0x00; // btl_result = 0 (active)
+    mem[0x6c93] = 0x01; // enemy count = 1
+    mem[0x6bd3 + 0x02] = 0x01; // enemy 0 HP low byte > 0
     expect(abort!()).toBe(true);
 
     mem[0x002d] = 0x01; // standard map: the party walked into an entrance
@@ -203,9 +224,49 @@ describe("FF1GamePlugin", () => {
     expect(() => plugin.compile({ name: "goto", args: { location: "coneria_inn" } })).toThrow(/unknown location/);
   });
 
-  it("fails goto loudly when the party is not on the overworld", () => {
-    const plugin = new FF1GamePlugin(makeEmulator(146, 158, { standardMap: true }));
-    expect(() => plugin.compile({ name: "goto", args: { location: "Coneria" } })).toThrow(/not on the overworld/);
+  it("fails goto loudly when a standard-map doorway name is unknown", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158, { standardMap: true, smX: 12, smY: 6 }));
+    expect(() => plugin.compile({ name: "goto", args: { location: "coneria_inn" } })).toThrow(/no such doorway/);
+  });
+
+  it("compiles goto inside a town to the nearest exit doorway", () => {
+    // In a town goto exits via the out-of-map warp void; SM coords (12,6) is
+    // a walkable town tile (the fountain/promenade plaza). SM coords (0,0)
+    // would be a wall tile, which is exactly the case the throw covers.
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158, { standardMap: true, smX: 12, smY: 6 }));
+    const macro = plugin.compile({ name: "goto", args: { location: "exit" } });
+    const plan = plugin.getLastRoute()!;
+    expect(plan.mapId).toBe(0);
+    expect(macro.length).toBe(plan.tiles);
+    expect(macro.length).toBeGreaterThan(0);
+    for (const step of macro) {
+      expect([NES_BUTTONS.UP, NES_BUTTONS.DOWN, NES_BUTTONS.LEFT, NES_BUTTONS.RIGHT]).toContain(step.button);
+    }
+  });
+
+  it("compiles grind to the approach route plus a random walk", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158));
+    const macro = plugin.compile({ name: "grind", args: { x: 154, y: 162, distance: 3 } });
+    expect(macro.length).toBeGreaterThan(0);
+    for (const step of macro) {
+      expect([NES_BUTTONS.UP, NES_BUTTONS.DOWN, NES_BUTTONS.LEFT, NES_BUTTONS.RIGHT]).toContain(step.button);
+    }
+  });
+
+  it("fails grind loudly on bad args", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158));
+    expect(() => plugin.compile({ name: "grind", args: { x: 10, y: 10 } })).toThrow(/distance/);
+  });
+
+  it("compiles grind inside a standard map to the SM path plus random walk", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158, { standardMap: true, smX: 12, smY: 6 }));
+    const macro = plugin.compile({ name: "grind", args: { x: 12, y: 14, distance: 3 } });
+    expect(macro.length).toBeGreaterThan(0);
+    for (const step of macro) {
+      expect([NES_BUTTONS.UP, NES_BUTTONS.DOWN, NES_BUTTONS.LEFT, NES_BUTTONS.RIGHT]).toContain(step.button);
+    }
+    const plan = plugin.getLastRoute()!;
+    expect(plan.mapId).toBe(0);
   });
 
   it("compiles menu_navigate to direction presses", () => {

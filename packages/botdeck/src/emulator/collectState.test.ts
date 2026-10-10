@@ -16,6 +16,10 @@ function makeEmulator(overrides: Partial<Emulator> = {}): Emulator {
     getMemory: () => mem,
     romInfo: { name: "test.nes" },
     toJSON: () => ({ cpu: { mem } }),
+    isPlayingMacro: () => false,
+    getMacroProgress: () => undefined,
+    wasMacroInterrupted: () => false,
+    getLastRoute: () => undefined,
     ...overrides,
   } as unknown as Emulator;
 }
