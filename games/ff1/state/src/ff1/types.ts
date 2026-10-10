@@ -89,6 +89,13 @@ export interface WorldState {
   tilesetId: number;
   overworldX: number;
   overworldY: number;
+  /**
+   * Party tile on the overworld: `overworldX/Y` (scroll) plus the fixed 7-tile
+   * screen-centre offset, wrapped mod 256. This is the coordinate that matches
+   * map and location entrances; `overworldX/Y` alone is the camera.
+   */
+  overworldPlayerX: number;
+  overworldPlayerY: number;
   standardMapX: number;
   standardMapY: number;
   standardMapScrollX: number;

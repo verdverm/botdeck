@@ -48,6 +48,8 @@ import {
   ADDR_CUR_TILESET,
   ADDR_OW_X,
   ADDR_OW_Y,
+  OW_PLAYER_OFFSET,
+  OW_MAP_SIZE,
   ADDR_SM_SCROLL_X,
   ADDR_SM_SCROLL_Y,
   ADDR_SM_X,
@@ -509,6 +511,8 @@ export function readWorldState(view: MemoryView): WorldState {
   const canoeByte = view.u8(ADDR_HAS_CANOE);
   const mapFlags = view.u8(ADDR_MAPFLAGS);
   const isStandardMap = (mapFlags & MAPFLAG_STANDARD) !== 0;
+  const scrollX = view.u8(ADDR_OW_X);
+  const scrollY = view.u8(ADDR_OW_Y);
 
   return {
     mapId: isStandardMap ? view.u8(ADDR_MAP_ID) : 0,
@@ -517,8 +521,10 @@ export function readWorldState(view: MemoryView): WorldState {
     isStandardMap,
     mapFlags,
     tilesetId: view.u8(ADDR_CUR_TILESET),
-    overworldX: view.u8(ADDR_OW_X),
-    overworldY: view.u8(ADDR_OW_Y),
+    overworldX: scrollX,
+    overworldY: scrollY,
+    overworldPlayerX: (scrollX + OW_PLAYER_OFFSET) % OW_MAP_SIZE,
+    overworldPlayerY: (scrollY + OW_PLAYER_OFFSET) % OW_MAP_SIZE,
     standardMapX: view.u8(ADDR_SM_X),
     standardMapY: view.u8(ADDR_SM_Y),
     standardMapScrollX: view.u8(ADDR_SM_SCROLL_X),

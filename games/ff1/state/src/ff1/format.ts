@@ -10,7 +10,7 @@ export function mpSummary(charges: SpellChargeLevel[] | undefined): string {
 export function formatPosition(world: WorldState | undefined): string {
   if (!world) return "Unknown";
   if (world.isOverworld) {
-    return `Overworld (${world.overworldX}, ${world.overworldY})`;
+    return `Overworld (${world.overworldPlayerX}, ${world.overworldPlayerY})`;
   }
   return `${world.mapName ?? `Map ${world.mapId}`} (${world.standardMapX}, ${world.standardMapY})`;
 }

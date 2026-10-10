@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { FF1GamePlugin } from "./ff1";
+import { OW_STEP_GAP_FRAMES, OW_STEP_HOLD_FRAMES } from "./ff1-nav";
 import { NES_BUTTONS } from "@/types";
 import type { Emulator } from "@/emulator/emulator";
 import { ADDR_DIALOG_OPEN } from "@games/ff1-state";
@@ -9,9 +10,22 @@ function makeNametable(): { data: Uint8Array; width: number; height: number } {
   return { data: new Uint8Array(64 * 64).fill(0xff), width: 64, height: 64 };
 }
 
-function makeEmulator(): Emulator {
+/**
+ * Stub emulator with overworld RAM bytes set: $0027/$0028 scroll, so the
+ * navigation compiler sees a real party position.
+ */
+function makeEmulator(
+  scrollX?: number,
+  scrollY?: number,
+  options: { standardMap?: boolean; battle?: boolean } = {},
+): Emulator {
+  const mem = new Uint8Array(0x10000);
+  if (scrollX !== undefined) mem[0x0027] = scrollX;
+  if (scrollY !== undefined) mem[0x0028] = scrollY;
+  // mapflags ($2D): bit 0 = standard map, bit 1 = battle screen.
+  mem[0x002d] = (options.standardMap ? 0x01 : 0) | (options.battle ? 0x02 : 0);
   return {
-    getMemory: vi.fn(() => new Uint8Array(0x10000)),
+    getMemory: vi.fn(() => mem),
     getNametable: vi.fn(() => makeNametable()),
     getRomName: vi.fn(() => "ff1"),
     isRunning: vi.fn(() => true),
@@ -123,12 +137,75 @@ describe("FF1GamePlugin", () => {
     expect(macro[0]?.holdFrames).toBe(6);
   });
 
-  it("compiles goto to a single A press (first pass)", () => {
-    const plugin = new FF1GamePlugin(makeEmulator());
-    const macro = plugin.compile({ name: "goto", args: { location: "coneria_inn" } });
+  it("aborts a goto macro when the game leaves the field", () => {
+    const mem = new Uint8Array(0x10000);
+    mem[0x0027] = 146;
+    mem[0x0028] = 158;
+    const emulator = makeEmulator(146, 158);
+    vi.mocked(emulator.getMemory).mockReturnValue(mem);
+    const plugin = new FF1GamePlugin(emulator);
 
-    expect(macro).toHaveLength(1);
-    expect(macro[0]?.button).toBe(NES_BUTTONS.A);
+    const abort = plugin.macroAbort!({ name: "goto", args: { location: "Coneria" } });
+    expect(abort).toBeDefined();
+    expect(abort!()).toBe(false);
+
+    mem[0x002d] = 0x02; // battle screen drawn
+    expect(abort!()).toBe(true);
+
+    mem[0x002d] = 0x01; // standard map: the party walked into an entrance
+    expect(abort!()).toBe(true);
+
+    mem[0x002d] = 0x00; // back on the overworld
+    expect(abort!()).toBe(false);
+  });
+
+  it("does not abort macros that are not travel", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158));
+    expect(plugin.macroAbort!({ name: "interact" })).toBeUndefined();
+  });
+
+  it("lists only locations the party can actually reach, with entrances", () => {
+    const state = new FF1GamePlugin(makeEmulator(146, 158)).readState();
+    const ff1 = state.ff1 as { availableLocations: { name: string; position?: { x: number; y: number } }[] };
+    const names = ff1.availableLocations.map((l) => l.name);
+
+    // Reachable on foot from the Corneria area.
+    expect(names).toContain("Coneria");
+    expect(names).toContain("Temple of Fiends");
+    // Gaia is on an island in the north-west: no foot route from Corneria.
+    expect(names).not.toContain("Gaia");
+    // Every offered destination carries a real entrance coordinate.
+    for (const loc of ff1.availableLocations) expect(loc.position).toBeDefined();
+  });
+
+  it("compiles goto into one d-pad press per tile", () => {
+    // Scroll (146,158) is the recorded dev-start position just outside
+    // Coneria; the party tile is scroll + 7.
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158));
+    const macro = plugin.compile({ name: "goto", args: { location: "Coneria" } });
+
+    const plan = plugin.getLastRoute()!;
+    expect(plan.location.name).toBe("Coneria");
+    // The goal is whichever of the location's doors is nearest the party.
+    expect(plan.location.warpTiles.map(([x, y]) => `${x},${y}`)).toContain(`${plan.goal.x},${plan.goal.y}`);
+
+    expect(macro.length).toBe(plan.tiles);
+    for (const step of macro) {
+      // Travel is direction presses only, never an A press.
+      expect([NES_BUTTONS.UP, NES_BUTTONS.DOWN, NES_BUTTONS.LEFT, NES_BUTTONS.RIGHT]).toContain(step.button);
+      expect(step.holdFrames).toBe(OW_STEP_HOLD_FRAMES);
+      expect(step.gapFrames).toBe(OW_STEP_GAP_FRAMES);
+    }
+  });
+
+  it("fails goto loudly for an unknown location", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158));
+    expect(() => plugin.compile({ name: "goto", args: { location: "coneria_inn" } })).toThrow(/unknown location/);
+  });
+
+  it("fails goto loudly when the party is not on the overworld", () => {
+    const plugin = new FF1GamePlugin(makeEmulator(146, 158, { standardMap: true }));
+    expect(() => plugin.compile({ name: "goto", args: { location: "Coneria" } })).toThrow(/not on the overworld/);
   });
 
   it("compiles menu_navigate to direction presses", () => {

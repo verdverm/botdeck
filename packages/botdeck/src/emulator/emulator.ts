@@ -99,6 +99,8 @@ export class Emulator {
     remaining: number;
     resolve: () => void;
   } | null = null;
+  private macroInterrupt: (() => boolean) | undefined;
+  private macroInterrupted = false;
 
   constructor() {
     const audioSampleRate = this.audio.getSampleRate();
@@ -244,9 +246,17 @@ export class Emulator {
    * Play out a frame-timed button macro. Resolves when every step has been
    * held and released with its configured gaps. If the emulator is reset or
    * stopped, the macro is cancelled and the promise resolves early.
+   *
+   * @param steps - The button sequence to play.
+   * @param interrupt - Optional per-frame predicate. When it returns true the
+   * macro stops immediately (held button released) and the macro is reported as
+   * interrupted by `wasMacroInterrupted()`. Used to abort overworld travel when
+   * the game leaves the field, e.g. a random battle or an entrance transition.
    */
-  runMacro(steps: ButtonStep[]): Promise<void> {
+  runMacro(steps: ButtonStep[], interrupt?: () => boolean): Promise<void> {
     this.cancelMacro();
+    this.macroInterrupt = interrupt;
+    this.macroInterrupted = false;
     return new Promise((resolve) => {
       if (steps.length === 0) {
         resolve();
@@ -264,20 +274,34 @@ export class Emulator {
     });
   }
 
-  /** Cancel an in-flight macro and release any held macro button. */
-  cancelMacro(): void {
+  /** True when the most recent macro stopped early on its interrupt predicate. */
+  wasMacroInterrupted(): boolean {
+    return this.macroInterrupted;
+  }
+
+  /**
+   * Cancel an in-flight macro and release any held macro button. `reason`
+   * records whether this was an interrupt-driven stop or an external cancel.
+   */
+  cancelMacro(reason: "interrupt" | "external" = "external"): void {
     if (!this.macro) return;
     const step = this.macro.steps[this.macro.index];
     if (step !== undefined && this.macro.phase === "hold") {
       this.buttonUp(step.button);
     }
+    if (reason === "interrupt") this.macroInterrupted = true;
     const resolve = this.macro.resolve;
     this.macro = null;
+    this.macroInterrupt = undefined;
     resolve();
   }
 
   private advanceMacro(): void {
     if (!this.macro) return;
+    if (this.macroInterrupt?.()) {
+      this.cancelMacro("interrupt");
+      return;
+    }
     this.macro.remaining -= 1;
     if (this.macro.remaining > 0) return;
 

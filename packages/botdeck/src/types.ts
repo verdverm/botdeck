@@ -108,6 +108,16 @@ export interface GamePlugin {
   /** Current agent mode for this plugin state (field/battle/shop/inn). */
   getMode(state?: Record<string, unknown>): string;
   compile(command: GameCommand): ButtonStep[];
+  /**
+   * Optional per-frame abort predicate for the macro about to play.
+   *
+   * Long macros (overworld travel) assume the game stays in the mode the
+   * command was compiled for. A random battle, a town entrance, or any other
+   * transition invalidates the rest of the sequence, so the plugin can return a
+   * cheap predicate that the emulator checks once per frame. Returning
+   * undefined means "play the macro to completion".
+   */
+  macroAbort?(command: GameCommand): (() => boolean) | undefined;
 }
 
 export interface ToolSpec {

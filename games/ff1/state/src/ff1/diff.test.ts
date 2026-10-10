@@ -55,6 +55,8 @@ function baseState(): FF1GameState {
       tilesetId: 0,
       overworldX: 0,
       overworldY: 0,
+      overworldPlayerX: 7,
+      overworldPlayerY: 7,
       standardMapX: 10,
       standardMapY: 10,
       standardMapScrollX: 0,

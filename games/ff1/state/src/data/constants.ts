@@ -181,10 +181,24 @@ export const ADDR_HAS_CANOE = 0x6012;
 export const ADDR_VEHICLE = 0x0042;
 
 // Map / position state (VERIFIED)
-/** Player X coordinate on the overworld. */
+/**
+ * Overworld camera scroll X in tiles ($0027, `ow_scroll_x`). This is the
+ * top-left tile of the screen, NOT the party's position: the party is always
+ * drawn 7 tiles in from each edge (`OWCanMove @Calc`, bank_0F.asm:1086), so
+ * `player = scroll + OW_PLAYER_OFFSET`.
+ */
 export const ADDR_OW_X = 0x0027;
-/** Player Y coordinate on the overworld. */
+/** Overworld camera scroll Y in tiles ($0028, `ow_scroll_y`). See ADDR_OW_X. */
 export const ADDR_OW_Y = 0x0028;
+/**
+ * Offset from the overworld scroll to the party's own tile, on both axes.
+ * VERIFIED: `OWCanMove @Calc` adds `#7` to `ow_scroll_x/y` to locate the tile
+ * the party stands on, and every teleport table stores player coords that are
+ * `scroll + 7` (the code subtracts 7 to recover the scroll).
+ */
+export const OW_PLAYER_OFFSET = 7;
+/** The overworld is a 256x256 tile grid that wraps on both axes. */
+export const OW_MAP_SIZE = 256;
 /** Standard-map camera scroll X in tiles; player sprite is at scroll + 7. */
 export const ADDR_SM_SCROLL_X = 0x0029;
 /** Standard-map camera scroll Y in tiles. */

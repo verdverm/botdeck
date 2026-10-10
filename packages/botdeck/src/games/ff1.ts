@@ -11,13 +11,18 @@ import {
   readFF1State,
   formatFF1GameInfo,
   ADDR_DIALOG_OPEN,
+  ADDR_MAPFLAGS,
+  MAPFLAG_BATTLE_SCREEN,
+  MAPFLAG_STANDARD,
   FF1_DIALOG_GEOMETRY,
   decodeNametableWindow,
   type FF1GameState,
   type InventoryItem,
+  type KnownLocation,
   type MenuContext,
   type DialogState,
   type SpellInfo,
+  type WorldState,
 } from "@games/ff1-state";
 import {
   press,
@@ -35,6 +40,12 @@ import {
   HOLD_FRAMES,
   GAP_FRAMES,
 } from "./ff1-menu";
+import {
+  gotoMacro,
+  reachableNamedLocations,
+  type RoutePlan,
+  type Vehicle,
+} from "./ff1-nav";
 
 const MAIN_MENU_LABELS = ["ITEM", "MAGIC", "WEAPON", "ARMOR", "STATUS"];
 const BATTLE_MENU_LABELS = ["FIGHT", "MAGIC", "DRINK", "EQUIP", "RUN"];
@@ -96,6 +107,52 @@ function isConsumable(item: InventoryItem): boolean {
 function getMenuContext(state?: Record<string, unknown>): MenuContext {
   const ff1 = state?.ff1 as { context?: { menu?: MenuContext } } | undefined;
   return ff1?.context?.menu ?? "unknown";
+}
+
+/**
+ * Travel destinations the party can actually reach right now, computed from the
+ * extracted overworld grid. This replaces the reader's static guess list for the
+ * overworld: only named locations with a reachable entrance are offered, so the
+ * agent is never told it can walk somewhere the terrain forbids.
+ */
+function overworldLocations(world: WorldState): KnownLocation[] {
+  const from = { x: world.overworldPlayerX, y: world.overworldPlayerY };
+  const vehicle = vehicleOf(world);
+  return reachableNamedLocations(from, vehicle).map((loc) => ({
+    id: loc.name!.toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+    name: loc.name!,
+    mapId: loc.destMapId,
+    position: { x: loc.x, y: loc.y },
+    type: locationType(loc.name!),
+    reachable: "reachable" as const,
+    note:
+      `Overworld entrance at (${loc.x},${loc.y}); reached by A* on the extracted tile grid ` +
+      `with the ${vehicle} walkability mask.`,
+  }));
+}
+
+/** Classify a named destination from its name, mirroring the reader's types. */
+function locationType(name: string): KnownLocation["type"] {
+  if (name.toLowerCase().includes("castle")) return "castle";
+  if (name.toLowerCase().includes("cave") || name.toLowerCase().includes("temple") || name.toLowerCase().includes("chaos")) {
+    return "dungeon";
+  }
+  return "town";
+}
+
+/** The reader's world block, or undefined when no FF1 state is available. */
+function getWorld(state?: Record<string, unknown>): WorldState | undefined {
+  return (state?.ff1 as { world?: WorldState } | undefined)?.world;
+}
+
+/**
+ * Map the reader's vehicle name onto the navigation vehicle key used by the
+ * walkability masks. Anything unknown is treated as foot, the conservative
+ * choice: it never plans a route the party cannot physically walk.
+ */
+function vehicleOf(world: WorldState): Vehicle {
+  const name = (world.currentVehicle ?? "Foot").toLowerCase();
+  return name === "canoe" || name === "ship" || name === "airship" ? name : "foot";
 }
 
 function isInBattle(state?: Record<string, unknown>): boolean {
@@ -225,6 +282,17 @@ export class FF1GamePlugin implements GamePlugin {
   } = { open: false, lastCurrent: "", pages: [], sawBlank: false };
 
   constructor(private emulator: Emulator) {}
+
+  /**
+   * The route the last `goto` compiled, kept so the step log and the UI can show
+   * where the party was headed. Reset by nothing: the most recent goto wins.
+   */
+  private lastRoute: RoutePlan | undefined;
+
+  /** The most recent compiled travel route, if any. */
+  getLastRoute(): RoutePlan | undefined {
+    return this.lastRoute;
+  }
 
   /** Reset the per-turn dialog accumulator. Called before a macro plays. */
   resetDialogCapture(): void {
@@ -462,6 +530,9 @@ export class FF1GamePlugin implements GamePlugin {
     }
     if (ff1) {
       ff1.dialog = this.readCapturedDialog();
+      if (ff1.world.isOverworld) {
+        ff1.availableLocations = overworldLocations(ff1.world);
+      }
     }
     const mode = this.getMode({ ff1 });
     return sanitizeForRequest({
@@ -528,12 +599,42 @@ export class FF1GamePlugin implements GamePlugin {
     }
   }
 
+  /**
+   * Overworld travel is the only long macro: a route can run for thousands of
+   * frames. A random battle or an entrance transition takes the game off the
+   * field, after which the remaining d-pad presses would be spent inside the
+   * battle menu or the new map. Abort on either condition, using the two
+   * single-bit `mapflags` ($2D) signals rather than a full state read, since
+   * this runs once per emulated frame.
+   */
+  macroAbort(command: GameCommand): (() => boolean) | undefined {
+    if (command.name !== "goto") return undefined;
+    const mem = this.emulator.getMemory();
+    if (!mem || mem.length < 0x10000) return undefined;
+    return () => {
+      const flags = mem[ADDR_MAPFLAGS] ?? 0;
+      return (flags & (MAPFLAG_BATTLE_SCREEN | MAPFLAG_STANDARD)) !== 0;
+    };
+  }
+
   private compileGoto(command: GameCommand): ButtonStep[] {
-    // First pass: goto is compiled as a single A press. The agent should use it
-    // when already standing in front of a door, exit, or NPC that leads to the
-    // named location. Real A* pathfinding is future work.
-    void command;
-    return [pressA(HOLD_FRAMES, GAP_FRAMES)];
+    const location = String(command.args?.location ?? "").trim();
+    if (!location) throw new Error('goto: missing "location"');
+
+    const world = getWorld(this.readState());
+    if (!world || world.isStandardMap) {
+      throw new Error(
+        "goto: the party is not on the overworld. Exit the current building/town first; only overworld travel is pathfound.",
+      );
+    }
+
+    const { steps, plan } = gotoMacro(
+      location,
+      { x: world.overworldPlayerX, y: world.overworldPlayerY },
+      vehicleOf(world),
+    );
+    this.lastRoute = plan;
+    return steps;
   }
 
   private compilePressButton(command: GameCommand): ButtonStep[] {

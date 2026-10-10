@@ -3,14 +3,20 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 
-// Module import alias only: "@/..." -> "src/...". Repo files (games/, plays/)
-// are served at runtime by the vermbot file API over /api - never via a Vite
-// alias, which adds no HTTP route.
+// Module import aliases only:
+//   "@/"            -> src/
+//   "@games/ff1-map" -> the extracted overworld map data (games/ff1/maps),
+//                      imported as plain JSON, not fetched over /api.
+// Runtime repo files (plays/) are still served by the vermbot file API.
 const srcDir = fileURLToPath(new URL("./src", import.meta.url));
+const mapsDir = fileURLToPath(new URL("../../games/ff1/maps", import.meta.url));
 
 export default defineConfig({
   resolve: {
-    alias: [{ find: /^@\//, replacement: `${srcDir}/` }],
+    alias: [
+      { find: /^@\//, replacement: `${srcDir}/` },
+      { find: /^@games\/ff1-map\//, replacement: `${mapsDir}/` },
+    ],
   },
   plugins: [react(), tailwindcss()],
   optimizeDeps: {

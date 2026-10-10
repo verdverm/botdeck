@@ -52,6 +52,7 @@ describe("useBotLoop step mode", () => {
       hasRomLoaded: vi.fn().mockReturnValue(true),
       isRunning: vi.fn().mockReturnValue(true),
       runMacro: vi.fn().mockResolvedValue(undefined),
+      wasMacroInterrupted: vi.fn(() => false),
       onFrameProbe: vi.fn().mockReturnValue(() => {}),
       isPlayingMacro: vi.fn().mockReturnValue(false),
     } as unknown as Emulator;
@@ -185,6 +186,7 @@ describe("useBotLoop battle round execution", () => {
       hasRomLoaded: vi.fn().mockReturnValue(true),
       isRunning: vi.fn().mockReturnValue(true),
       runMacro: vi.fn().mockResolvedValue(undefined),
+      wasMacroInterrupted: vi.fn(() => false),
       onFrameProbe: vi.fn().mockReturnValue(() => {}),
       isPlayingMacro: vi.fn().mockReturnValue(false),
     } as unknown as Emulator;
@@ -295,6 +297,7 @@ describe("useBotLoop step persistence", () => {
       hasRomLoaded: vi.fn().mockReturnValue(true),
       isRunning: vi.fn().mockReturnValue(true),
       runMacro: vi.fn().mockResolvedValue(undefined),
+      wasMacroInterrupted: vi.fn(() => false),
       onFrameProbe: vi.fn().mockReturnValue(() => {}),
       isPlayingMacro: vi.fn().mockReturnValue(false),
     } as unknown as Emulator;
@@ -487,6 +490,7 @@ describe("useBotLoop derived-phase command entry (B1 shape)", () => {
       hasRomLoaded: vi.fn().mockReturnValue(true),
       isRunning: vi.fn().mockReturnValue(true),
       runMacro: vi.fn().mockResolvedValue(undefined),
+      wasMacroInterrupted: vi.fn(() => false),
       onFrameProbe: vi.fn().mockReturnValue(() => {}),
       isPlayingMacro: vi.fn().mockReturnValue(false),
     } as unknown as Emulator;
@@ -658,6 +662,7 @@ describe("useBotLoop frame-probe path (S2/S3)", () => {
       hasRomLoaded: vi.fn().mockReturnValue(true),
       isRunning: vi.fn().mockReturnValue(true),
       runMacro: vi.fn().mockResolvedValue(undefined),
+      wasMacroInterrupted: vi.fn(() => false),
       onFrameProbe: vi.fn((cb: () => void) => {
         probe = cb;
         return () => {

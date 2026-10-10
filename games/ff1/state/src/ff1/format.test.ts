@@ -21,6 +21,8 @@ function makeState(overrides: Partial<FF1GameState> = {}): FF1GameState {
       tilesetId: 0,
       overworldX: 0,
       overworldY: 0,
+      overworldPlayerX: 7,
+      overworldPlayerY: 7,
       standardMapX: 0,
       standardMapY: 0,
       standardMapScrollX: 0,

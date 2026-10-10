@@ -434,7 +434,15 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       const removeProbe = emulator.onFrameProbe(probe);
 
       setIsPlayingMacro(true);
-      await emulator.runMacro(macro);
+      // Long travel macros assume the game stays on the field. Let the plugin
+      // abort them the frame it leaves (random battle, town entrance), so the
+      // remaining presses are not spent in the battle menu and control comes
+      // back to the agent on the next turn.
+      const abort = plugin.macroAbort?.(response.command);
+      await emulator.runMacro(macro, abort);
+      if (emulator.wasMacroInterrupted()) {
+        console.log(`step ${seq}: macro aborted early by the game (battle or transition)`);
+      }
       setIsPlayingMacro(false);
 
       // If a dialog box is open after the macro, keep sampling through the

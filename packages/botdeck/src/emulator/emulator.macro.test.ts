@@ -24,6 +24,8 @@ function makeEmulator(): { emulator: Emulator; nes: StubNes } {
 }
 
 describe("Emulator macro playback", () => {
+  const RIGHT = 7; // NES_BUTTONS.RIGHT
+
   it("plays a single step with configured hold timing", async () => {
     const { emulator, nes } = makeEmulator();
     const promise = emulator.runMacro([{ button: 0, holdFrames: 2, gapFrames: 3 }]);
@@ -64,6 +66,39 @@ describe("Emulator macro playback", () => {
     const { emulator } = makeEmulator();
     await expect(emulator.runMacro([])).resolves.toBeUndefined();
     expect(emulator.isPlayingMacro()).toBe(false);
+  });
+
+  it("aborts on the interrupt predicate and reports it", async () => {
+    const { emulator, nes } = makeEmulator();
+    let frames = 0;
+    const promise = emulator.runMacro(
+      [{ button: RIGHT, holdFrames: 100, gapFrames: 4 }],
+      () => ++frames > 3,
+    );
+
+    // Predicate is checked before each frame of the macro; it stops the hold
+    // early and releases the held button.
+    emulator.stepFrame();
+    emulator.stepFrame();
+    expect(emulator.isPlayingMacro()).toBe(true);
+    emulator.stepFrame();
+    emulator.stepFrame();
+
+    await promise;
+    expect(emulator.isPlayingMacro()).toBe(false);
+    expect(emulator.wasMacroInterrupted()).toBe(true);
+    expect(nes.buttonUp).toHaveBeenCalledWith(1, RIGHT);
+    // 4 frames consumed of a 100-frame hold: the rest of the macro is gone.
+    expect(frames).toBe(4);
+  });
+
+  it("clears the interrupt flag for a clean macro", async () => {
+    const { emulator } = makeEmulator();
+    const promise = emulator.runMacro([{ button: 0, holdFrames: 1, gapFrames: 1 }]);
+    emulator.stepFrame();
+    emulator.stepFrame();
+    await promise;
+    expect(emulator.wasMacroInterrupted()).toBe(false);
   });
 
   it("cancels a running macro and resolves early", async () => {
