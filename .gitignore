@@ -12,6 +12,7 @@ playwright-report/
 .extern/**/node_modules/
 .extern/**/dist/
 .sessions/ses_*/
+.sessions/pi/
 
 .nes
 *.nes
