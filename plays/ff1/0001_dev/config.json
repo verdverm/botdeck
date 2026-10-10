@@ -1,7 +1,7 @@
 {
-  "id": "0000_dev",
+  "id": "0001_dev",
   "game": "ff1",
-  "label": "Final Fantasy - dev run",
+  "label": "dev space",
   "agent": {
     "model": "small",
     "maxToolRounds": 25,

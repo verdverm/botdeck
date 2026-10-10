@@ -906,6 +906,12 @@ export function writePlayConfig(
   return config;
 }
 
+export function gameConfig(game: string): Record<string, unknown> {
+  const file = join(gameDir(game), "config.json");
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+}
+
 export function createPlay(
   game: string,
   id: string,
@@ -920,9 +926,48 @@ export function createPlay(
   mkdirSync(join(dir, "goals"), { recursive: true });
   mkdirSync(playUserSnippetsDir(game, id), { recursive: true });
   mkdirSync(playAgentSnippetsDir(game, id), { recursive: true });
-  const config = { id, game, ...(label ? { label } : {}) };
+  const config = { ...gameConfigSeed(game), id, game, ...(label ? { label } : {}) };
   writePlayConfig(game, id, config);
   return config;
+}
+
+/**
+ * Read the game-level `config.json` as the seed for a new play's config, so a
+ * fresh play inherits the same agent/prompt defaults as existing plays.
+ * Missing or unreadable game config seeds an empty object (creation still
+ * succeeds; the play just gets the minimal `{id, game}` config).
+ */
+function gameConfigSeed(game: string): Record<string, unknown> {
+  try {
+    return gameConfig(game);
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Next zero-padded numeric play id for a game, mirroring `nextStateId`.
+ *
+ * Scans `plays/<game>/` for directories whose name starts with a 4-digit
+ * numeric prefix, takes the max, and returns `max + 1` padded to 4. Plays
+ * that do not match the numeric pattern (e.g. a hand-named play) are ignored,
+ * matching how snapshot ids skip non-numeric state files.
+ */
+export function nextPlayId(game: string): string {
+  assertSegment("game", game);
+  const root = join(playsDir(), game);
+  let max = -1;
+  if (existsSync(root)) {
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const m = entry.name.match(/^(\d{4})(?:[_.-]|$)/);
+      if (m) {
+        const n = parseInt(m[1]!, 10);
+        if (n > max) max = n;
+      }
+    }
+  }
+  return String(max + 1).padStart(4, "0");
 }
 
 export function deletePlay(game: string, id: string): void {

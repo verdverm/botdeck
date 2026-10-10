@@ -5,6 +5,10 @@ import {
   diffUrl,
   fetchDiff,
   gamesUrl,
+  listPlays,
+  createPlay,
+  renamePlay,
+  deletePlay,
   parsePlayId,
   playConfigUrl,
   playsUrl,
@@ -59,6 +63,70 @@ describe("play", () => {
       expect(readPlayId("sm2")).toBe("sm2/0001_a");
       // @ts-expect-error restoring readonly location
       window.location = originalLocation;
+    });
+  });
+
+  describe("play CRUD", () => {
+    it("listPlays fetches the game-filtered list", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue([{ game: "ff1", id: "0000" }]),
+      });
+      const list = await listPlays("ff1");
+      expect(list).toEqual([{ game: "ff1", id: "0000" }]);
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/plays?game=ff1");
+    });
+
+    it("createPlay posts {game} and returns the server-assigned config", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ id: "0001", game: "ff1" }),
+      });
+      const config = await createPlay("ff1");
+      expect(config).toEqual({ id: "0001", game: "ff1" });
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/plays", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ game: "ff1" }),
+      });
+    });
+
+    it("createPlay throws on a non-ok response", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 409,
+        text: vi.fn().mockResolvedValue("exists"),
+      });
+      await expect(createPlay("ff1")).rejects.toThrow("create play failed (409): exists");
+    });
+
+    it("renamePlay patches the config label", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: vi.fn().mockResolvedValue({ id: "0001", game: "ff1", label: "new" }),
+      });
+      const config = await renamePlay("ff1/0001", "new");
+      expect(config.label).toBe("new");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/plays/ff1/0001", {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "new" }),
+      });
+    });
+
+    it("deletePlay issues a DELETE to the play metadata url", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({ ok: true });
+      await deletePlay("ff1/0001");
+      expect(globalThis.fetch).toHaveBeenCalledWith("/api/plays/ff1/0001", { method: "DELETE" });
+    });
+
+    it("deletePlay throws on a non-ok response", async () => {
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        text: vi.fn().mockResolvedValue("not found"),
+      });
+      await expect(deletePlay("ff1/9999")).rejects.toThrow("delete play failed (404): not found");
     });
   });
 

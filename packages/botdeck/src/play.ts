@@ -264,3 +264,66 @@ export async function loadPlayConfig(playId: string): Promise<PlayConfig> {
   }
   return (await res.json()) as PlayConfig;
 }
+
+/** A play entry returned by GET /api/plays. */
+export interface PlaySummary {
+  game: string;
+  id: string;
+}
+
+/** List plays for a game. */
+export async function listPlays(game: string): Promise<PlaySummary[]> {
+  const res = await fetch(playsUrl(game));
+  if (!res.ok) {
+    throw new Error(`list plays for "${game}" (${res.status})`);
+  }
+  return (await res.json()) as PlaySummary[];
+}
+
+/**
+ * Create a play. When `id` is omitted the server assigns the next
+ * zero-padded numeric id (see vermbot `nextPlayId`). Returns the new config.
+ */
+export async function createPlay(
+  game: string,
+  opts?: { id?: string; label?: string },
+): Promise<PlayConfig> {
+  const res = await fetch(playsUrl(), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ game, ...(opts ?? {}) }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`create play failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as PlayConfig;
+}
+
+/** Update a play's config label (rename). Other fields are left intact. */
+export async function renamePlay(playId: string, label: string): Promise<PlayConfig> {
+  const res = await fetch(playIdUrl(playId), {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ label }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`rename play failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as PlayConfig;
+}
+
+/** Delete a play (removes its directory on the server). */
+export async function deletePlay(playId: string): Promise<void> {
+  const res = await fetch(playIdUrl(playId), { method: "DELETE" });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`delete play failed (${res.status}): ${body}`);
+  }
+}
+
+/** Base URL for a single play's metadata endpoint (/api/plays/:game/:id). */
+function playIdUrl(playId: string): string {
+  return playBase(playId);
+}

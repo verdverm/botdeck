@@ -51,6 +51,7 @@ import {
   readSplash,
   listGames,
   listPlays,
+  nextPlayId,
   readPlayConfig,
   writePlayConfig,
   createPlay,
@@ -228,16 +229,19 @@ async function handlePlays(
     return true;
   }
 
-  // POST /api/plays  { game, id, label? }
+  // POST /api/plays  { game, id?, label? }
+  // When `id` is omitted the server assigns the next zero-padded numeric id,
+  // mirroring how snapshot state ids are auto-numbered.
   if (segments.length === 2 && req.method === "POST") {
     try {
       const body = await readBody(req);
       const { game, id, label } = JSON.parse(body) as {
         game: string;
-        id: string;
+        id?: string;
         label?: string;
       };
-      const config = createPlay(game, id, label);
+      const resolvedId = id && id.length > 0 ? id : nextPlayId(game);
+      const config = createPlay(game, resolvedId, label);
       json(res, 201, config);
     } catch (err) {
       sendError(err);

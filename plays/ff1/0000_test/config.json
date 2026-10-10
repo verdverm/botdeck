@@ -1,0 +1,19 @@
+{
+  "id": "0000_test",
+  "game": "ff1",
+  "label": "play used in testing",
+  "agent": {
+    "model": "small",
+    "maxToolRounds": 25,
+    "maxTokens": 2048,
+    "limits": {
+      "goals": 1024,
+      "memory": 2048,
+      "journal": 8096,
+      "memoryCount": 10
+    }
+  },
+  "prompt": {
+    "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"]
+  }
+}

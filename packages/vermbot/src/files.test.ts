@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach } from "vitest";
 import {
@@ -9,6 +9,8 @@ import {
   resolvePromptConfig,
   writePlayConfig,
   createPlay,
+  nextPlayId,
+  readPlayConfig,
   deletePlay,
   diffPlayStates,
   listPlaySnippets,
@@ -223,6 +225,54 @@ describe("createPlay / deletePlay", () => {
       expect(() => createPlay(TEST_GAME, id)).toThrow();
     } finally {
       deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("seeds a new play config from the game config.json", () => {
+    const id = tmpPlayId("seed");
+    const config = createPlay(TEST_GAME, id, "seeded");
+    try {
+      expect(config.id).toBe(id);
+      expect(config.game).toBe(TEST_GAME);
+      expect(config.label).toBe("seeded");
+      // Inherited from the seeded game config, not the minimal {id,game,label}.
+      const agent = config.agent as { model?: string; maxTokens?: number };
+      expect(agent?.model).toBe("small");
+      expect(agent?.maxTokens).toBe(1024);
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+});
+
+describe("nextPlayId", () => {
+  it("returns 0000 when the game has no plays", () => {
+    mkdirSync(join(repoPath("plays"), TEST_GAME), { recursive: true });
+    // Remove any existing numeric plays for a clean count.
+    for (const entry of readdirSync(join(repoPath("plays"), TEST_GAME))) {
+      if (/^\d{4}(?:[_.-]|$)/.test(entry)) rmSync(join(repoPath("plays"), TEST_GAME, entry), { recursive: true, force: true });
+    }
+    expect(nextPlayId(TEST_GAME)).toBe("0000");
+  });
+
+  it("returns max + 1, zero-padded to 4", () => {
+    createPlay(TEST_GAME, "0007_seed");
+    createPlay(TEST_GAME, "0003_seed");
+    try {
+      expect(nextPlayId(TEST_GAME)).toBe("0008");
+    } finally {
+      deletePlay(TEST_GAME, "0007_seed");
+      deletePlay(TEST_GAME, "0003_seed");
+    }
+  });
+
+  it("ignores non-numeric play directories", () => {
+    createPlay(TEST_GAME, "hand_named");
+    try {
+      expect(nextPlayId(TEST_GAME)).not.toBe("hand_named");
+      expect(nextPlayId(TEST_GAME)).toMatch(/^\d{4}$/);
+    } finally {
+      deletePlay(TEST_GAME, "hand_named");
     }
   });
 });

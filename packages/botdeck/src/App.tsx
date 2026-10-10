@@ -1,16 +1,30 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { GameScreen } from "@/components/GameScreen";
 import { Gamepad } from "@/components/Gamepad";
-import { RomPicker } from "@/components/RomPicker";
+import { PlayPicker } from "@/components/PlayPicker";
 import { SaveControls } from "@/components/SaveControls";
 import { GameInfoPanel } from "@/components/game-info";
 import { useEmulator } from "@/hooks/useEmulator";
 import { useBotLoop } from "@/hooks/useBotLoop";
 import { GenericGamePlugin } from "@/games/generic";
 import { FF1GamePlugin } from "@/games/ff1";
-import { fetchDiff, loadPlayConfig, postState, readGameId, readPlayId, stateUrl } from "@/play";
+import {
+  fetchDiff,
+  loadPlayConfig,
+  postState,
+  readGameId,
+  readPlayId,
+  stateUrl,
+  statesUrl,
+} from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
-import type { GameCommand, PlaySnippet, SnippetRunResult, SnippetStep } from "@/types";
+import type {
+  GameCommand,
+  PlaySnippet,
+  PlayStateEntry,
+  SnippetRunResult,
+  SnippetStep,
+} from "@/types";
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -18,7 +32,7 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
 
 export function App() {
   const game = readGameId();
-  const playId = readPlayId(game);
+  const [playId, setPlayId] = useState(() => readPlayId(game));
 
   const {
     canvasRef,
@@ -130,6 +144,28 @@ export function App() {
       setLastSaved(null);
     },
     [loadState],
+  );
+
+  // Switch the active play: update state + URL, then load that play's newest
+  // snapshot so the emulator reflects the selected play (no page reload).
+  const switchPlay = useCallback(
+    async (nextPlayId: string) => {
+      setPlayId(nextPlayId);
+      const url = new URL(window.location.href);
+      url.searchParams.set("play", nextPlayId);
+      window.history.replaceState({}, "", url);
+      try {
+        const res = await fetch(statesUrl(nextPlayId, "newest"));
+        if (!res.ok) return;
+        const list = (await res.json()) as PlayStateEntry[];
+        if (list.length > 0) {
+          await onLoadSaved(list[0]!.stateUrl);
+        }
+      } catch (e) {
+        console.error("failed to load play snapshot on switch", e);
+      }
+    },
+    [onLoadSaved],
   );
 
   const onRefreshState = useCallback(() => {
@@ -322,7 +358,7 @@ export function App() {
         {/* Left: emulator + manual play controls */}
         <div className="flex min-h-0 flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2">
-            <RomPicker />
+            <PlayPicker game={game} playId={playId} onSelect={(id) => void switchPlay(id)} />
             <button
               onClick={power ? powerOff : powerOn}
               className={`rounded px-3 py-1.5 text-sm font-medium ${
