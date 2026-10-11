@@ -100,6 +100,7 @@ export function GameInfoPanel({
   onRunSnippet,
   onManualCommand,
   snippetPaused,
+  snippetRunning,
   onPauseSnippet,
   onStopSnippet,
 }: GameInfoPanelProps) {
@@ -192,12 +193,14 @@ export function GameInfoPanel({
             runMode={agent?.runMode}
             onRunModeChange={agent?.setRunMode}
             onStep={agent?.step}
+            onAbort={agent?.abortAgent}
             pendingDecision={agent?.pendingDecision}
             onExecutePending={agent?.executePending}
             onClearPending={agent?.clearPending}
             playId={playId}
             onRunSnippet={onRunSnippet}
             snippetPaused={snippetPaused}
+            snippetRunning={snippetRunning}
             onPauseSnippet={onPauseSnippet}
             onStopSnippet={onStopSnippet}
             onManualCommand={onManualCommand}

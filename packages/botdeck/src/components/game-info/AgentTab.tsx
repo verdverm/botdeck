@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { PendingDecision, TurnLogEntry } from "@/hooks/useBotLoop";
 import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse, TurnTranscript, TurnTranscriptRound, ToolCall, ToolResult } from "@/types";
-import { parsePlayId, snippetUrl, snippetsUrl } from "@/play";
+import { snippetUrl, snippetsUrl } from "@/play";
 import { SectionTitle } from "./shared";
 
 interface LastRoute {
@@ -33,12 +33,14 @@ interface AgentTabProps {
   runMode?: "auto" | "step";
   onRunModeChange?: (value: "auto" | "step") => void;
   onStep?: () => void;
+  onAbort?: () => void;
   pendingDecision?: PendingDecision;
   onExecutePending?: () => void;
   onClearPending?: () => void;
   playId?: string;
   onRunSnippet?: (snippet: PlaySnippet) => void;
   snippetPaused?: boolean;
+  snippetRunning?: boolean;
   onPauseSnippet?: () => void;
   onStopSnippet?: () => void;
   onManualCommand?: (command: GameCommand) => void;
@@ -47,6 +49,68 @@ interface AgentTabProps {
   macroProgress?: MacroProgress;
   macroInterrupted?: boolean;
   lastRoute?: LastRoute;
+}
+
+function PrimaryActionButton({
+  runMode,
+  autoRun,
+  snippetRunning,
+  isThinking,
+  isPlayingMacro,
+  pendingDecision,
+  onRun,
+  onAbort,
+  onStep,
+  onStopSnippet,
+}: {
+  runMode?: "auto" | "step";
+  autoRun?: boolean;
+  snippetRunning?: boolean;
+  isThinking?: boolean;
+  isPlayingMacro?: boolean;
+  pendingDecision?: PendingDecision;
+  onRun?: () => void;
+  onAbort?: () => void;
+  onStep?: () => void;
+  onStopSnippet?: () => void;
+}) {
+  const running = snippetRunning || autoRun || isThinking || isPlayingMacro;
+
+  if (running) {
+    return (
+      <button
+        data-testid="agent-stop-action"
+        onClick={snippetRunning ? onStopSnippet : onAbort}
+        className="rounded bg-rose-700 px-3 py-1 text-xs font-medium text-white hover:bg-rose-600"
+      >
+        Stop
+      </button>
+    );
+  }
+
+  if (runMode === "step") {
+    return (
+      <button
+        data-testid="agent-step-action"
+        onClick={onStep}
+        disabled={isThinking || isPlayingMacro || !onStep || !!pendingDecision}
+        className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+      >
+        Step
+      </button>
+    );
+  }
+
+  return (
+    <button
+      data-testid="agent-run-action"
+      onClick={onRun}
+      disabled={isThinking || isPlayingMacro || !onRun}
+      className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+    >
+      Run
+    </button>
+  );
 }
 
 function StatusBadge({
@@ -375,12 +439,14 @@ export function AgentTab({
   runMode = "auto",
   onRunModeChange,
   onStep,
+  onAbort,
   pendingDecision,
   onExecutePending,
   onClearPending,
   playId,
   onRunSnippet,
   snippetPaused,
+  snippetRunning,
   onPauseSnippet,
   onStopSnippet,
   onManualCommand,
@@ -407,21 +473,30 @@ export function AgentTab({
       <div className="flex items-center justify-between gap-3">
         <StatusBadge isThinking={isThinking} isPlayingMacro={isPlayingMacro} error={error} />
         <div className="flex items-center gap-2">
-          <SnippetDropdown playId={playId} disabled={isPlayingMacro || isThinking} onRun={onRunSnippet} />
+          <SnippetDropdown
+            playId={playId}
+            disabled={snippetRunning || isPlayingMacro || isThinking}
+            onRun={onRunSnippet}
+          />
           <button
             onClick={onPauseSnippet}
-            disabled={!onPauseSnippet}
+            disabled={!snippetRunning}
             className="rounded bg-neutral-700 px-2 py-1 text-xs font-medium text-neutral-200 hover:bg-neutral-600 disabled:opacity-50"
           >
             {snippetPaused ? "Resume" : "Pause"}
           </button>
-          <button
-            onClick={onStopSnippet}
-            disabled={!onStopSnippet}
-            className="rounded bg-rose-700 px-2 py-1 text-xs font-medium text-white hover:bg-rose-600 disabled:opacity-50"
-          >
-            Stop
-          </button>
+          <PrimaryActionButton
+            runMode={runMode}
+            autoRun={autoRun}
+            snippetRunning={snippetRunning}
+            isThinking={isThinking}
+            isPlayingMacro={isPlayingMacro}
+            pendingDecision={pendingDecision}
+            onRun={() => onAutoRunChange?.(true)}
+            onAbort={onAbort}
+            onStep={onStep}
+            onStopSnippet={onStopSnippet}
+          />
           <div className="flex rounded border border-neutral-700 bg-neutral-800 p-0.5">
             <button
               onClick={() => onRunModeChange?.("auto")}
@@ -444,27 +519,6 @@ export function AgentTab({
               Step
             </button>
           </div>
-          {runMode === "auto" ? (
-            <label className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-300">
-              <input
-                type="checkbox"
-                checked={autoRun}
-                onChange={(e) => onAutoRunChange?.(e.target.checked)}
-                disabled={!onAutoRunChange}
-                className="rounded border-neutral-600 bg-neutral-700 text-emerald-500 focus:ring-0"
-              />
-              Auto
-            </label>
-          ) : (
-            <button
-              data-testid="agent-step-action"
-              onClick={onStep}
-              disabled={isThinking || isPlayingMacro || !onStep || !!pendingDecision}
-              className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
-            >
-              Step
-            </button>
-          )}
         </div>
       </div>
 
@@ -509,7 +563,7 @@ export function AgentTab({
         />
       </div>
 
-      <ManualCommandInput onRun={onManualCommand} disabled={isPlayingMacro || isThinking} />
+      <ManualCommandInput onRun={onManualCommand} disabled={snippetRunning || isPlayingMacro || isThinking} />
 
       {error && <p className="text-xs text-rose-400">{error}</p>}
 

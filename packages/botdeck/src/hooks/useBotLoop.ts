@@ -81,6 +81,8 @@ export interface UseBotLoopResult {
   executePending: () => Promise<void>;
   /** Discard the pending decision without executing. */
   clearPending: () => void;
+  /** Stop auto-run and cancel the in-flight agent turn, if any. */
+  abortAgent: () => void;
   /** Run a manual command through the same macro + persist path. */
   runManualCommand: (command: GameCommand) => Promise<void>;
   /** Run raw button steps through the emulator macro runner. */
@@ -111,7 +113,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   const autoRunRef = useRef(autoRun);
   const runModeRef = useRef(runMode);
   const pendingMessageRef = useRef(pendingMessage);
-  const battleRoundAbortRef = useRef<AbortController | null>(null);
+  const turnAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     autoRunRef.current = autoRun;
@@ -125,13 +127,15 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     pendingMessageRef.current = pendingMessage;
   }, [pendingMessage]);
 
-  // If the user stops auto-run while we are waiting for a battle round to
-  // execute, abort that wait so the current turn ends cleanly.
+  // If the user stops auto-run while a turn is in flight, abort the turn's
+  // pending fetch and battle-phase waits. Macro playback is cancelled in
+  // executeCommand via the same signal, and redundantly here for immediacy.
   useEffect(() => {
-    if (!autoRun && battleRoundAbortRef.current) {
-      battleRoundAbortRef.current.abort();
+    if (!autoRun && turnAbortRef.current) {
+      turnAbortRef.current.abort();
+      emulator.cancelMacro();
     }
-  }, [autoRun]);
+  }, [autoRun, emulator]);
 
   // Keep macro status in sync with the emulator without polling every frame.
   useEffect(() => {
@@ -329,9 +333,13 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   );
 
   const callAgent = useCallback(
-    async (request: TurnRequest): Promise<TurnResponse> => {
+    async (request: TurnRequest, signal?: AbortSignal): Promise<TurnResponse> => {
       const controller = new AbortController();
       const timeoutId = window.setTimeout(() => controller.abort(), turnTimeoutMs);
+
+      const onAbort = () => controller.abort();
+      signal?.addEventListener("abort", onAbort);
+
       try {
         const res = await fetch("/api/turn", {
           method: "POST",
@@ -346,6 +354,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         return (await res.json()) as TurnResponse;
       } finally {
         window.clearTimeout(timeoutId);
+        signal?.removeEventListener("abort", onAbort);
       }
     },
     [turnTimeoutMs],
@@ -380,7 +389,11 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
    * Returns whether the command actually latched (vs the safety bound elapsing).
    */
   const waitForCommandLatch = useCallback(
-    (actor: string | undefined, before: Record<string, unknown>): Promise<boolean> => {
+    (
+      actor: string | undefined,
+      before: Record<string, unknown>,
+      signal?: AbortSignal,
+    ): Promise<boolean> => {
       const beforeBattle = before as unknown as BattleStateLike;
       const wasExecuting = isRoundExecuting(beforeBattle);
       return waitForBattlePhase(
@@ -399,7 +412,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
           }
           return false;
         },
-        { confirmFrames: 1, timeoutMs: 2_000 },
+        { confirmFrames: 1, timeoutMs: 2_000, signal },
       );
     },
     [waitForBattlePhase],
@@ -412,6 +425,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       request: TurnRequest,
       response: TurnResponse,
       stateBefore?: string,
+      signal?: AbortSignal,
     ): Promise<TurnLogEntry> => {
       let macro: ButtonStep[];
       let macroError: string | undefined;
@@ -433,37 +447,50 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       const probe = () => capturePlugin.captureDialogFrame?.();
       const removeProbe = emulator.onFrameProbe(probe);
 
-      setIsPlayingMacro(true);
-      // Long travel macros assume the game stays on the field. Let the plugin
-      // abort them the frame it leaves (random battle, town entrance), so the
-      // remaining presses are not spent in the battle menu and control comes
-      // back to the agent on the next turn.
-      const abort = plugin.macroAbort?.(response.command);
-      await emulator.runMacro(macro, abort);
-      if (emulator.wasMacroInterrupted()) {
-        console.log(`step ${seq}: macro aborted early by the game (battle or transition)`);
-      }
-      setIsPlayingMacro(false);
+      const onAbort = () => {
+        emulator.cancelMacro();
+      };
+      signal?.addEventListener("abort", onAbort);
 
-      // If a dialog box is open after the macro, keep sampling through the
-      // settle delay so post-macro pages (e.g. the next page after
-      // dialog_advance) are captured before persisting the step.
-      // In battle mode, wait on the game condition - the issued command has
-      // latched into the command buffer (or the round has started, or command
-      // entry moved on) - instead of a fixed delay, so the after-state
-      // snapshot never lands mid-transition. The dialog probe stays attached
-      // during the wait so late dialog pages are still captured.
-      let postState = plugin.readState();
-      const postDialogOpen =
-        (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
-      if (request.mode === "battle") {
-        await waitForCommandLatch(request.actor, postState);
+      let postState: Record<string, unknown> | undefined;
+      setIsPlayingMacro(true);
+      try {
+        // Long travel macros assume the game stays on the field. Let the plugin
+        // abort them the frame it leaves (random battle, town entrance), so the
+        // remaining presses are not spent in the battle menu and control comes
+        // back to the agent on the next turn.
+        const abort = plugin.macroAbort?.(response.command);
+        await emulator.runMacro(macro, abort);
+        if (signal?.aborted) {
+          throw new Error("turn cancelled");
+        }
+        if (emulator.wasMacroInterrupted()) {
+          console.log(`step ${seq}: macro aborted early by the game (battle or transition)`);
+        }
+        setIsPlayingMacro(false);
+
+        // If a dialog box is open after the macro, keep sampling through the
+        // settle delay so post-macro pages (e.g. the next page after
+        // dialog_advance) are captured before persisting the step.
+        // In battle mode, wait on the game condition - the issued command has
+        // latched into the command buffer (or the round has started, or command
+        // entry moved on) - instead of a fixed delay, so the after-state
+        // snapshot never lands mid-transition. The dialog probe stays attached
+        // during the wait so late dialog pages are still captured.
         postState = plugin.readState();
-      } else if (postDialogOpen) {
-        await waitSettle();
-        postState = plugin.readState();
+        const postDialogOpen =
+          (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
+        if (request.mode === "battle") {
+          await waitForCommandLatch(request.actor, postState, signal);
+          postState = plugin.readState();
+        } else if (postDialogOpen) {
+          await waitSettle();
+          postState = plugin.readState();
+        }
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
+        removeProbe();
       }
-      removeProbe();
 
       const stateAfter = collectStates ? await saveStepState(seq, "after") : undefined;
 
@@ -520,6 +547,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       pluginState: Record<string, unknown>,
       mode: string,
       actor?: string,
+      signal?: AbortSignal,
     ): Promise<TurnLogEntry | PendingDecision> => {
       const seq = (seqRef.current += 1);
       const ts = Date.now();
@@ -529,8 +557,12 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastRequest(request);
       let response: TurnResponse;
       try {
-        response = await callAgent(request);
+        response = await callAgent(request, signal);
       } catch (err) {
+        // A user-cancelled turn is not a failed turn; do not persist it.
+        if (signal?.aborted) {
+          throw new Error("turn cancelled");
+        }
         // A failed turn is still a turn: persist the request with the error so
         // the play history and the agent's recent-actions prompt section
         // reflect it. Dropping failures silently is what made the history
@@ -560,7 +592,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         return pending;
       }
 
-      return executeCommand(seq, ts, request, response, stateBefore);
+      return executeCommand(seq, ts, request, response, stateBefore, signal);
     },
     [buildRequest, callAgent, collectStates, executeCommand, persistFailedStep, saveStepState],
   );
@@ -655,7 +687,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         if (actor === lastActor) break;
         lastActor = actor;
 
-        const result = await decideAndMaybeExecute(state, "battle", actor);
+        const result = await decideAndMaybeExecute(state, "battle", actor, opts?.signal);
         if (!("macro" in result)) {
           // Paused for step mode (PendingDecision has no macro field).
           return;
@@ -685,7 +717,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     setError(undefined);
 
     const controller = new AbortController();
-    battleRoundAbortRef.current = controller;
+    turnAbortRef.current = controller;
     try {
       const state = plugin.readState();
       const mode = plugin.getMode(state);
@@ -693,7 +725,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       if (mode === "battle") {
         await runBattleRound({ signal: controller.signal });
       } else {
-        await decideAndMaybeExecute(state, mode);
+        await decideAndMaybeExecute(state, mode, undefined, controller.signal);
       }
 
       // Clear the injected user message once consumed.
@@ -702,10 +734,14 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "turn cancelled") {
+        // User-initiated stop: leave autoRun off and do not report an error.
+        return;
+      }
       setError(msg);
       setAutoRunState(false);
     } finally {
-      battleRoundAbortRef.current = null;
+      turnAbortRef.current = null;
       setIsThinking(false);
       setIsPlayingMacro(false);
       runningRef.current = false;
@@ -717,6 +753,9 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     if (!pending) return;
     setPendingDecision(undefined);
     setIsThinking(true);
+
+    const controller = new AbortController();
+    turnAbortRef.current = controller;
     try {
       await executeCommand(
         pending.seq,
@@ -724,6 +763,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         pending.request,
         pending.response,
         pending.stateBefore,
+        controller.signal,
       );
       // In step mode one approval = one executed turn. Do not continue the
       // battle round automatically. If the approved command completed the
@@ -740,7 +780,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
               const b = s as unknown as BattleStateLike;
               return isCommandEntryReady(b) || isBattleOver(b);
             },
-            { signal: battleRoundAbortRef.current?.signal },
+            { signal: controller.signal },
           );
         } catch {
           // Cancelled wait: return control to the user.
@@ -749,9 +789,13 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      if (msg === "turn cancelled") {
+        return;
+      }
       setError(msg);
       setAutoRunState(false);
     } finally {
+      turnAbortRef.current = null;
       setIsThinking(false);
       setIsPlayingMacro(false);
       runningRef.current = false;
@@ -778,6 +822,12 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setAutoRunState(false);
     }
   }, []);
+
+  const abortAgent = useCallback(() => {
+    setAutoRunState(false);
+    turnAbortRef.current?.abort();
+    emulator.cancelMacro();
+  }, [emulator]);
 
   const runManualCommand = useCallback(
     async (command: GameCommand) => {
@@ -855,6 +905,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     pendingDecision,
     executePending,
     clearPending,
+    abortAgent,
     runManualCommand,
     runManualMacro,
     pendingMessage,

@@ -109,6 +109,7 @@ export function App() {
 
   const [snippetPaused, setSnippetPaused] = useState(false);
   const snippetPausedRef = useRef(false);
+  const [snippetRunning, setSnippetRunning] = useState(false);
   const snippetAbortRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -212,6 +213,7 @@ export function App() {
       const controller = new AbortController();
       snippetAbortRef.current = () => controller.abort();
       setSnippetPaused(false);
+      setSnippetRunning(true);
 
       const settle = (ms: number) =>
         new Promise<void>((resolve) => {
@@ -278,6 +280,7 @@ export function App() {
       } finally {
         snippetAbortRef.current = null;
         setSnippetPaused(false);
+        setSnippetRunning(false);
       }
     },
     [playId, loadState, collect, runSnippetStep],
@@ -414,6 +417,7 @@ export function App() {
             onRunSnippet={onRunSnippet}
             onManualCommand={onManualCommand}
             snippetPaused={snippetPaused}
+            snippetRunning={snippetRunning}
             onPauseSnippet={onPauseSnippet}
             onStopSnippet={onStopSnippet}
           />

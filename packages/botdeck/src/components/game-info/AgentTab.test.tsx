@@ -98,4 +98,82 @@ describe("AgentTab transcript rendering", () => {
     expect(screen.getByText(/## Message from the user/)).toBeInTheDocument();
     expect(screen.getByText(/Stop spamming interact/)).toBeInTheDocument();
   });
+
+  it("shows a Run button in auto mode and starts auto-run on click", () => {
+    const onAutoRunChange = vi.fn();
+    render(
+      <AgentTab
+        runMode="auto"
+        autoRun={false}
+        onAutoRunChange={onAutoRunChange}
+        messages={[]}
+      />,
+    );
+
+    const runButton = screen.getByTestId("agent-run-action");
+    expect(runButton).toHaveTextContent("Run");
+    fireEvent.click(runButton);
+    expect(onAutoRunChange).toHaveBeenCalledWith(true);
+  });
+
+  it("shows a Stop button while auto-running and aborts on click", () => {
+    const onAbort = vi.fn();
+    render(
+      <AgentTab
+        runMode="auto"
+        autoRun={true}
+        onAbort={onAbort}
+        messages={[]}
+      />,
+    );
+
+    const stopButton = screen.getByTestId("agent-stop-action");
+    expect(stopButton).toHaveTextContent("Stop");
+    fireEvent.click(stopButton);
+    expect(onAbort).toHaveBeenCalled();
+  });
+
+  it("shows a Step button in step mode and steps on click", () => {
+    const onStep = vi.fn();
+    render(<AgentTab runMode="step" onStep={onStep} messages={[]} />);
+
+    const stepButton = screen.getByTestId("agent-step-action");
+    expect(stepButton).toHaveTextContent("Step");
+    fireEvent.click(stepButton);
+    expect(onStep).toHaveBeenCalled();
+  });
+
+  it("shows a Stop button while a snippet is running and stops the snippet on click", () => {
+    const onStopSnippet = vi.fn();
+    render(
+      <AgentTab
+        runMode="auto"
+        snippetRunning={true}
+        onStopSnippet={onStopSnippet}
+        messages={[]}
+      />,
+    );
+
+    const stopButton = screen.getByTestId("agent-stop-action");
+    expect(stopButton).toHaveTextContent("Stop");
+    fireEvent.click(stopButton);
+    expect(onStopSnippet).toHaveBeenCalled();
+  });
+
+  it("shows a Stop button while the agent is busy in step mode", () => {
+    const onAbort = vi.fn();
+    render(
+      <AgentTab
+        runMode="step"
+        isThinking={true}
+        onAbort={onAbort}
+        messages={[]}
+      />,
+    );
+
+    const stopButton = screen.getByTestId("agent-stop-action");
+    expect(stopButton).toHaveTextContent("Stop");
+    fireEvent.click(stopButton);
+    expect(onAbort).toHaveBeenCalled();
+  });
 });
