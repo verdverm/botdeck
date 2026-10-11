@@ -148,7 +148,7 @@ function locationType(name: string): KnownLocation["type"] {
 
 /**
  * Doors/teleports the party can walk into on the current standard map, from the
- * extracted standard-maps grid. Offered as `goto` targets while inside a town,
+ * extracted per-map standard-map grids. Offered as `goto` targets while inside a town,
  * castle, or dungeon: `exit`, or a destination map ("Coneria Castle").
  */
 function standardMapLocations(mapId: number): KnownLocation[] {

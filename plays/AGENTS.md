@@ -7,7 +7,10 @@ Layout for `plays/<game>/<id>/`:
 - `states/` - save states + extracted snapshots + metadata.
 - `steps/` - persisted agent turns.
 - `memory/`, `journal/`, `goals/` - durable agent notes.
-- `prompts/` - optional per-play prompt overrides.
+- `snippets/` - per-play prompt overrides: `snippets/user/<name>.md` shadows the
+  game default `games/<game>/prompts/<name>.md` at render time (served via
+  `/api/plays/:game/:id/prompts/:name`); `snippets/user/*.snippet.json` are
+  macro records and `snippets/agent/` is the agent-tool markdown store.
 
 Rules:
 - Never add a `rom` field to `config.json`; the play's `<game>` segment determines the ROM via `/api/games/:game/rom`.

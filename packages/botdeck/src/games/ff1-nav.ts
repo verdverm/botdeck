@@ -563,7 +563,7 @@ export function gotoMacro(
 /* ═══════════════════════════════════════════════════════════════════════════
  * Standard maps (towns / castles / dungeon floors).
  *
- * The grid comes from `games/ff1/maps/standard-maps.json`, produced by
+ * The grid comes from the per-map `games/ff1/maps/<name>.json` files, produced by
  * `games/ff1/scripts/extract-sm-map.mjs` (same process as the overworld map:
  * lut_SMPtrTbl pointer -> DecompressMap -> 64x64 tiles, tile properties from
  * lut_SMTilesetProp). Same coordinate system as the overworld: the party's
