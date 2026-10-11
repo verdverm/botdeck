@@ -142,7 +142,10 @@ export interface PromptConfig {
 export interface AgentMode {
   id: string;
   label: string;
-  promptSnippets: string[];
+  /** Snippet names concatenated (in order) to form the system prompt. */
+  systemSnippets: string[];
+  /** Snippet names concatenated (in order) to form the user prompt. */
+  userSnippets: string[];
   autoAdvance?: boolean;
 }
 
@@ -180,8 +183,10 @@ function isAgentMode(value: unknown): value is AgentMode {
   if (!isPlainObject(value)) return false;
   if (typeof value.id !== "string" || value.id === "") return false;
   if (typeof value.label !== "string") return false;
-  const snippets = value.promptSnippets;
-  if (!Array.isArray(snippets) || !snippets.every((s) => typeof s === "string")) return false;
+  const sys = value.systemSnippets;
+  const usr = value.userSnippets;
+  if (!Array.isArray(sys) || !sys.every((s) => typeof s === "string")) return false;
+  if (!Array.isArray(usr) || !usr.every((s) => typeof s === "string")) return false;
   return true;
 }
 
@@ -238,15 +243,20 @@ function mergeModes(gameModes?: AgentMode[], playModes?: AgentMode[]): AgentMode
       continue;
     }
     playById.delete(gameMode.id);
-    const promptSnippets =
-      playMode.promptSnippets && playMode.promptSnippets.length > 0
-        ? playMode.promptSnippets
-        : gameMode.promptSnippets;
+    const systemSnippets =
+      playMode.systemSnippets && playMode.systemSnippets.length > 0
+        ? playMode.systemSnippets
+        : gameMode.systemSnippets;
+    const userSnippets =
+      playMode.userSnippets && playMode.userSnippets.length > 0
+        ? playMode.userSnippets
+        : gameMode.userSnippets;
     merged.push({
       id: gameMode.id,
       label: playMode.label ?? gameMode.label,
       autoAdvance: playMode.autoAdvance ?? gameMode.autoAdvance,
-      promptSnippets,
+      systemSnippets,
+      userSnippets,
     });
   }
 

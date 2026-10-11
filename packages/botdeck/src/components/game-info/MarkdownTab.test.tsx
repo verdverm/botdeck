@@ -9,7 +9,16 @@ const PLAY_ID = "ff1/0001_dev";
 const bundle: PromptTemplateBundle = {
   game: "ff1",
   id: "0001_dev",
-  prompt: { modes: [{ id: "field", label: "Field", promptSnippets: ["system"] }] },
+  prompt: {
+    modes: [
+      {
+        id: "field",
+        label: "Field",
+        systemSnippets: ["system"],
+        userSnippets: [],
+      },
+    ],
+  },
   limits: {
     memoryLimit: "2048",
     memoryCount: "10",

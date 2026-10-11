@@ -153,41 +153,32 @@ function renderTemplate(template: string, ctx: RenderContext): string {
   });
 }
 
-function resolveModeSnippets(config: import("./files.ts").PromptConfig, mode?: string): string[] | undefined {
-  if (!mode) return undefined;
-  const found = config.modes?.find((m) => m.id === mode);
-  return found?.promptSnippets;
-}
-
 export function renderPrompt(req: TurnRequest): PromptParts {
   const parsed = parsePlayId(req.playId, req.gameId);
   const game = parsed?.game ?? req.gameId;
   const id = parsed?.id;
 
   const promptConfig = resolvePromptConfig(game, id);
-  const snippets = resolveModeSnippets(promptConfig, req.mode);
-  if (!snippets || snippets.length === 0) {
+  const mode = req.mode ? promptConfig.modes?.find((m) => m.id === req.mode) : undefined;
+  if (!mode) {
     return { system: "", user: "" };
   }
 
   const agentConfig = id ? resolveAgentConfig(game, id) : undefined;
   const ctx = buildContext(req, game, id, agentConfig);
-  // Convention: the snippet named exactly "system" becomes the system prompt;
-  // every other snippet is joined in config order to form the user prompt.
-  const systemIndex = snippets.indexOf("system");
-  const systemSnippet = systemIndex >= 0 ? snippets[systemIndex] : undefined;
-  const system = systemSnippet
-    ? renderTemplate(readSnippet(game, id, systemSnippet), ctx)
-    : "";
-  const userParts = snippets
-    .filter((_, i) => i !== systemIndex)
+  // Config owns the system/user split: each mode declares two ordered lists.
+  // The names are literal; there is no convention tying a specific filename
+  // to a specific side. Empty list -> that side is empty.
+  const systemParts = mode.systemSnippets
+    .map((name) => renderTemplate(readSnippet(game, id, name), ctx))
+    .filter(Boolean);
+  const userParts = mode.userSnippets
     .map((name) => renderTemplate(readSnippet(game, id, name), ctx))
     .filter(Boolean);
 
-  // Agent-authored snippets are a completely separate store. They are never
-  // allowed to shadow user/system snippets by name; instead they are appended
-  // as their own clearly-delimited section so the agent can add turn-by-turn
-  // guidance without rewriting the prompt constitution.
+  // Agent-authored snippets, recent step history, and the user turn message
+  // are always appended to the user prompt. They are never configurable into
+  // the system side so the constitution stays intact.
   if (ctx.agentSnippets) {
     userParts.push(`## Agent-authored snippets\n\n${ctx.agentSnippets}`);
   }
@@ -200,7 +191,7 @@ export function renderPrompt(req: TurnRequest): PromptParts {
     userParts.push(`## Message from the user\n\n${ctx.userMessage}`);
   }
 
-  return { system, user: userParts.join("\n\n") };
+  return { system: systemParts.join("\n\n"), user: userParts.join("\n\n") };
 }
 
 // ---------------------------------------------------------------------------
@@ -261,10 +252,10 @@ export function buildPromptTemplateBundle(game: string, id?: string): PromptTemp
   const agentConfig = id ? resolveAgentConfig(game, id) : resolveAgentConfig(game);
   const limits = agentConfig.limits;
 
-  // Every template referenced by mode groups, plus any orphan files that exist
-  // on disk under either layer (game or play).
+  // Every template referenced by any mode's system or user list, plus any
+  // orphan files that exist on disk under either layer (game or play).
   const names = new Set<string>([
-    ...(prompt.modes ?? []).flatMap((m) => m.promptSnippets),
+    ...(prompt.modes ?? []).flatMap((m) => [...m.systemSnippets, ...m.userSnippets]),
     ...listGamePromptTemplates(game).map((t) => t.name),
     ...(id ? listPlayPromptTemplates(game, id).map((t) => t.name) : []),
   ]);

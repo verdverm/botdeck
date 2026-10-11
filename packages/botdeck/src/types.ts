@@ -32,7 +32,10 @@ export interface CommandSpec {
 export interface AgentMode {
   id: string;
   label: string;
-  promptSnippets: string[];
+  /** Snippet names concatenated (in order) to form the system prompt. */
+  systemSnippets: string[];
+  /** Snippet names concatenated (in order) to form the user prompt. */
+  userSnippets: string[];
   autoAdvance?: boolean;
 }
 

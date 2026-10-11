@@ -81,16 +81,15 @@ export function renderTemplate(template: string, ctx: RenderContext): string {
 }
 
 /**
- * Mirrors `resolveModeSnippets` from prompts.ts: return the mode's snippet
- * list, or undefined when no matching mode exists in the resolved config.
- * There is no default fallback - a missing mode means a config error.
+ * Mirrors the mode lookup in prompts.ts: return the mode entry from the
+ * resolved prompt config, or undefined when no matching mode exists. There is
+ * no default fallback - a missing mode is a config error.
  */
-export function resolveSnippetsForMode(
+export function resolveMode(
   bundle: PromptTemplateBundle,
   mode: string,
-): string[] | undefined {
-  const found = bundle.prompt.modes?.find((m) => m.id === mode);
-  return found?.promptSnippets;
+) {
+  return bundle.prompt.modes?.find((m) => m.id === mode);
 }
 
 function templateContent(bundle: PromptTemplateBundle, name: string): string {
@@ -122,17 +121,15 @@ export function assemblePrompt(
   input: LivePromptInput,
   bundle: PromptTemplateBundle,
 ): PromptParts {
-  const snippets = resolveSnippetsForMode(bundle, input.mode);
-  if (!snippets || snippets.length === 0) return { system: "", user: "" };
+  const mode = resolveMode(bundle, input.mode);
+  if (!mode) return { system: "", user: "" };
 
   const ctx = buildRenderContext(input, bundle);
 
-  const systemIndex = snippets.indexOf("system");
-  const system =
-    systemIndex >= 0 ? renderSnippet("system", bundle, ctx) : "";
-
-  const userParts = snippets
-    .filter((_, i) => i !== systemIndex)
+  const systemParts = mode.systemSnippets
+    .map((name) => renderSnippet(name, bundle, ctx))
+    .filter(Boolean);
+  const userParts = mode.userSnippets
     .map((name) => renderSnippet(name, bundle, ctx))
     .filter(Boolean);
 
@@ -146,5 +143,5 @@ export function assemblePrompt(
     userParts.push(`## Message from the user\n\n${ctx.userMessage}`);
   }
 
-  return { system, user: userParts.join("\n\n") };
+  return { system: systemParts.join("\n\n"), user: userParts.join("\n\n") };
 }

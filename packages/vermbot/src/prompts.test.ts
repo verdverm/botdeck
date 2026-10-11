@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { renderPrompt } from "./prompts.ts";
+import { renderPrompt, buildPromptTemplateBundle } from "./prompts.ts";
 import { gameDir, playDir, createPlay, deletePlay } from "./files.ts";
 import { useTempRepoRoot } from "./test-root.ts";
 import type { TurnRequest } from "./protocol.ts";
@@ -91,12 +91,13 @@ function writePlayPrompts(game: string, id: string, files: Record<string, string
 
 function setSnippetList(game: string, id: string | undefined, snippets: string[]): void {
   const configPath = id ? join(playDir(game, id), "config.json") : join(gameDir(game), "config.json");
-  const existing = id
-    ? { id, game }
-    : {};
-  // Modes are the only source of a snippet list; tests use a single "field"
-  // mode. Renderers pass `mode: "field"` on the TurnRequest to select it.
-  const mode = { id: "field", label: "Field", promptSnippets: snippets };
+  const existing = id ? { id, game } : {};
+  // Convenience helper: the flat list is split so that a snippet literally
+  // named "system" lands in systemSnippets; every other entry goes into
+  // userSnippets. Tests that need a different split write the config directly.
+  const systemSnippets = snippets.filter((s) => s === "system");
+  const userSnippets = snippets.filter((s) => s !== "system");
+  const mode = { id: "field", label: "Field", systemSnippets, userSnippets };
   writeFileSync(configPath, JSON.stringify({ ...existing, prompt: { modes: [mode] } }));
 }
 
@@ -377,7 +378,16 @@ describe("renderPrompt", () => {
           limits: { goals: 1024, memory: 2048, journal: 8192, memoryCount: 10, snippets: 4096, snippetCount: 50 },
           tools: ["memory_write"],
         },
-        prompt: { modes: [{ id: "field", label: "Field", promptSnippets: ["system", "state"] }] },
+        prompt: {
+          modes: [
+            {
+              id: "field",
+              label: "Field",
+              systemSnippets: ["system"],
+              userSnippets: ["state"],
+            },
+          ],
+        },
       }),
     );
     writeStepWithDiff(
@@ -404,7 +414,7 @@ describe("renderPrompt", () => {
     });
     writeFileSync(
       join(playDir(game, id), "config.json"),
-      JSON.stringify({ id, game, agent: { recentHistoryLimit: 1 }, prompt: { modes: [{ id: "field", label: "Field", promptSnippets: ["system", "state"] }] } }),
+      JSON.stringify({ id, game, agent: { recentHistoryLimit: 1 }, prompt: { modes: [{ id: "field", label: "Field", systemSnippets: ["system"], userSnippets: ["state"] }] } }),
     );
     writeStepWithDiff(
       game,
@@ -429,5 +439,68 @@ describe("renderPrompt", () => {
     // Only the latest step is included (limit 1), derived from its state diff.
     expect(user).toContain("Zing queued ATTACK -> Imp (enemy slot 1)");
     expect(user).not.toContain("Rias queued ATTACK");
+  });
+});
+
+describe("buildPromptTemplateBundle", () => {
+  useTempRepoRoot();
+
+  let game: string;
+  let id: string;
+
+  beforeEach(() => {
+    game = tmpName("bundlegame");
+    id = tmpName("bundleplay");
+    mkdirSync(gameDir(game), { recursive: true });
+    writeGamePrompts(game, {
+      system: "SYS {{gameId}}",
+      "game-info": "INFO",
+      commands: "CMDS {{commands}}",
+      state: "STATE",
+      persona: "PERSONA",
+    });
+    writeFileSync(
+      join(gameDir(game), "config.json"),
+      JSON.stringify({
+        prompt: {
+          modes: [
+            {
+              id: "field",
+              label: "Field",
+              systemSnippets: ["persona", "system"],
+              userSnippets: ["game-info", "commands", "state"],
+            },
+          ],
+        },
+      }),
+    );
+    createPlay(game, id);
+  });
+
+  afterEach(() => {
+    deletePlay(game, id);
+    rmSync(gameDir(game), { recursive: true, force: true });
+  });
+
+  it("emits the split mode shape and every referenced template name", () => {
+    const b = buildPromptTemplateBundle(game, id);
+    const field = b.prompt.modes?.find((m) => m.id === "field");
+    expect(field?.systemSnippets).toEqual(["persona", "system"]);
+    expect(field?.userSnippets).toEqual(["game-info", "commands", "state"]);
+    const names = b.templates.map((t) => t.name);
+    for (const want of ["persona", "system", "game-info", "commands", "state"]) {
+      expect(names).toContain(want);
+    }
+  });
+
+  it("reports source=play when the play overrides the game template", () => {
+    const dir = join(playDir(game, id), "snippets", "user");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "system.md"), "PLAY OVERRIDE");
+    const b = buildPromptTemplateBundle(game, id);
+    const sys = b.templates.find((t) => t.name === "system");
+    expect(sys?.source).toBe("play");
+    expect(sys?.playContent).toBe("PLAY OVERRIDE");
+    expect(sys?.gameContent).toBe("SYS {{gameId}}");
   });
 });

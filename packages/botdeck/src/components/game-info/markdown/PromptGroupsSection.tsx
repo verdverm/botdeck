@@ -22,10 +22,11 @@ interface PromptGroupsSectionProps {
 }
 
 /**
- * Edit the per-mode snippet groups (`prompt.modes[].promptSnippets`). Changes
- * persist to either the game config (shared) or the play config (per-run
- * override), which is the shadowing `resolvePromptConfig` applies at render
- * time. There is no default group: every prompt selection is mode-keyed.
+ * Edit the per-mode snippet groups (`prompt.modes[].systemSnippets` and
+ * `.userSnippets`). Changes persist to either the game config (shared) or the
+ * play config (per-run override), which is the shadowing `resolvePromptConfig`
+ * applies at render time. Config owns the system/user split; there is no
+ * default or filename-based convention.
  */
 export function PromptGroupsSection({
   playId,
@@ -126,13 +127,23 @@ export function PromptGroupsSection({
       ) : (
         <>
           {(prompt.modes ?? []).map((mode, i) => (
-            <SnippetList
-              key={mode.id}
-              label={`Mode: ${mode.label} (${mode.id})`}
-              names={mode.promptSnippets}
-              available={availableNames}
-              onChange={(next) => updateMode(i, { ...mode, promptSnippets: next })}
-            />
+            <div key={mode.id} className="flex flex-col gap-2">
+              <h4 className="text-[11px] font-semibold uppercase tracking-wider text-neutral-300">
+                Mode: {mode.label} ({mode.id})
+              </h4>
+              <SnippetList
+                label="System snippets"
+                names={mode.systemSnippets}
+                available={availableNames}
+                onChange={(next) => updateMode(i, { ...mode, systemSnippets: next })}
+              />
+              <SnippetList
+                label="User snippets"
+                names={mode.userSnippets}
+                available={availableNames}
+                onChange={(next) => updateMode(i, { ...mode, userSnippets: next })}
+              />
+            </div>
           ))}
           <div className="flex items-center justify-end gap-2">
             {dirty && <span className="text-[11px] text-amber-400">unsaved changes</span>}
@@ -204,12 +215,7 @@ function SnippetList({
       <ul className="flex flex-col gap-1">
         {names.map((name, i) => (
           <li key={`${name}-${i}`} className="flex items-center justify-between rounded bg-neutral-900 px-2 py-1">
-            <span className="text-xs text-neutral-200">
-              {i === names.indexOf("system") && name === "system" ? (
-                <span className="mr-1 rounded bg-purple-500/20 px-1 text-[10px] text-purple-300">system</span>
-              ) : null}
-              {name}
-            </span>
+            <span className="text-xs text-neutral-200">{name}</span>
             <span className="flex items-center gap-1">
               <button onClick={() => move(i, -1)} disabled={i === 0} className="rounded px-1 text-xs text-neutral-400 hover:bg-neutral-700 disabled:opacity-30">
                 ↑

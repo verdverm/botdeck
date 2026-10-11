@@ -75,7 +75,8 @@ function seedGameConfig(): void {
         {
           id: "field",
           label: "Field",
-          promptSnippets: ["system", "commands", "state"],
+          systemSnippets: ["system"],
+          userSnippets: ["commands", "state"],
           autoAdvance: true,
         },
       ],
@@ -189,7 +190,7 @@ describe("resolveAgentConfig", () => {
 });
 
 describe("resolvePromptConfig", () => {
-  it("merges a play mode's non-empty list over the game's for the same id", () => {
+  it("merges a play mode's non-empty arrays over the game's per side", () => {
     createPlay(TEST_GAME, "0000_dev");
     try {
       writePlayConfig(TEST_GAME, "0000_dev", {
@@ -200,23 +201,22 @@ describe("resolvePromptConfig", () => {
             {
               id: "field",
               label: "Field",
-              promptSnippets: ["play-system", "play-state"],
-              autoAdvance: true,
+              systemSnippets: ["play-system"],
+              userSnippets: ["play-state"],
             },
           ],
         },
       });
       const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
-      expect(cfg.modes?.find((m) => m.id === "field")?.promptSnippets).toEqual([
-        "play-system",
-        "play-state",
-      ]);
+      const field = cfg.modes?.find((m) => m.id === "field");
+      expect(field?.systemSnippets).toEqual(["play-system"]);
+      expect(field?.userSnippets).toEqual(["play-state"]);
     } finally {
       deletePlay(TEST_GAME, "0000_dev");
     }
   });
 
-  it("inherits the game mode list when a play declares an empty list", () => {
+  it("inherits the game's per-side list when the play leaves it empty", () => {
     createPlay(TEST_GAME, "0000_dev");
     try {
       writePlayConfig(TEST_GAME, "0000_dev", {
@@ -227,17 +227,18 @@ describe("resolvePromptConfig", () => {
             {
               id: "field",
               label: "Field",
-              promptSnippets: [],
+              systemSnippets: ["custom-system", "extra"],
+              userSnippets: [],
             },
           ],
         },
       });
       const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
-      expect(cfg.modes?.find((m) => m.id === "field")?.promptSnippets).toEqual([
-        "system",
-        "commands",
-        "state",
-      ]);
+      const field = cfg.modes?.find((m) => m.id === "field");
+      // System side overrides because it is non-empty.
+      expect(field?.systemSnippets).toEqual(["custom-system", "extra"]);
+      // User side is empty so it falls through to the game's list.
+      expect(field?.userSnippets).toEqual(["commands", "state"]);
     } finally {
       deletePlay(TEST_GAME, "0000_dev");
     }
@@ -259,7 +260,9 @@ describe("resolvePromptConfig", () => {
 
   it("returns the game config modes when no play is specified", () => {
     const cfg = resolvePromptConfig(TEST_GAME);
-    expect(cfg.modes?.find((m) => m.id === "field")?.promptSnippets).toContain("system");
+    const field = cfg.modes?.find((m) => m.id === "field");
+    expect(field?.systemSnippets).toEqual(["system"]);
+    expect(field?.userSnippets).toEqual(["commands", "state"]);
   });
 
   it("returns an empty config when no game config exists", () => {

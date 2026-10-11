@@ -1,15 +1,5 @@
 # TODO
 
-## UI changes
-
-- make markdown tab show (each as accordians, multi-display)
-    - agent goals/memories/journal
-    - prompt files
-    - prompt groups and parts
-- from the UI, the user should be able to CRUD the prompt markdown as well as change the group contents/order
-- we need a way to show templates / rendered versions based on the current state, perhaps a toggle so the rendered versions update with state updates?
-- we need a way to handle game vs play vs combined/overridden
-
 ## Map changes
 
 - how do we determine difference between field, forest, sand, etc...?
@@ -18,9 +8,17 @@
 
 battle:
 
+- rias tried to use cure, it selected the wrong (empty) slot, we should know what spells are in which slots, yes? (zing did this with fire too, something is defintiely off here)
 - rias tried to use cure on stu, and it got to pointing at him, but never completed, seems inconsistent
 - we need a way to notice battle completion and then "a" button multiple times at the right intervals (gathering data about the result), not sure how leveling up appears yet
+- "battling" pill is still showing up when it shouldn't, it seems like we really need to think about state management in the battle sequencing
+- (enhancement) while in the "battling" phase, we need to record all the actions and order they happen in, including enemy, so we know which enemies used which moves to attack which party members
 
 overworld:
 - recent changes to macro cancellation broke overworld navigation
 - stop/run/step do not work once macro is interrupted, has red error text and idle state, unrecoverable
+
+general:
+
+- commands need better filtering based on current state (eg. allowing goto while in a menu or allowing menu navigation while not in a menu)
+- navigation plan should not be shown if the curr/last command was not navigate

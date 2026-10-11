@@ -31,25 +31,29 @@
       {
         "id": "overworld",
         "label": "Overworld",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "overworld"],
+        "systemSnippets": ["system"],
+        "userSnippets": ["game-info", "commands", "state", "tools", "goals", "memory", "journal", "overworld"],
         "autoAdvance": true
       },
       {
         "id": "interior",
         "label": "Interior",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "interior"],
+        "systemSnippets": ["system"],
+        "userSnippets": ["game-info", "commands", "state", "tools", "goals", "memory", "journal", "interior"],
         "autoAdvance": true
       },
       {
         "id": "shop",
         "label": "Shop",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "shop"],
+        "systemSnippets": ["system"],
+        "userSnippets": ["game-info", "commands", "state", "tools", "goals", "memory", "journal", "shop"],
         "autoAdvance": false
       },
       {
         "id": "battle",
         "label": "Battle",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "battle"],
+        "systemSnippets": ["system"],
+        "userSnippets": ["game-info", "commands", "state", "tools", "goals", "memory", "journal", "battle"],
         "autoAdvance": true
       }
     ]

@@ -4,7 +4,7 @@ import {
   assemblePrompt,
   buildRenderContext,
   renderTemplate,
-  resolveSnippetsForMode,
+  resolveMode,
   type LivePromptInput,
 } from "./promptRender";
 
@@ -17,8 +17,18 @@ function makeBundle(overrides: Partial<PromptTemplateBundle> = {}): PromptTempla
     id: "0000_test",
     prompt: {
       modes: [
-        { id: "field", label: "Field", promptSnippets: ["system", "commands", "goals"] },
-        { id: "battle", label: "Battle", promptSnippets: ["system", "commands"] },
+        {
+          id: "field",
+          label: "Field",
+          systemSnippets: ["system"],
+          userSnippets: ["commands", "goals"],
+        },
+        {
+          id: "battle",
+          label: "Battle",
+          systemSnippets: ["system"],
+          userSnippets: ["commands"],
+        },
       ],
     },
     limits: {
@@ -61,24 +71,29 @@ describe("renderTemplate", () => {
   });
 });
 
-describe("resolveSnippetsForMode", () => {
-  it("returns the mode's snippets, or undefined when the mode is unknown", () => {
+describe("resolveMode", () => {
+  it("returns the mode entry with both arrays, or undefined when the mode is unknown", () => {
     const bundle = makeBundle();
-    expect(resolveSnippetsForMode(bundle, "battle")).toEqual(["system", "commands"]);
-    expect(resolveSnippetsForMode(bundle, "field")).toEqual(["system", "commands", "goals"]);
-    expect(resolveSnippetsForMode(bundle, "nope")).toBeUndefined();
+    expect(resolveMode(bundle, "battle")).toMatchObject({
+      systemSnippets: ["system"],
+      userSnippets: ["commands"],
+    });
+    expect(resolveMode(bundle, "field")).toMatchObject({
+      systemSnippets: ["system"],
+      userSnippets: ["commands", "goals"],
+    });
+    expect(resolveMode(bundle, "nope")).toBeUndefined();
   });
 });
 
 describe("assemblePrompt", () => {
-  it("routes the 'system' snippet to system and joins the rest as user", () => {
+  it("splits system and user by array (no filename convention)", () => {
     const { system, user } = assemblePrompt(live, makeBundle());
     expect(system).toBe("play ff1/0000_test mem 2048");
     expect(user).toContain("CMDS:");
     expect(user).toContain("- goto { \"location\": \"string\" }: walk somewhere");
     expect(user).toContain("- menu: press start");
     expect(user).toContain("## Goals\nwalk to coneria");
-    // Order preserved, system excluded from the user join.
     expect(user.indexOf("CMDS:")).toBeLessThan(user.indexOf("## Goals"));
     expect(user).not.toContain("play ff1/0000_test");
   });
