@@ -99,9 +99,7 @@ export function GameInfoPanel({
   playId,
   onRunSnippet,
   onManualCommand,
-  snippetPaused,
   snippetRunning,
-  onPauseSnippet,
   onStopSnippet,
 }: GameInfoPanelProps) {
   const [tab, setTab] = useState<Tab>("overview");
@@ -199,9 +197,7 @@ export function GameInfoPanel({
             onClearPending={agent?.clearPending}
             playId={playId}
             onRunSnippet={onRunSnippet}
-            snippetPaused={snippetPaused}
             snippetRunning={snippetRunning}
-            onPauseSnippet={onPauseSnippet}
             onStopSnippet={onStopSnippet}
             onManualCommand={onManualCommand}
             pendingMessage={agent?.pendingMessage}

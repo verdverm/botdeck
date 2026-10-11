@@ -15,6 +15,9 @@ interface ValidatedPartyMember {
   canAct?: boolean;
   pendingAction?: unknown;
   spellsKnown?: { name?: string; level?: number; slot?: number; school?: string }[];
+  spellCharges?: {
+    levels: { level: number; current?: number; max?: number }[];
+  };
 }
 
 interface ValidatedEnemy {
@@ -179,8 +182,20 @@ function validateSpell(
   if (!known) {
     return {
       error: `Spell "${spellName}" is not known by ${displayName}.`,
-      correction: buildSpellCorrection(displayName, spells),
+      correction: buildSpellCorrection(displayName, spells, actor?.spellCharges),
     };
+  }
+
+  // In FF1 each spell level costs one charge from that level's MP pool.
+  // Reject the command when the actor has no charges left for the spell's level.
+  if (known.level !== undefined && actor?.spellCharges) {
+    const charge = actor.spellCharges.levels.find((l) => l.level === known.level);
+    if (charge && charge.current === 0) {
+      return {
+        error: `${displayName} has no MP left for level ${known.level} spells.`,
+        correction: buildSpellCorrection(displayName, spells, actor.spellCharges),
+      };
+    }
   }
 
   return undefined;
@@ -390,17 +405,23 @@ function buildActorCorrection(state: ValidatedState, expectedActor: string | und
   return `Valid party members: ${names}. Name the actor exactly.`;
 }
 
-function buildSpellCorrection(actorName: string, spells: { name?: string; level?: number }[]): string {
+function buildSpellCorrection(
+  actorName: string,
+  spells: { name?: string; level?: number }[],
+  charges?: { levels: { level: number; current?: number; max?: number }[] },
+): string {
   if (spells.length === 0) {
     return `${actorName} knows no spells.`;
   }
   const list = spells
     .map((s) => {
       const level = s.level !== undefined ? ` (level ${s.level})` : "";
-      return `${s.name ?? "?"}${level}`;
+      const charge = s.level !== undefined ? charges?.levels.find((l) => l.level === s.level) : undefined;
+      const mp = charge ? ` [MP ${charge.current ?? "?"}/${charge.max ?? "?"}]` : "";
+      return `${s.name ?? "?"}${level}${mp}`;
     })
     .join(", ");
-  return `${actorName} knows: ${list}. Choose one of these spells.`;
+  return `${actorName} knows: ${list}. Choose a spell with available MP.`;
 }
 
 function buildTargetCorrection(targets: string[], state: ValidatedState, isBattle: boolean): string {

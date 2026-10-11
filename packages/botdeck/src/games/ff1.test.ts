@@ -387,9 +387,43 @@ describe("FF1GamePlugin", () => {
     battle.activePartyIndex = 0;
     vi.spyOn(plugin, "readState").mockReturnValue(state);
 
+    // CURE is the second learned spell (level 1, column 1), so the macro
+    // moves right once after opening the magic menu, not down.
     const macro = plugin.compile({ name: "magic", args: { actor: "Stu", spell: "CURE", target: "Stu" } });
-    expect(macro.filter((s) => s.button === NES_BUTTONS.DOWN).length).toBeGreaterThanOrEqual(1);
+    expect(macro.filter((s) => s.button === NES_BUTTONS.RIGHT).length).toBe(1);
+    expect(macro.filter((s) => s.button === NES_BUTTONS.DOWN).length).toBe(1); // MAGIC menu entry
     expect(() => plugin.compile({ name: "magic", args: { actor: "Stu", spell: "LIT", target: "Stu" } })).toThrow("magic");
+  });
+
+  it("navigates the magic menu grid by level and learned slot", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const state = baseState("battle", "battle");
+    const battle = (state.ff1 as FF1GameState).battle;
+    const party = (state.ff1 as FF1GameState).party;
+    // 3 spells per level: level 1 has FIRE/LIT/CURE, level 2 has ICE/HARM/SLOW.
+    party[0] = {
+      ...party[0]!,
+      spellsKnown: [
+        { id: 0, name: "FIRE", level: 1, school: "black", slot: 1 },
+        { id: 1, name: "LIT", level: 1, school: "black", slot: 2 },
+        { id: 2, name: "CURE", level: 1, school: "white", slot: 1 },
+        { id: 3, name: "ICE", level: 2, school: "black", slot: 1 },
+        { id: 4, name: "HARM", level: 2, school: "white", slot: 1 },
+        { id: 5, name: "SLOW", level: 2, school: "white", slot: 2 },
+      ],
+    };
+    battle.activePartyIndex = 0;
+    vi.spyOn(plugin, "readState").mockReturnValue(state);
+
+    // ICE is the first spell of level 2 -> one DOWN (past the level 1 row).
+    const ice = plugin.compile({ name: "magic", args: { actor: "Stu", spell: "ICE", target: "Goblin (slot 1)" } });
+    expect(ice.filter((s) => s.button === NES_BUTTONS.DOWN).length).toBe(2); // MAGIC menu entry + level 2
+    expect(ice.filter((s) => s.button === NES_BUTTONS.RIGHT).length).toBe(0);
+
+    // SLOW is the third spell of level 2 -> one DOWN, two RIGHT.
+    const slow = plugin.compile({ name: "magic", args: { actor: "Stu", spell: "SLOW", target: "Goblin (slot 1)" } });
+    expect(slow.filter((s) => s.button === NES_BUTTONS.DOWN).length).toBe(2);
+    expect(slow.filter((s) => s.button === NES_BUTTONS.RIGHT).length).toBe(2);
   });
 
   it("readState contains no raw Uint8Array byte payloads", () => {

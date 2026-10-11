@@ -39,9 +39,7 @@ interface AgentTabProps {
   onClearPending?: () => void;
   playId?: string;
   onRunSnippet?: (snippet: PlaySnippet) => void;
-  snippetPaused?: boolean;
   snippetRunning?: boolean;
-  onPauseSnippet?: () => void;
   onStopSnippet?: () => void;
   onManualCommand?: (command: GameCommand) => void;
   pendingMessage?: string;
@@ -445,9 +443,7 @@ export function AgentTab({
   onClearPending,
   playId,
   onRunSnippet,
-  snippetPaused,
   snippetRunning,
-  onPauseSnippet,
   onStopSnippet,
   onManualCommand,
   pendingMessage = "",
@@ -478,13 +474,6 @@ export function AgentTab({
             disabled={snippetRunning || isPlayingMacro || isThinking}
             onRun={onRunSnippet}
           />
-          <button
-            onClick={onPauseSnippet}
-            disabled={!snippetRunning}
-            className="rounded bg-neutral-700 px-2 py-1 text-xs font-medium text-neutral-200 hover:bg-neutral-600 disabled:opacity-50"
-          >
-            {snippetPaused ? "Resume" : "Pause"}
-          </button>
           <PrimaryActionButton
             runMode={runMode}
             autoRun={autoRun}

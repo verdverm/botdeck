@@ -281,6 +281,7 @@ function realBattleState(overrides: {
   pending?: number[];
   dead?: number[];
   spells?: Record<string, string[]>;
+  charges?: Record<string, { level: number; current: number; max: number }[]>;
 } = {}): Record<string, unknown> {
   const names = ["Stu", "Rias", "Zing", "Jaki"];
   const fullParty = names.map((name, index) => ({
@@ -291,6 +292,9 @@ function realBattleState(overrides: {
     hp: 20,
     maxHp: 20,
     spellsKnown: (overrides.spells?.[name] ?? []).map((spell) => ({ name: spell, level: 1, slot: 1, school: "black" })),
+    spellCharges: overrides.charges?.[name]
+      ? { levels: overrides.charges[name] }
+      : undefined,
     status: { ailments: [] },
   }));
   const battleParty = names.map((name, index) => ({
@@ -348,6 +352,26 @@ describe("validateCommand real battle state shape", () => {
     const result = validateCommand({ name: "magic", args: { actor: "Rias", spell: "LIT", target: "Stu" } }, req);
     expect(result).toBeDefined();
     expect(result!.error).toContain("LIT");
+  });
+
+  it("rejects magic when the actor has no MP for the spell's level", () => {
+    const req = makeRequest(
+      realBattleState({
+        nextActor: "Rias",
+        spells: { Rias: ["FIRE"] },
+        charges: { Rias: [{ level: 1, current: 0, max: 2 }] },
+      }),
+      BATTLE_OPTIONS,
+      "battle",
+      "Rias",
+    );
+    const result = validateCommand(
+      { name: "magic", args: { actor: "Rias", spell: "FIRE", target: "Goblin" } },
+      req,
+    );
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("no MP");
+    expect(result!.correction).toContain("MP 0/2");
   });
 
   it("resolves spells for an actor referenced by slot (regression: validateSpell slot)", () => {

@@ -848,12 +848,21 @@ export class FF1GamePlugin implements GamePlugin {
     steps.push(pressA());
 
     if (name === "magic") {
-      // Resolve the spell against the active actor's learned spell list so
-      // names like "FIRE" target the correct menu entry.
-      const spellName = String(command.args?.spell ?? "");
-      const spellLabels = getActiveActorSpells(state).map((s) => s.name);
-      const spellIndex = resolveNamedIndex(spellName, spellLabels, "magic");
-      steps.push(...navigateVertical(0, spellIndex));
+      // The battle magic menu is a 4-row (levels 1-4 / 5-8) by 3-column grid
+      // of the actor's learned spell slots. The cursor resets to level 1,
+      // column 0 on entry, so navigate by level (down) then slot (right).
+      const spellName = String(command.args?.spell ?? "").toUpperCase();
+      const spells = getActiveActorSpells(state);
+      const spellIndex = spells.findIndex((s) => s.name.toUpperCase() === spellName);
+      if (spellIndex < 0) {
+        throw new Error(
+          `magic: spell "${spellName}" is not known by the active actor. Known: ${spells.map((s) => s.name).join(", ") || "none"}.`,
+        );
+      }
+      const spellLevel = Math.floor(spellIndex / 3) + 1;
+      const spellCol = spellIndex % 3;
+      steps.push(...navigateDirection("down", spellLevel - 1));
+      steps.push(...navigateDirection("right", spellCol));
       steps.push(pressA());
     }
 

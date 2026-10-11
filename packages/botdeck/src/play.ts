@@ -28,6 +28,30 @@ export function readPlayId(game: string): string {
   return `${game}/${DEFAULT_PLAY_ID}`;
 }
 
+/**
+ * Resolve the active play id when no ?play= query param is present.
+ * Uses the first play listed for the game on the server, and updates the
+ * browser URL so the snapshot list loads for the correct play.
+ */
+export async function resolveDefaultPlayId(game: string): Promise<string> {
+  try {
+    const plays = await listPlays(game);
+    const first = plays[0];
+    if (first) {
+      const id = `${first.game}/${first.id}`;
+      if (typeof window !== "undefined") {
+        const url = new URL(window.location.href);
+        url.searchParams.set("play", id);
+        window.history.replaceState({}, "", url);
+      }
+      return id;
+    }
+  } catch (e) {
+    console.error(`failed to resolve default play for ${game}`, e);
+  }
+  return `${game}/${DEFAULT_PLAY_ID}`;
+}
+
 export function gamesUrl(): string {
   return "/api/games";
 }

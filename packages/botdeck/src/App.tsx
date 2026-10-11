@@ -9,11 +9,13 @@ import { useBotLoop } from "@/hooks/useBotLoop";
 import { GenericGamePlugin } from "@/games/generic";
 import { FF1GamePlugin } from "@/games/ff1";
 import {
+  DEFAULT_PLAY_ID,
   fetchDiff,
   loadPlayConfig,
   postState,
   readGameId,
   readPlayId,
+  resolveDefaultPlayId,
   stateUrl,
 } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
@@ -70,10 +72,19 @@ export function App() {
 
   const [playConfig, setPlayConfig] = useState<Record<string, unknown> | null>(null);
   useEffect(() => {
+    // If there is no ?play= query param we are waiting for resolveDefaultPlayId
+    // to pick the first real play; skip loading the static default config.
+    if (
+      typeof window !== "undefined" &&
+      !new URLSearchParams(window.location.search).get("play") &&
+      playId === `${game}/${DEFAULT_PLAY_ID}`
+    ) {
+      return;
+    }
     loadPlayConfig(playId)
       .then(setPlayConfig)
       .catch((e) => console.error("failed to load play config", e));
-  }, [playId]);
+  }, [playId, game]);
 
   const { turnTimeoutMs, settleDelayMs, collectStates } = useMemo(() => {
     const agent = isPlainObject(playConfig?.agent) ? playConfig.agent : {};
@@ -107,14 +118,8 @@ export function App() {
     metadataPath?: string;
   } | null>(null);
 
-  const [snippetPaused, setSnippetPaused] = useState(false);
-  const snippetPausedRef = useRef(false);
   const [snippetRunning, setSnippetRunning] = useState(false);
   const snippetAbortRef = useRef<(() => void) | null>(null);
-
-  useEffect(() => {
-    snippetPausedRef.current = snippetPaused;
-  }, [snippetPaused]);
 
   const onSnapshot = useCallback(
     async (name?: string) => {
@@ -156,6 +161,16 @@ export function App() {
     url.searchParams.set("play", nextPlayId);
     window.history.replaceState({}, "", url);
   }, []);
+
+  // When the page is opened without a ?play= param, pick the first play for
+  // the game so the Load menu shows the right snapshots.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (new URLSearchParams(window.location.search).get("play")) return;
+    void resolveDefaultPlayId(game).then((id) => {
+      if (id !== playId) switchPlay(id);
+    });
+  }, [game, playId, switchPlay]);
 
   const onRefreshState = useCallback(() => {
     const collected = refreshState();
@@ -212,7 +227,6 @@ export function App() {
     async (snippet: PlaySnippet): Promise<SnippetRunResult> => {
       const controller = new AbortController();
       snippetAbortRef.current = () => controller.abort();
-      setSnippetPaused(false);
       setSnippetRunning(true);
 
       const settle = (ms: number) =>
@@ -246,19 +260,6 @@ export function App() {
 
         for (const step of snippet.steps) {
           if (controller.signal.aborted) break;
-          if (snippetPausedRef.current) {
-            await new Promise<void>((resolve) => {
-              const check = () => {
-                if (!snippetPausedRef.current || controller.signal.aborted) {
-                  resolve();
-                  return;
-                }
-                window.setTimeout(check, 50);
-              };
-              check();
-            });
-          }
-          if (controller.signal.aborted) break;
           await runSnippetStep(step, controller.signal);
         }
 
@@ -279,16 +280,11 @@ export function App() {
         return { beforePath, afterPath, diff };
       } finally {
         snippetAbortRef.current = null;
-        setSnippetPaused(false);
         setSnippetRunning(false);
       }
     },
     [playId, loadState, collect, runSnippetStep],
   );
-
-  const onPauseSnippet = useCallback(() => {
-    setSnippetPaused((v) => !v);
-  }, []);
 
   const onStopSnippet = useCallback(() => {
     snippetAbortRef.current?.();
@@ -305,8 +301,8 @@ export function App() {
 
   const handleButtonDown = useCallback(
     (button: number) => {
-      // In step mode or snippet pause, route manual input through the macro runner.
-      if (agent.runMode === "step" || agent.pendingDecision || snippetPausedRef.current) {
+      // In step mode or with a pending decision, route manual input through the macro runner.
+      if (agent.runMode === "step" || agent.pendingDecision) {
         void agent.runManualMacro([{ button, holdFrames: 4, gapFrames: 4 }]);
         return;
       }
@@ -317,7 +313,7 @@ export function App() {
 
   const handleButtonUp = useCallback(
     (button: number) => {
-      if (agent.runMode === "step" || agent.pendingDecision || snippetPausedRef.current) {
+      if (agent.runMode === "step" || agent.pendingDecision) {
         return;
       }
       buttonUp(button);
@@ -416,9 +412,7 @@ export function App() {
             playId={playId}
             onRunSnippet={onRunSnippet}
             onManualCommand={onManualCommand}
-            snippetPaused={snippetPaused}
             snippetRunning={snippetRunning}
-            onPauseSnippet={onPauseSnippet}
             onStopSnippet={onStopSnippet}
           />
         </div>

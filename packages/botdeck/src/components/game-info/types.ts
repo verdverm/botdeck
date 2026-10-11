@@ -15,8 +15,6 @@ export interface GameInfoPanelProps {
   onRunSnippet?: (snippet: import("@/types").PlaySnippet) => void | Promise<SnippetRunResult>;
   /** Called when the user manually runs a single command (e.g., from the gamepad in step mode). */
   onManualCommand?: (command: import("@/types").GameCommand) => void;
-  snippetPaused?: boolean;
   snippetRunning?: boolean;
-  onPauseSnippet?: () => void;
   onStopSnippet?: () => void;
 }
