@@ -3,7 +3,7 @@ import { NES } from "jsnes";
 
 const ROOT = "/Users/tony/verdverm/botdeck";
 const ROM_PATH = `${ROOT}/games/ff1/game.nes`;
-const STATES = `${ROOT}/plays/ff1/0000_dev/states`;
+const STATES = `${ROOT}/plays/ff1/0001_dev/states`;
 
 export const A = 0, B = 1, SELECT = 2, START = 3, UP = 4, DOWN = 5, LEFT = 6, RIGHT = 7;
 

@@ -5,6 +5,7 @@ import { fetchDiff, postState, stepsUrl } from "@/play";
 import {
   isBattleOver,
   isCommandEntryReady,
+  isInBattle,
   isRoundExecuting,
   nextCommandableMember,
   type BattleStateLike,
@@ -117,6 +118,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   const runModeRef = useRef(runMode);
   const pendingMessageRef = useRef(pendingMessage);
   const turnAbortRef = useRef<AbortController | null>(null);
+  const battleStallsRef = useRef(0);
 
   useEffect(() => {
     autoRunRef.current = autoRun;
@@ -147,11 +149,12 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   }, [emulator]);
 
   const persistStep = useCallback(
-    async (record: StepRecord) => {
+    async (record: StepRecord, signal?: AbortSignal) => {
       const res = await fetch(stepsUrl(playId), {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(record),
+        signal: signal ?? null,
       });
       if (!res.ok) {
         const body = await res.text();
@@ -165,8 +168,9 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   const saveStepState: (
     seq: number,
     when: "before" | "after",
+    signal?: AbortSignal,
   ) => Promise<string | undefined> = useCallback(
-    async (seq, when) => {
+    async (seq, when, signal) => {
       if (!collect) return undefined;
       const snapshot = collect();
       if (!snapshot) return undefined;
@@ -174,6 +178,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         playId,
         snapshot,
         `step_${String(seq).padStart(6, "0")}_${when}`,
+        signal,
       );
       return result.statePath;
     },
@@ -193,6 +198,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       message: string,
       stateBefore?: string,
       response?: TurnResponse,
+      signal?: AbortSignal,
     ): Promise<void> => {
       const record: StepRecord = {
         stepId: "",
@@ -205,8 +211,9 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         error: message,
       };
       try {
-        await persistStep(record);
+        await persistStep(record, signal);
       } catch (persistErr) {
+        if (signal?.aborted) return;
         console.warn(`step ${seq} failure persist failed:`, persistErr);
       }
     },
@@ -449,6 +456,13 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         macro = [];
       }
 
+      // Long travel macros assume the game stays on the field. Let the plugin
+      // abort them the frame it leaves (random battle, town entrance), so the
+      // remaining presses are not spent in the battle menu and control comes
+      // back to the agent on the next turn. Compute the predicate before
+      // registering probes so a throwing plugin cannot leak them.
+      const abort = plugin.macroAbort?.(response.command);
+
       // Start per-frame dialog capture before the macro runs.
       const capturePlugin = plugin as unknown as {
         resetDialogCapture?: () => void;
@@ -466,11 +480,6 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       let postState: Record<string, unknown> | undefined;
       setIsPlayingMacro(true);
       try {
-        // Long travel macros assume the game stays on the field. Let the plugin
-        // abort them the frame it leaves (random battle, town entrance), so the
-        // remaining presses are not spent in the battle menu and control comes
-        // back to the agent on the next turn.
-        const abort = plugin.macroAbort?.(response.command);
         await emulator.runMacro(macro, abort);
         if (signal?.aborted) {
           throw new Error("turn cancelled");
@@ -507,7 +516,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         removeProbe();
       }
 
-      const stateAfter = collectStates ? await saveStepState(seq, "after") : undefined;
+      const stateAfter = collectStates ? await saveStepState(seq, "after", signal) : undefined;
 
       // Persist the captured dialog text on the step's state so it is saved
       // with the turn and visible to the agent next turn.
@@ -527,14 +536,14 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         stateAfter,
         ...(macroError !== undefined ? { error: macroError } : {}),
       };
-      await persistStep(record);
+      await persistStep(record, signal);
 
       let diff: Record<string, unknown> | undefined;
       if (collectStates && stateBefore && stateAfter) {
         try {
-          diff = await fetchDiff(playId, stateBefore, stateAfter);
+          diff = await fetchDiff(playId, stateBefore, stateAfter, signal);
         } catch (diffErr) {
-          console.warn(`step ${seq} diff failed:`, diffErr);
+          if (!signal?.aborted) console.warn(`step ${seq} diff failed:`, diffErr);
         }
       }
 
@@ -566,7 +575,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     ): Promise<TurnLogEntry | PendingDecision> => {
       const seq = (seqRef.current += 1);
       const ts = Date.now();
-      const stateBefore = collectStates ? await saveStepState(seq, "before") : undefined;
+      const stateBefore = collectStates ? await saveStepState(seq, "before", signal) : undefined;
 
       const request = buildRequest(pluginState, mode, actor);
       setLastRequest(request);
@@ -583,12 +592,12 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         // reflect it. Dropping failures silently is what made the history
         // section never appear while the loop kept erroring.
         const message = err instanceof Error ? err.message : String(err);
-        await persistFailedStep(seq, ts, request, message, stateBefore);
+        await persistFailedStep(seq, ts, request, message, stateBefore, undefined, signal);
         throw err;
       }
       setLastResponse(response);
       if (response.error) {
-        await persistFailedStep(seq, ts, request, response.error, stateBefore, response);
+        await persistFailedStep(seq, ts, request, response.error, stateBefore, response, signal);
         throw new Error(response.error);
       }
 
@@ -612,6 +621,61 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     [buildRequest, callAgent, collectStates, executeCommand, persistFailedStep, saveStepState],
   );
 
+  /**
+   * A coarse signature of the battle's progress-relevant state. Two turns
+   * with the same signature means nothing the loop did changed the game:
+   * commands are not latching, waits are not resolving, or the game is
+   * frozen. Progress is judged on state change, never on elapsed time.
+   */
+  const battleSignature = useCallback(
+    (state: Record<string, unknown>): string => {
+      const b = (state as unknown as BattleStateLike).ff1?.battle;
+      if (!b) return "";
+      return JSON.stringify({
+        phase: b.phase,
+        next: b.nextCommandableIndex,
+        queued: (b.party ?? []).map((m) => (m.pendingAction !== undefined ? 1 : 0)),
+        partyHp: (b.party ?? []).map((m) => m.hp),
+        enemyHp: (b.enemies ?? []).map((e) => e.hp),
+      });
+    },
+    [],
+  );
+
+  /**
+   * The victory/defeat sequence (result message, EXP/GIL, level-up pages) is
+   * part of the battle screen and advances on A presses. Nothing else in the
+   * loop presses A, so without this the game parks at battleEnding forever
+   * and every turn is a no-op. Each press is confirmed by an actual state
+   * change; a game that stops changing is reported as a stall, not spun on.
+   */
+  const dismissBattleEnd = useCallback(
+    async (signal?: AbortSignal): Promise<void> => {
+      const maxPresses = 12;
+      for (let presses = 0; presses < maxPresses; presses++) {
+        const before = plugin.readState();
+        if (!isInBattle(before as unknown as BattleStateLike)) return;
+        const beforeSig = battleSignature(before);
+        await emulator.runMacro(plugin.compile({ name: "interact" }));
+        const changed = await waitForBattlePhase(
+          (s) =>
+            !isInBattle(s as unknown as BattleStateLike) || battleSignature(s) !== beforeSig,
+          { signal, timeoutMs: 10_000 },
+        );
+        if (!changed) {
+          setError("battle-end sequence is not advancing on A presses; the game appears stuck");
+          setAutoRunState(false);
+          return;
+        }
+      }
+      if (isInBattle(plugin.readState() as unknown as BattleStateLike)) {
+        setError("battle-end sequence did not finish after 12 A presses");
+        setAutoRunState(false);
+      }
+    },
+    [plugin, emulator, waitForBattlePhase, battleSignature],
+  );
+
   const runBattleRound = useCallback(
     async (opts?: { signal?: AbortSignal }): Promise<void> => {
       // Battle-state offsets are VERIFIED (see @games/ff1-state reader.ts
@@ -621,6 +685,18 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       // party member index reported, and it guards against re-asking for the same
       // actor if the stub macro fails to advance the game's cursor.
       let state = plugin.readState();
+
+      // The battle outcome is decided but the game is still on the battle
+      // screen: dismiss the victory/defeat pages instead of ending the turn
+      // as a no-op.
+      if (
+        isBattleOver(state as unknown as BattleStateLike) &&
+        isInBattle(state as unknown as BattleStateLike)
+      ) {
+        await dismissBattleEnd(opts?.signal);
+        return;
+      }
+
       let guard = 0;
 
       // Reach a command-entry window (or battle end). Returns the fresh state,
@@ -741,7 +817,24 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setIsBattling(false);
 
       if (mode === "battle") {
+        // Progress is judged on game state, not wall time: a battle turn that
+        // leaves the battle signature byte-identical accomplished nothing
+        // (command not latching, wait not resolving, frozen game). Stop after
+        // repeated no-op turns instead of burning agent calls forever.
+        const beforeSig = battleSignature(state);
         await runBattleRound({ signal: controller.signal });
+        const afterSig = battleSignature(plugin.readState());
+        if (afterSig === beforeSig && isInBattle(plugin.readState() as unknown as BattleStateLike)) {
+          battleStallsRef.current += 1;
+          if (battleStallsRef.current >= 3) {
+            battleStallsRef.current = 0;
+            throw new Error(
+              "battle is not progressing: game state unchanged across 3 turns (a command is likely failing to latch)",
+            );
+          }
+        } else {
+          battleStallsRef.current = 0;
+        }
       } else {
         await decideAndMaybeExecute(state, mode, undefined, controller.signal);
       }
@@ -751,9 +844,11 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         setPendingMessage("");
       }
     } catch (err) {
+      // User-initiated stop (the abort signal reached a fetch, a phase wait,
+      // or the macro): not an error, leave autoRun off and report nothing.
+      if (controller.signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "turn cancelled") {
-        // User-initiated stop: leave autoRun off and do not report an error.
         return;
       }
       setError(msg);
@@ -770,6 +865,11 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   const executePending = useCallback(async () => {
     const pending = pendingDecision;
     if (!pending) return;
+    // Own the turn guard for the duration of the approval execution so the
+    // finally block cannot clear another turn's guard and the auto-run
+    // scheduler cannot interleave a second execution.
+    if (runningRef.current) return;
+    runningRef.current = true;
     setPendingDecision(undefined);
     setIsThinking(true);
 
@@ -808,6 +908,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         state = plugin.readState();
       }
     } catch (err) {
+      if (controller.signal.aborted) return;
       const msg = err instanceof Error ? err.message : String(err);
       if (msg === "turn cancelled") {
         return;
@@ -856,6 +957,14 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         setError("emulator is not running");
         return;
       }
+      // A manual command plays its macro through the same runner as the
+      // agent's; starting one while a turn is live would cancel the turn's
+      // macro mid-playback and silently corrupt its after-state. Refuse
+      // instead of interleaving.
+      if (runningRef.current) {
+        setError("an agent turn is in progress; stop it before issuing manual commands");
+        return;
+      }
       const seq = (seqRef.current += 1);
       const ts = Date.now();
       const stateBefore = collectStates ? await saveStepState(seq, "before") : undefined;
@@ -882,6 +991,10 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     async (steps: ButtonStep[]) => {
       if (!emulator.hasRomLoaded() || !emulator.isRunning()) {
         setError("emulator is not running");
+        return;
+      }
+      if (runningRef.current) {
+        setError("an agent turn is in progress; stop it before issuing manual input");
         return;
       }
       setIsPlayingMacro(true);

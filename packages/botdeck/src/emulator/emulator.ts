@@ -312,6 +312,11 @@ export class Emulator {
       this.buttonUp(step.button);
     }
     if (reason === "interrupt") this.macroInterrupted = true;
+    if (DEBUG_EMULATOR) {
+      console.log(
+        `[Emulator] macro cancelled (${reason}) at step ${this.macro.index}/${this.macro.steps.length} (${this.macro.phase})`,
+      );
+    }
     const resolve = this.macro.resolve;
     this.macro = null;
     this.macroInterrupt = undefined;

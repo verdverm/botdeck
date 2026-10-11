@@ -22,3 +22,4 @@ general:
 
 - commands need better filtering based on current state (eg. allowing goto while in a menu or allowing menu navigation while not in a menu)
 - navigation plan should not be shown if the curr/last command was not navigate
+- A* fails when an object is on a tile, such as an npc

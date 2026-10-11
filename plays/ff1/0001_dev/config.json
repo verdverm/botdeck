@@ -3,7 +3,7 @@
   "game": "ff1",
   "label": "dev space",
   "agent": {
-    "model": "small",
+    "model": "primary",
     "maxToolRounds": 25,
     "maxTokens": 2048,
     "limits": {

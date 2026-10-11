@@ -231,6 +231,7 @@ export async function postState(
   playId: string,
   data: CollectedState,
   name?: string,
+  signal?: AbortSignal,
 ): Promise<{
   statePath?: string;
   extractedPath?: string;
@@ -241,6 +242,7 @@ export async function postState(
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ data, name }),
+    signal: signal ?? null,
   });
   if (!res.ok) {
     const body = await res.text();
@@ -266,8 +268,11 @@ export async function fetchDiff(
   playId: string,
   before: string,
   after: string,
+  signal?: AbortSignal,
 ): Promise<Record<string, unknown>> {
-  const res = await fetch(diffUrl(playId, before, after));
+  const res = await fetch(diffUrl(playId, before, after), {
+    signal: signal ?? null,
+  });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`diff failed (${res.status}): ${body}`);

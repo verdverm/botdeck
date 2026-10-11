@@ -20,6 +20,7 @@ import {
 } from "@/play";
 import type { CollectedState } from "@/emulator/collectState";
 import type {
+  ButtonStep,
   GameCommand,
   PlaySnippet,
   SnippetRunResult,
@@ -189,21 +190,27 @@ export function App() {
   const runSnippetStep = useCallback(
     async (step: SnippetStep, signal: AbortSignal) => {
       if (signal.aborted) return;
+      const runSteps = async (steps: ButtonStep[]) => {
+        if (steps.length === 0) return;
+        const onAbort = () => emulator.cancelMacro();
+        signal.addEventListener("abort", onAbort);
+        try {
+          await emulator.runMacro(steps);
+        } finally {
+          signal.removeEventListener("abort", onAbort);
+        }
+      };
       switch (step.kind) {
         case "command": {
           const macro = plugin.compile(step.command);
           if (macro.length === 0 && step.command.name !== "wait") {
             throw new Error(`unknown or unsupported snippet command: ${step.command.name}`);
           }
-          if (macro.length > 0) {
-            await emulator.runMacro(macro);
-          }
+          await runSteps(macro);
           break;
         }
         case "macro": {
-          if (step.buttonSteps.length > 0) {
-            await emulator.runMacro(step.buttonSteps);
-          }
+          await runSteps(step.buttonSteps);
           break;
         }
         case "wait": {

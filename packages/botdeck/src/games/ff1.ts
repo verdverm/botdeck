@@ -12,8 +12,6 @@ import {
   formatFF1GameInfo,
   ADDR_DIALOG_OPEN,
   ADDR_MAPFLAGS,
-  MAPFLAG_BATTLE_SCREEN,
-  MAPFLAG_STANDARD,
   FF1_DIALOG_GEOMETRY,
   decodeNametableWindow,
   type FF1GameState,
@@ -627,40 +625,31 @@ export class FF1GamePlugin implements GamePlugin {
   }
 
   /**
-   * Overworld travel is the only long macro: a route can run for thousands of
-   * frames. A random battle or an entrance transition takes the game off the
-   * field, after which the remaining d-pad presses would be spent inside the
-   * battle menu or the new map. Abort on either condition, using the two
-   * single-bit `mapflags` ($2D) signals rather than a full state read, since
-   * this runs once per emulated frame.
+   * Travel macros (goto/grind) assume the game stays on the current map. Any
+   * transition - a random battle swirl, a town/castle/dungeon entrance, an
+   * exit or warp - ends the walk; the remaining d-pad presses would be spent
+   * inside the battle menu or the new map.
    *
-   * Semantics per context:
-   * - overworld goto/grind: abort on a battle OR on entering a standard map
-   *   (town/castle/dungeon entrance or warp) - both end the walk.
-   * - standard-map goto/grind: abort on a battle only. The STANDARD bit is
-   *   already set while navigating inside the map, and map switches (exit
-   *   teleport, warp) legitimately end the walk even though the flags byte
-   *   keeps the bit set.
+   * Every one of those transitions rewrites the mapflags byte ($2D) within a
+   * frame: the overworld reads 0 while walking, standard maps read 1, and
+   * transitions (battle swirl, entrance, exit, warp) all drive the byte
+   * through 2 before settling. Plain walking never touches it (verified
+   * frame-by-frame in both map families). So the predicate is deliberately
+   * the cheapest possible check - "has the flags byte changed since the
+   * macro started?" - sampled once per emulated frame.
+   *
+   * It must NOT use the parsed state reader: deriveBattlePhase corroborates
+   * battle RAM (btl_result, enemy count/HP, command buffer) that stays stale
+   * after earlier battles, which misreads these same transition windows as
+   * phantom battles - killing a fresh overworld macro on its first frames
+   * when no battle exists.
    */
   macroAbort(command: GameCommand): (() => boolean) | undefined {
     if (command.name !== "goto" && command.name !== "grind") return undefined;
     const mem = this.emulator.getMemory();
     if (!mem || mem.length < 0x10000) return undefined;
-    const view = createCpuMemoryView(mem);
-    const initial = readFF1State(view);
-    const startedOnStandardMap = initial.world.isStandardMap;
-    return () => {
-      const state = readFF1State(view);
-      if (startedOnStandardMap) {
-        // Inside a standard map: abort when the party leaves it or a battle
-        // actually starts. Using parsed game state avoids false positives from
-        // mapflags flicker during tile transitions.
-        if (!state.world.isStandardMap) return true;
-        return state.battle.inBattle;
-      }
-      // Overworld: abort on battle or on entering a standard map.
-      return state.battle.inBattle || state.world.isStandardMap;
-    };
+    const initialFlags = mem[ADDR_MAPFLAGS] ?? 0;
+    return () => (mem[ADDR_MAPFLAGS] ?? 0) !== initialFlags;
   }
 
   private compileGoto(command: GameCommand): ButtonStep[] {

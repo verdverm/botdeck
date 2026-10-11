@@ -156,7 +156,7 @@ describe("FF1GamePlugin", () => {
     expect(macro[0]?.holdFrames).toBe(6);
   });
 
-  it("aborts a goto macro when the game leaves the field", () => {
+  it("aborts a goto macro when the mapflags byte changes (battle, entrance, exit)", () => {
     const mem = new Uint8Array(0x10000);
     mem[0x0027] = 146;
     mem[0x0028] = 158;
@@ -164,22 +164,41 @@ describe("FF1GamePlugin", () => {
     vi.mocked(emulator.getMemory).mockReturnValue(mem);
     const plugin = new FF1GamePlugin(emulator);
 
+    // Stale battle RAM from an earlier battle: btl_result and enemy data stay
+    // nonzero on the overworld. The predicate must ignore it - only the
+    // mapflags byte decides.
+    mem[0x6b86] = 0x01; // btl_result leftover
+    mem[0x6c93] = 0x05; // enemy count leftover
+    mem[0x6bd3 + 0x02] = 0x01; // enemy HP leftover
+
     const abort = plugin.macroAbort!({ name: "goto", args: { location: "Coneria" } });
     expect(abort).toBeDefined();
+    // Overworld walking (flags=0): no abort despite the stale battle bytes.
     expect(abort!()).toBe(false);
 
-    // Real battle: battle screen drawn + active result + at least one enemy.
+    mem[0x002d] = 0x02; // transition: battle swirl or map entrance/exit
+    expect(abort!()).toBe(true);
+
+    mem[0x002d] = 0x01; // settled inside a standard map
+    expect(abort!()).toBe(true);
+
+    mem[0x002d] = 0x00; // back to the initial value: no abort
+    expect(abort!()).toBe(false);
+  });
+
+  it("aborts an in-town goto when the party leaves the standard map", () => {
+    const mem = new Uint8Array(0x10000);
+    mem[0x002d] = 0x01; // inside a standard map
+    const emulator = makeEmulator(146, 158);
+    vi.mocked(emulator.getMemory).mockReturnValue(mem);
+    const plugin = new FF1GamePlugin(emulator);
+
+    const abort = plugin.macroAbort!({ name: "goto", args: { location: "exit" } });
+    // Walking around town: flags stay 1, no abort.
+    expect(abort!()).toBe(false);
+    // Exit teleport or dungeon battle: the byte moves through 2.
     mem[0x002d] = 0x02;
-    mem[0x6b86] = 0x00; // btl_result = 0 (active)
-    mem[0x6c93] = 0x01; // enemy count = 1
-    mem[0x6bd3 + 0x02] = 0x01; // enemy 0 HP low byte > 0
     expect(abort!()).toBe(true);
-
-    mem[0x002d] = 0x01; // standard map: the party walked into an entrance
-    expect(abort!()).toBe(true);
-
-    mem[0x002d] = 0x00; // back on the overworld
-    expect(abort!()).toBe(false);
   });
 
   it("does not abort macros that are not travel", () => {
