@@ -12,9 +12,14 @@ import {
   readRecentStepHistory,
   listPlayAgentSnippets,
   readPlayAgentSnippet,
+  listGamePromptTemplates,
+  listPlayPromptTemplates,
+  readEffectivePromptTemplate,
   PathEscapeError,
   DEFAULT_RECENT_HISTORY_LIMIT,
   type AgentConfig,
+  type PromptConfig,
+  type PromptTemplateEntry,
 } from "./files.ts";
 
 export interface PromptParts {
@@ -160,8 +165,8 @@ export function renderPrompt(req: TurnRequest): PromptParts {
   const id = parsed?.id;
 
   const promptConfig = resolvePromptConfig(game, id);
-  const snippets = resolveModeSnippets(promptConfig, req.mode) ?? promptConfig.snippets ?? ["system", "commands", "state"];
-  if (snippets.length === 0) {
+  const snippets = resolveModeSnippets(promptConfig, req.mode);
+  if (!snippets || snippets.length === 0) {
     return { system: "", user: "" };
   }
 
@@ -196,4 +201,132 @@ export function renderPrompt(req: TurnRequest): PromptParts {
   }
 
   return { system, user: userParts.join("\n\n") };
+}
+
+// ---------------------------------------------------------------------------
+// Template + context bundle for the browser markdown tab.
+//
+// The browser mirrors `renderTemplate`/assembly above, but it cannot read the
+// repo filesystem. This endpoint-shaped bundle hands the client everything it
+// needs to render a prompt identically: the resolved prompt config (snippet
+// order + modes), each template's raw content tagged with its shadowing layer,
+// and the disk-derived context pieces (memory, goals, agent snippets, recent
+// history) plus the numeric limits those templates interpolate.
+// ---------------------------------------------------------------------------
+
+export interface TemplateSource {
+  name: string;
+  /** Content resolved through play-over-game shadowing (what renderPrompt reads). */
+  content: string;
+  /** Which layer provided the effective content. */
+  source: "play" | "game" | "none";
+  /** Raw game-layer template, if one exists. */
+  gameContent: string | null;
+  /** Raw play-layer override, if one exists. */
+  playContent: string | null;
+}
+
+export interface PromptTemplateBundle {
+  game: string;
+  id: string | undefined;
+  /** Resolved prompt config the client uses for group/order editing. */
+  prompt: PromptConfig;
+  /** Resolved agent config limits + recent-history cap the templates interpolate. */
+  limits: {
+    memoryLimit: string;
+    memoryCount: string;
+    goalsLimit: string;
+    journalLimit: string;
+    snippetLimit: string;
+    snippetCount: string;
+    recentHistoryLimit: number;
+  };
+  /** Disk-derived context pieces that a rendered prompt interpolates. */
+  context: {
+    memory: string;
+    goals: string;
+    agentSnippets: string;
+    recentHistory: string;
+  };
+  /** Every template referenced by the config or present on disk, with sources. */
+  templates: TemplateSource[];
+}
+
+function renderAgentSnippetsBlock(game: string, id: string | undefined): string {
+  return readAgentSnippets(game, id);
+}
+
+export function buildPromptTemplateBundle(game: string, id?: string): PromptTemplateBundle {
+  const prompt = resolvePromptConfig(game, id);
+  const agentConfig = id ? resolveAgentConfig(game, id) : resolveAgentConfig(game);
+  const limits = agentConfig.limits;
+
+  // Every template referenced by mode groups, plus any orphan files that exist
+  // on disk under either layer (game or play).
+  const names = new Set<string>([
+    ...(prompt.modes ?? []).flatMap((m) => m.promptSnippets),
+    ...listGamePromptTemplates(game).map((t) => t.name),
+    ...(id ? listPlayPromptTemplates(game, id).map((t) => t.name) : []),
+  ]);
+
+  const templates: TemplateSource[] = [...names]
+    .sort((a, b) => a.localeCompare(b))
+    .map((name) => {
+      const effective = readEffectivePromptTemplate(game, id, name);
+      let gameContent: string | null = null;
+      let playContent: string | null = null;
+      try {
+        gameContent = listGamePromptTemplates(game).some((t) => t.name === name)
+          ? readGameTemplateOrNull(game, name)
+          : null;
+      } catch {
+        gameContent = null;
+      }
+      if (id) {
+        try {
+          playContent = listPlayPromptTemplates(game, id).some((t) => t.name === name)
+            ? readPlayTemplateOrNull(game, id, name)
+            : null;
+        } catch {
+          playContent = null;
+        }
+      }
+      return { name, content: effective.content, source: effective.source, gameContent, playContent };
+    });
+
+  return {
+    game,
+    id,
+    prompt,
+    limits: {
+      memoryLimit: String(limits?.memory ?? 2048),
+      memoryCount: String(limits?.memoryCount ?? 10),
+      goalsLimit: String(limits?.goals ?? 1024),
+      journalLimit: String(limits?.journal ?? 32768),
+      snippetLimit: String(limits?.snippets ?? 4096),
+      snippetCount: String(limits?.snippetCount ?? 50),
+      recentHistoryLimit: agentConfig.recentHistoryLimit ?? DEFAULT_RECENT_HISTORY_LIMIT,
+    },
+    context: {
+      memory: id ? readPlayMemory(game, id) : "",
+      goals: id ? readPlayGoals(game, id) : "",
+      agentSnippets: renderAgentSnippetsBlock(game, id),
+      recentHistory: id
+        ? readRecentStepHistory(game, id, agentConfig.recentHistoryLimit ?? DEFAULT_RECENT_HISTORY_LIMIT)
+        : "",
+    },
+    templates,
+  };
+}
+
+// Thin null-safe readers mirroring files.ts, without throwing when a specific
+// layer's file is absent (the bundle reports a layer as `null`, not an error).
+function readGameTemplateOrNull(game: string, name: string): string | null {
+  const file = join(gameDir(game), "prompts", `${name}.md`);
+  return existsSync(file) ? readFileSync(file, "utf8") : null;
+}
+
+function readPlayTemplateOrNull(game: string, id: string, name: string): string | null {
+  const file = join(playUserSnippetsDir(game, id), `${name}.md`);
+  return existsSync(file) ? readFileSync(file, "utf8") : null;
 }

@@ -27,18 +27,17 @@
     ]
   },
   "prompt": {
-    "snippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "instructions"],
     "modes": [
       {
-        "id": "field",
-        "label": "Field",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "field"],
+        "id": "overworld",
+        "label": "Overworld",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "overworld"],
         "autoAdvance": true
       },
       {
-        "id": "battle",
-        "label": "Battle",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "battle"],
+        "id": "interior",
+        "label": "Interior",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "interior"],
         "autoAdvance": true
       },
       {
@@ -48,16 +47,10 @@
         "autoAdvance": false
       },
       {
-        "id": "inn",
-        "label": "Inn",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "inn"],
-        "autoAdvance": false
-      },
-      {
-        "id": "clinic",
-        "label": "Clinic",
-        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "clinic"],
-        "autoAdvance": false
+        "id": "battle",
+        "label": "Battle",
+        "promptSnippets": ["system", "game-info", "commands", "state", "tools", "goals", "memory", "journal", "battle"],
+        "autoAdvance": true
       }
     ]
   }

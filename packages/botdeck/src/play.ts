@@ -351,3 +351,244 @@ export async function deletePlay(playId: string): Promise<void> {
 function playIdUrl(playId: string): string {
   return playBase(playId);
 }
+
+// --- goals / memory / journal (agent-authored markdown) --------------------
+
+export function goalsUrl(playId: string): string {
+  return `${playBase(playId)}/goals`;
+}
+
+export async function loadGoals(playId: string): Promise<string> {
+  const res = await fetch(goalsUrl(playId));
+  if (!res.ok) throw new Error(`load goals failed (${res.status})`);
+  const body = (await res.json()) as { content: string };
+  return body.content ?? "";
+}
+
+export async function saveGoals(playId: string, content: string): Promise<string> {
+  const res = await fetch(goalsUrl(playId), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`save goals failed (${res.status}): ${body}`);
+  }
+  const json = (await res.json()) as { content: string };
+  return json.content ?? content;
+}
+
+export function memoryListUrl(playId: string): string {
+  return `${playBase(playId)}/memory`;
+}
+
+export function memoryEntryUrl(playId: string, slug: string): string {
+  return `${playBase(playId)}/memory/${encodeURIComponent(slug)}`;
+}
+
+export async function listMemory(playId: string): Promise<import("@/types").MemoryEntry[]> {
+  const res = await fetch(memoryListUrl(playId));
+  if (!res.ok) throw new Error(`list memory failed (${res.status})`);
+  return (await res.json()) as import("@/types").MemoryEntry[];
+}
+
+export async function readMemory(playId: string, slug: string): Promise<string> {
+  const res = await fetch(memoryEntryUrl(playId, slug));
+  if (!res.ok) throw new Error(`read memory failed (${res.status})`);
+  const body = (await res.json()) as { content: string };
+  return body.content ?? "";
+}
+
+export async function writeMemory(
+  playId: string,
+  slug: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch(memoryListUrl(playId), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ slug, content }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`write memory failed (${res.status}): ${body}`);
+  }
+}
+
+export async function deleteMemory(playId: string, slug: string): Promise<void> {
+  const res = await fetch(memoryEntryUrl(playId, slug), { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete memory failed (${res.status})`);
+}
+
+export function journalListUrl(playId: string): string {
+  return `${playBase(playId)}/journal`;
+}
+
+export function journalEntryUrl(playId: string, name: string): string {
+  return `${playBase(playId)}/journal/${encodeURIComponent(name)}`;
+}
+
+export async function listJournal(playId: string): Promise<import("@/types").JournalEntry[]> {
+  const res = await fetch(journalListUrl(playId));
+  if (!res.ok) throw new Error(`list journal failed (${res.status})`);
+  return (await res.json()) as import("@/types").JournalEntry[];
+}
+
+export async function readJournal(playId: string, name: string): Promise<string> {
+  const res = await fetch(journalEntryUrl(playId, name));
+  if (!res.ok) throw new Error(`read journal failed (${res.status})`);
+  const body = (await res.json()) as { content: string };
+  return body.content ?? "";
+}
+
+export async function writeJournal(
+  playId: string,
+  name: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch(journalListUrl(playId), {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ name, content }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`write journal failed (${res.status}): ${body}`);
+  }
+}
+
+export async function deleteJournal(playId: string, name: string): Promise<void> {
+  const res = await fetch(journalEntryUrl(playId, name), { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete journal failed (${res.status})`);
+}
+
+// --- prompt templates (game + play override) + config + context bundle ------
+
+export function promptContextUrl(playId: string): string {
+  return `${playBase(playId)}/prompt-context`;
+}
+
+export async function loadPromptContext(
+  playId: string,
+): Promise<import("@/types").PromptTemplateBundle> {
+  const res = await fetch(promptContextUrl(playId));
+  if (!res.ok) throw new Error(`load prompt context failed (${res.status})`);
+  return (await res.json()) as import("@/types").PromptTemplateBundle;
+}
+
+export function playPromptsUrl(playId: string): string {
+  return `${playBase(playId)}/prompts`;
+}
+
+export function playPromptUrl(playId: string, name: string): string {
+  return `${playBase(playId)}/prompts/${encodeURIComponent(name)}`;
+}
+
+export async function readPlayPrompt(playId: string, name: string): Promise<string> {
+  const res = await fetch(playPromptUrl(playId, name));
+  if (!res.ok) throw new Error(`read play prompt failed (${res.status})`);
+  const body = (await res.json()) as { content: string };
+  return body.content ?? "";
+}
+
+export async function writePlayPrompt(
+  playId: string,
+  name: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch(playPromptUrl(playId, name), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`write play prompt failed (${res.status}): ${body}`);
+  }
+}
+
+export async function deletePlayPrompt(playId: string, name: string): Promise<void> {
+  const res = await fetch(playPromptUrl(playId, name), { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete play prompt failed (${res.status})`);
+}
+
+export function gamePromptsUrl(game: string): string {
+  return `/api/games/${encodeURIComponent(game)}/prompts`;
+}
+
+export function gamePromptUrl(game: string, name: string): string {
+  return `${gamePromptsUrl(game)}/${encodeURIComponent(name)}`;
+}
+
+export async function readGamePrompt(game: string, name: string): Promise<string> {
+  const res = await fetch(gamePromptUrl(game, name));
+  if (!res.ok) throw new Error(`read game prompt failed (${res.status})`);
+  const body = (await res.json()) as { content: string };
+  return body.content ?? "";
+}
+
+export async function writeGamePrompt(
+  game: string,
+  name: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch(gamePromptUrl(game, name), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ content }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`write game prompt failed (${res.status}): ${body}`);
+  }
+}
+
+export async function deleteGamePrompt(game: string, name: string): Promise<void> {
+  const res = await fetch(gamePromptUrl(game, name), { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete game prompt failed (${res.status})`);
+}
+
+export function gameConfigUrl(game: string): string {
+  return `/api/games/${encodeURIComponent(game)}/config`;
+}
+
+export async function loadGameConfig(game: string): Promise<Record<string, unknown>> {
+  const res = await fetch(gameConfigUrl(game));
+  if (!res.ok) throw new Error(`load game config failed (${res.status})`);
+  return (await res.json()) as Record<string, unknown>;
+}
+
+/** Write the whole game config.json (used to persist prompt group/mode edits). */
+export async function saveGameConfig(
+  game: string,
+  config: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(gameConfigUrl(game), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`save game config failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as Record<string, unknown>;
+}
+
+/** Write the whole play config.json. */
+export async function savePlayConfig(
+  playId: string,
+  config: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const res = await fetch(playConfigUrl(playId), {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(config),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`save play config failed (${res.status}): ${body}`);
+  }
+  return (await res.json()) as Record<string, unknown>;
+}

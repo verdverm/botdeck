@@ -136,7 +136,6 @@ export function listGames(): GameInfo[] {
 }
 
 export interface PromptConfig {
-  snippets?: string[];
   modes?: AgentMode[];
 }
 
@@ -151,6 +150,13 @@ export function readGameConfig(game: string): Record<string, unknown> {
   const file = join(gameDir(game), "config.json");
   if (!existsSync(file)) return {};
   return JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+}
+
+export function writeGameConfig(game: string, config: Record<string, unknown>): Record<string, unknown> {
+  const dir = gameDir(game);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, "config.json"), JSON.stringify(config, null, 2) + "\n");
+  return config;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -183,31 +189,71 @@ function extractPromptConfig(config: Record<string, unknown> | undefined): Promp
   if (!config) return undefined;
   const prompt = config["prompt"];
   if (!isPlainObject(prompt)) return undefined;
-  const snippets = prompt["snippets"];
   const modes = prompt["modes"];
   const out: PromptConfig = {};
-  if (Array.isArray(snippets) && snippets.every((s) => typeof s === "string")) {
-    out.snippets = snippets;
-  }
   if (Array.isArray(modes) && modes.every(isAgentMode)) {
     out.modes = modes;
   }
-  if (out.snippets || out.modes) return out;
+  if (out.modes) return out;
   return undefined;
 }
 
 export function resolvePromptConfig(game: string, id?: string): PromptConfig {
-  if (id) {
-    try {
-      const play = extractPromptConfig(readPlayConfig(game, id));
-      if (play) return play;
-    } catch (e) {
-      if (!(e instanceof FileNotFoundError)) throw e;
-    }
-  }
   const gameCfg = extractPromptConfig(readGameConfig(game));
-  if (gameCfg) return gameCfg;
-  return { snippets: ["system", "commands", "state"] };
+  if (!id) return gameCfg ?? {};
+
+  let playCfg: PromptConfig | undefined;
+  try {
+    playCfg = extractPromptConfig(readPlayConfig(game, id));
+  } catch (e) {
+    if (!(e instanceof FileNotFoundError)) throw e;
+  }
+  if (!playCfg) return gameCfg ?? {};
+
+  // Per-group merge by mode id. Non-empty promptSnippets overrides; empty/absent
+  // inherits the game's. This lets a play mirror every group while only
+  // specializing the ones it actually changes.
+  const merged = mergeModes(gameCfg?.modes, playCfg.modes);
+  return merged ? { modes: merged } : {};
+}
+
+/**
+ * Merge play modes over game modes, keyed by id.
+ * - A play mode with a non-empty promptSnippets overrides that id.
+ * - A play mode with an empty promptSnippets inherits the game mode's list.
+ * - Game-only ids are retained; play-only ids are added.
+ * Order follows the game list, then any play-only ids appended.
+ */
+function mergeModes(gameModes?: AgentMode[], playModes?: AgentMode[]): AgentMode[] | undefined {
+  if (!playModes || playModes.length === 0) return gameModes;
+  if (!gameModes || gameModes.length === 0) return playModes;
+
+  const playById = new Map(playModes.map((m) => [m.id, m]));
+  const merged: AgentMode[] = [];
+
+  for (const gameMode of gameModes) {
+    const playMode = playById.get(gameMode.id);
+    if (!playMode) {
+      merged.push(gameMode);
+      continue;
+    }
+    playById.delete(gameMode.id);
+    const promptSnippets =
+      playMode.promptSnippets && playMode.promptSnippets.length > 0
+        ? playMode.promptSnippets
+        : gameMode.promptSnippets;
+    merged.push({
+      id: gameMode.id,
+      label: playMode.label ?? gameMode.label,
+      autoAdvance: playMode.autoAdvance ?? gameMode.autoAdvance,
+      promptSnippets,
+    });
+  }
+
+  // Any play-declared modes with no game counterpart are appended as-is.
+  for (const extra of playById.values()) merged.push(extra);
+
+  return merged;
 }
 
 export class AgentLimits extends Schema.Class<AgentLimits>("AgentLimits")({
@@ -641,6 +687,137 @@ export function deletePlayAgentSnippet(game: string, id: string, name: string): 
   const file = join(playAgentSnippetsDir(game, id), `${name}.md`);
   if (!existsSync(file)) throw new FileNotFoundError(file);
   rmSync(file);
+}
+
+// --- prompt templates (markdown constitution) ----------------------------
+// Prompt templates live in two shadowing layers that `prompts.ts` resolves at
+// render time: per-play overrides under `snippets/user/<name>.md`, then game
+// defaults under `games/<game>/prompts/<name>.md`. These helpers expose BOTH
+// layers over the file API so the exact files that build the prompt can be
+// read and edited from the browser. Note the play override dir also holds
+// `.snippet.json` macro records; these helpers only ever touch `.md`.
+
+function assertPromptName(name: string): string {
+  if (
+    name === "" ||
+    name === "." ||
+    name === ".." ||
+    name.includes("/") ||
+    name.includes("\\") ||
+    name.includes("\0") ||
+    name.startsWith(".")
+  ) {
+    throw new PathEscapeError(`prompt name: ${name}`);
+  }
+  return name;
+}
+
+export function gamePromptsDir(game: string): string {
+  return join(gameDir(game), "prompts");
+}
+
+export interface PromptTemplateEntry {
+  /** Snippet name without the `.md` extension. */
+  name: string;
+  /** Which shadowing layer this entry came from. */
+  level: "game" | "play";
+  path: string;
+  url: string;
+}
+
+function listPromptMd(dir: string): string[] {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir, { withFileTypes: true })
+    .filter((d) => d.isFile() && d.name.endsWith(".md"))
+    .map((d) => d.name.replace(/\.md$/, ""))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+export function listGamePromptTemplates(game: string): PromptTemplateEntry[] {
+  return listPromptMd(gamePromptsDir(game)).map((name) => ({
+    name,
+    level: "game" as const,
+    path: `games/${game}/prompts/${name}.md`,
+    url: `/api/games/${encodeURIComponent(game)}/prompts/${encodeURIComponent(name)}`,
+  }));
+}
+
+export function listPlayPromptTemplates(game: string, id: string): PromptTemplateEntry[] {
+  return listPromptMd(playUserSnippetsDir(game, id)).map((name) => ({
+    name,
+    level: "play" as const,
+    path: `plays/${game}/${id}/snippets/user/${name}.md`,
+    url: `/api/plays/${encodeURIComponent(game)}/${encodeURIComponent(id)}/prompts/${encodeURIComponent(name)}`,
+  }));
+}
+
+export function readGamePromptTemplate(game: string, name: string): string {
+  assertPromptName(name);
+  const file = join(gamePromptsDir(game), `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return readFileSync(file, "utf8");
+}
+
+export function writeGamePromptTemplate(
+  game: string,
+  name: string,
+  content: string,
+): string {
+  assertPromptName(name);
+  const dir = gamePromptsDir(game);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${name}.md`), content);
+  return content;
+}
+
+export function deleteGamePromptTemplate(game: string, name: string): void {
+  assertPromptName(name);
+  const file = join(gamePromptsDir(game), `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  rmSync(file);
+}
+
+export function readPlayPromptTemplate(game: string, id: string, name: string): string {
+  assertPromptName(name);
+  const file = join(playUserSnippetsDir(game, id), `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  return readFileSync(file, "utf8");
+}
+
+export function writePlayPromptTemplate(
+  game: string,
+  id: string,
+  name: string,
+  content: string,
+): string {
+  assertPromptName(name);
+  const dir = playUserSnippetsDir(game, id);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, `${name}.md`), content);
+  return content;
+}
+
+export function deletePlayPromptTemplate(game: string, id: string, name: string): void {
+  assertPromptName(name);
+  const file = join(playUserSnippetsDir(game, id), `${name}.md`);
+  if (!existsSync(file)) throw new FileNotFoundError(file);
+  rmSync(file);
+}
+
+/** Effective (override-shadowed) template content for a snippet name. */
+export function readEffectivePromptTemplate(
+  game: string,
+  id: string | undefined,
+  name: string,
+): { content: string; source: "play" | "game" | "none" } {
+  assertPromptName(name);
+  if (id) {
+    const playFile = join(playUserSnippetsDir(game, id), `${name}.md`);
+    if (existsSync(playFile)) return { content: readFileSync(playFile, "utf8"), source: "play" };
+  }
+  const gameFile = join(gamePromptsDir(game), `${name}.md`);
+  if (existsSync(gameFile)) return { content: readFileSync(gameFile, "utf8"), source: "game" };
+  return { content: "", source: "none" };
 }
 
 export interface StepRecord {

@@ -39,7 +39,7 @@ export interface AgentMode {
 export interface TurnRequest {
   gameId: string;
   playId?: string;
-  /** Active agent mode (field/battle/shop/inn/clinic); drives prompt snippet selection. */
+  /** Active agent mode (overworld/interior/shop/battle); drives prompt snippet selection. */
   mode?: string;
   state: Record<string, unknown>;
   screenshot?: string;
@@ -105,7 +105,7 @@ export interface GamePlugin {
   title: string;
   availableCommands(state?: Record<string, unknown>, context?: { actor?: string }): CommandSpec[];
   readState(): Record<string, unknown>;
-  /** Current agent mode for this plugin state (field/battle/shop/inn). */
+  /** Current agent mode for this plugin state (overworld/interior/shop/battle). */
   getMode(state?: Record<string, unknown>): string;
   compile(command: GameCommand): ButtonStep[];
   /**
@@ -181,4 +181,71 @@ export interface SnippetRunResult {
   beforePath?: string;
   afterPath?: string;
   diff?: Record<string, unknown>;
+}
+
+// --- markdown tab: agent memory / journal / goals / prompt templates -------
+// These mirror the vermbot `files.ts` / `prompts.ts` shapes returned over the
+// file API. AgentMode (prompt group) is already declared above with the turn
+// protocol types.
+
+/** A memory/journal entry as listed by GET .../memory | .../journal. */
+export interface MemoryEntry {
+  slug: string;
+  mtime: number;
+  preview: string;
+  path: string;
+  url: string;
+}
+
+export interface JournalEntry {
+  name: string;
+  mtime: number;
+  preview: string;
+  path: string;
+  url: string;
+}
+
+/** A prompt template file listed at either the game or play layer. */
+export interface PromptTemplateEntry {
+  name: string;
+  level: "game" | "play";
+  path: string;
+  url: string;
+}
+
+/** One resolved template inside a prompt-context bundle, with both layers. */
+export interface TemplateSource {
+  name: string;
+  content: string;
+  source: "play" | "game" | "none";
+  gameContent: string | null;
+  playContent: string | null;
+}
+
+/** The resolved prompt config (modes only) shared with the backend. */
+export interface PromptConfig {
+  modes?: AgentMode[];
+}
+
+/** GET .../prompt-context bundle: everything the browser needs to render. */
+export interface PromptTemplateBundle {
+  game: string;
+  id: string | undefined;
+  prompt: PromptConfig;
+  limits: {
+    memoryLimit: string;
+    memoryCount: string;
+    goalsLimit: string;
+    journalLimit: string;
+    snippetLimit: string;
+    snippetCount: string;
+    recentHistoryLimit: number;
+  };
+  context: {
+    memory: string;
+    goals: string;
+    agentSnippets: string;
+    recentHistory: string;
+  };
+  templates: TemplateSource[];
 }

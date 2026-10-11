@@ -6,6 +6,12 @@
  *   GET    /api/games                       - list games
  *   GET    /api/games/:game/rom             - ROM binary
  *   GET    /api/games/:game/splash          - splash PNG
+ *   GET    /api/games/:game/config          - read game config.json
+ *   PUT    /api/games/:game/config          - write game config.json
+ *   GET    /api/games/:game/prompts         - list game prompt templates
+ *   GET    /api/games/:game/prompts/:name    - read game prompt template
+ *   PUT    /api/games/:game/prompts/:name    - create/update game prompt template
+ *   DELETE /api/games/:game/prompts/:name    - delete game prompt template
  *   GET    /api/plays?game=<game>           - list plays
  *   POST   /api/plays                       - create play
  *   GET    /api/plays/:game/:id             - play metadata
@@ -29,6 +35,11 @@
  *   DELETE /api/plays/:game/:id/journal/:name - remove journal entry
  *   GET    /api/plays/:game/:id/goals       - read goals
  *   PUT    /api/plays/:game/:id/goals       - write goals
+ *   GET    /api/plays/:game/:id/prompt-context - template + context bundle for the markdown tab
+ *   GET    /api/plays/:game/:id/prompts     - list play-level prompt overrides (.md)
+ *   GET    /api/plays/:game/:id/prompts/:name  - read a play prompt override
+ *   PUT    /api/plays/:game/:id/prompts/:name  - create/update a play prompt override
+ *   DELETE /api/plays/:game/:id/prompts/:name  - delete a play prompt override
  *   GET    /api/plays/:game/:id/snippets/user  - list user/replay snippets
  *   GET    /api/plays/:game/:id/snippets/user/:snippetId - read/update/delete user/replay snippet
  *   GET    /api/plays/:game/:id/snippets/agent - list agent-authored snippets
@@ -45,6 +56,7 @@
 
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { decide } from "./agent.ts";
+import { buildPromptTemplateBundle } from "./prompts.ts";
 import type { TurnRequest } from "./protocol.ts";
 import {
   readRom,
@@ -85,6 +97,16 @@ import {
   readPlaySnippet,
   writePlaySnippet,
   deletePlaySnippet,
+  listGamePromptTemplates,
+  readGamePromptTemplate,
+  writeGamePromptTemplate,
+  deleteGamePromptTemplate,
+  listPlayPromptTemplates,
+  readPlayPromptTemplate,
+  writePlayPromptTemplate,
+  deletePlayPromptTemplate,
+  readGameConfig,
+  writeGameConfig,
   slugify,
   formatTimestamp,
   FileNotFoundError,
@@ -164,22 +186,103 @@ async function handleTurn(req: IncomingMessage, res: ServerResponse): Promise<bo
   return true;
 }
 
-function handleGames(
-  _req: IncomingMessage,
+async function handleGames(
+  req: IncomingMessage,
   res: ServerResponse,
   segments: string[],
-): boolean {
+): Promise<boolean> {
   // segments = ["api", "games", ...]
   if (segments[1] !== "games") return false;
+
+  const gameError = (err: unknown): void => {
+    if (err instanceof FileNotFoundError) json(res, 404, { error: String(err) });
+    else if (err instanceof PathEscapeError) json(res, 400, { error: String(err) });
+    else if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+    else json(res, 500, { error: String(err) });
+  };
 
   if (segments.length === 2) {
     json(res, 200, listGames());
     return true;
   }
 
+  const game = segments[2]!;
+
+  // /api/games/:game/config  (GET | PUT)
+  if (segments.length === 4 && segments[3] === "config") {
+    if (req.method === "GET") {
+      try {
+        json(res, 200, readGameConfig(game));
+      } catch (err) {
+        gameError(err);
+      }
+      return true;
+    }
+    if (req.method === "PUT") {
+      try {
+        const body = await readBody(req);
+        const config = JSON.parse(body) as Record<string, unknown>;
+        json(res, 200, writeGameConfig(game, config));
+      } catch (err) {
+        gameError(err);
+      }
+      return true;
+    }
+    return true;
+  }
+
+  // /api/games/:game/prompts  (GET list)
+  if (segments.length === 4 && segments[3] === "prompts") {
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listGamePromptTemplates(game));
+      } catch (err) {
+        gameError(err);
+      }
+      return true;
+    }
+    return true;
+  }
+
+  // /api/games/:game/prompts/:name  (GET | PUT | DELETE)
+  if (segments.length === 5 && segments[3] === "prompts") {
+    const name = segments[4]!;
+    if (req.method === "GET") {
+      try {
+        json(res, 200, { name, content: readGamePromptTemplate(game, name) });
+      } catch (err) {
+        gameError(err);
+      }
+      return true;
+    }
+    if (req.method === "PUT") {
+      try {
+        const body = await readBody(req);
+        const { content } = JSON.parse(body) as { content: string };
+        if (typeof content !== "string") {
+          throw new ValidationError("content must be a string");
+        }
+        writeGamePromptTemplate(game, name, content);
+        json(res, 200, { name, content });
+      } catch (err) {
+        gameError(err);
+      }
+      return true;
+    }
+    if (req.method === "DELETE") {
+      try {
+        deleteGamePromptTemplate(game, name);
+        json(res, 204, { ok: true });
+      } catch (err) {
+        gameError(err);
+      }
+      return true;
+    }
+    return true;
+  }
+
   // /api/games/:game/rom
   if (segments.length === 4 && segments[3] === "rom") {
-    const game = segments[2]!;
     try {
       binary(res, readRom(game));
     } catch (err) {
@@ -192,7 +295,6 @@ function handleGames(
 
   // /api/games/:game/splash
   if (segments.length === 4 && segments[3] === "splash") {
-    const game = segments[2]!;
     try {
       png(res, readSplash(game));
     } catch (err) {
@@ -706,6 +808,77 @@ async function handlePlays(
     return false;
   }
 
+  // /api/plays/:game/:id/prompt-context  (GET template + context bundle)
+  if (segments.length === 5 && segments[4] === "prompt-context") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    if (req.method === "GET") {
+      try {
+        json(res, 200, buildPromptTemplateBundle(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // /api/plays/:game/:id/prompts  (GET list of play-level override .md)
+  if (segments.length === 5 && segments[4] === "prompts") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    if (req.method === "GET") {
+      try {
+        json(res, 200, listPlayPromptTemplates(game, id));
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+    return false;
+  }
+
+  // /api/plays/:game/:id/prompts/:name  (GET | PUT | DELETE) for a play override .md
+  if (segments.length === 6 && segments[4] === "prompts") {
+    const game = segments[2]!;
+    const id = segments[3]!;
+    const name = segments[5]!;
+
+    if (req.method === "GET") {
+      try {
+        json(res, 200, { name, content: readPlayPromptTemplate(game, id, name) });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+    if (req.method === "PUT") {
+      try {
+        const body = await readBody(req);
+        const { content } = JSON.parse(body) as { content: string };
+        if (typeof content !== "string") {
+          throw new ValidationError("content must be a string");
+        }
+        writePlayPromptTemplate(game, id, name, content);
+        json(res, 200, { name, content });
+      } catch (err) {
+        if (err instanceof ValidationError) json(res, 400, { error: String(err) });
+        else sendError(err);
+      }
+      return true;
+    }
+    if (req.method === "DELETE") {
+      try {
+        deletePlayPromptTemplate(game, id, name);
+        json(res, 204, { ok: true });
+      } catch (err) {
+        sendError(err);
+      }
+      return true;
+    }
+    return false;
+  }
+
   // /api/plays/:game/:id/steps (GET | POST)
   if (segments.length === 5 && segments[4] === "steps") {
     const game = segments[2]!;
@@ -781,7 +954,7 @@ const server = createServer(async (req, res) => {
 
   try {
     if (await handleTurn(req, res)) return;
-    if (handleGames(req, res, segments)) return;
+    if (await handleGames(req, res, segments)) return;
     if (await handlePlays(req, res, segments, url)) return;
   } catch (err) {
     json(res, 500, { error: String(err) });

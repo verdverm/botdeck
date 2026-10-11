@@ -94,7 +94,10 @@ function setSnippetList(game: string, id: string | undefined, snippets: string[]
   const existing = id
     ? { id, game }
     : {};
-  writeFileSync(configPath, JSON.stringify({ ...existing, prompt: { snippets } }));
+  // Modes are the only source of a snippet list; tests use a single "field"
+  // mode. Renderers pass `mode: "field"` on the TurnRequest to select it.
+  const mode = { id: "field", label: "Field", promptSnippets: snippets };
+  writeFileSync(configPath, JSON.stringify({ ...existing, prompt: { modes: [mode] } }));
 }
 
 describe("renderPrompt", () => {
@@ -123,6 +126,7 @@ describe("renderPrompt", () => {
       state: "State: {{stateJson}}",
     });
     const req: TurnRequest = {
+      mode: "field",
       gameId: game,
       state: {},
       options: [],
@@ -139,7 +143,8 @@ describe("renderPrompt", () => {
       a: "first",
       b: "second",
     });
-    const req: TurnRequest = { gameId: game, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toBe("first\n\nsecond");
   });
@@ -153,7 +158,8 @@ describe("renderPrompt", () => {
     writePlayPrompts(game, id, {
       system: "play system",
     });
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { system, user } = renderPrompt(req);
     expect(system).toBe("play system");
     expect(user).toBe("game state");
@@ -171,7 +177,8 @@ describe("renderPrompt", () => {
     const agentDir = join(playDir(game, id), "snippets", "agent");
     mkdirSync(agentDir, { recursive: true });
     writeFileSync(join(agentDir, "system.md"), "agent system");
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { system, user } = renderPrompt(req);
     expect(system).toBe("play system");
     expect(user).toContain("game state");
@@ -187,6 +194,7 @@ describe("renderPrompt", () => {
       state: "{{stateJson}}",
     });
     const req: TurnRequest = {
+      mode: "field",
       gameId: game,
       playId: `${game}/${id}`,
       state: { hp: 10 },
@@ -201,9 +209,10 @@ describe("renderPrompt", () => {
   it("returns empty parts when snippet list is empty", () => {
     writeFileSync(
       join(playDir(game, id), "config.json"),
-      JSON.stringify({ id, game, prompt: { snippets: [] } }),
+      JSON.stringify({ id, game, prompt: { modes: [] } }),
     );
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { system, user } = renderPrompt(req);
     expect(system).toBe("");
     expect(user).toBe("");
@@ -215,7 +224,8 @@ describe("renderPrompt", () => {
       system: "sys",
       exists: "yes",
     });
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toBe("yes");
   });
@@ -225,7 +235,8 @@ describe("renderPrompt", () => {
     writeGamePrompts(game, {
       system: "sys",
     });
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     expect(() => renderPrompt(req)).toThrow();
   });
 
@@ -239,7 +250,8 @@ describe("renderPrompt", () => {
     mkdirSync(agentDir, { recursive: true });
     writeFileSync(join(agentDir, "zebra.md"), "last agent note");
     writeFileSync(join(agentDir, "alpha.md"), "first agent note");
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user.indexOf("user body")).toBeLessThan(user.indexOf("Agent-authored snippets"));
     expect(user.indexOf("### alpha")).toBeLessThan(user.indexOf("### zebra"));
@@ -251,7 +263,8 @@ describe("renderPrompt", () => {
       system: "sys",
       state: "user body",
     });
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toBe("user body");
   });
@@ -263,6 +276,7 @@ describe("renderPrompt", () => {
       state: "user body",
     });
     const req: TurnRequest = {
+      mode: "field",
       gameId: game,
       playId: `${game}/${id}`,
       state: {},
@@ -282,7 +296,8 @@ describe("renderPrompt", () => {
       system: "sys",
       state: "user body",
     });
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).not.toContain("Message from the user");
   });
@@ -312,7 +327,8 @@ describe("renderPrompt", () => {
       battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 0 } }]),
     );
 
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toContain("## Recent actions");
     // Derived from the before/after battle-command-buffer diff, not the model.
@@ -335,7 +351,8 @@ describe("renderPrompt", () => {
       battleSnapshot([]),
       battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 1 } }]),
     );
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toContain("TARGET DRIFT: asked slot 0, landed slot 1");
     expect(user).not.toContain("MODEL CLAIM SHOULD NOT APPEAR");
@@ -360,7 +377,7 @@ describe("renderPrompt", () => {
           limits: { goals: 1024, memory: 2048, journal: 8192, memoryCount: 10, snippets: 4096, snippetCount: 50 },
           tools: ["memory_write"],
         },
-        prompt: { snippets: ["system", "state"] },
+        prompt: { modes: [{ id: "field", label: "Field", promptSnippets: ["system", "state"] }] },
       }),
     );
     writeStepWithDiff(
@@ -372,7 +389,8 @@ describe("renderPrompt", () => {
       battleSnapshot([{ member: "Stu", command: "attack", target: { kind: "enemy", slot: 0 } }]),
     );
 
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     expect(user).toContain("Recent actions");
     expect(user).toContain("Stu queued ATTACK");
@@ -386,7 +404,7 @@ describe("renderPrompt", () => {
     });
     writeFileSync(
       join(playDir(game, id), "config.json"),
-      JSON.stringify({ id, game, agent: { recentHistoryLimit: 1 }, prompt: { snippets: ["system", "state"] } }),
+      JSON.stringify({ id, game, agent: { recentHistoryLimit: 1 }, prompt: { modes: [{ id: "field", label: "Field", promptSnippets: ["system", "state"] }] } }),
     );
     writeStepWithDiff(
       game,
@@ -405,7 +423,8 @@ describe("renderPrompt", () => {
       battleSnapshot([{ member: "Zing", command: "attack", target: { kind: "enemy", slot: 1 } }]),
     );
 
-    const req: TurnRequest = { gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
+    const req: TurnRequest = {
+      mode: "field", gameId: game, playId: `${game}/${id}`, state: {}, options: [] };
     const { user } = renderPrompt(req);
     // Only the latest step is included (limit 1), derived from its state diff.
     expect(user).toContain("Zing queued ATTACK -> Imp (enemy slot 1)");

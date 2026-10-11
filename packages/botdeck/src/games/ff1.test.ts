@@ -123,24 +123,26 @@ describe("FF1GamePlugin", () => {
     expect(names).not.toContain("stay");
   });
 
-  it("advertises inn stay when at an inn", () => {
+  it("advertises generic menu nav at an inn (no distinct mode)", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
     const options = plugin.availableCommands(baseState("menu", "inn"));
     const names = options.map((o) => o.name);
 
-    expect(names).toContain("stay");
     expect(names).toContain("menu_navigate");
+    expect(names).toContain("menu_select");
+    expect(names).not.toContain("stay");
     expect(names).not.toContain("buy");
     expect(names).not.toContain("sell");
   });
 
-  it("advertises clinic heal when at a clinic", () => {
+  it("advertises generic menu nav at a clinic (no distinct mode)", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
     const options = plugin.availableCommands(baseState("menu", "clinic"));
     const names = options.map((o) => o.name);
 
-    expect(names).toContain("heal");
     expect(names).toContain("menu_navigate");
+    expect(names).toContain("menu_select");
+    expect(names).not.toContain("heal");
     expect(names).not.toContain("buy");
     expect(names).not.toContain("stay");
   });
@@ -291,10 +293,10 @@ describe("FF1GamePlugin", () => {
     expect(plugin.compile({ name: "menu_cancel" })[0]?.button).toBe(NES_BUTTONS.B);
   });
 
-  it("compiles stay and heal as confirm sequences", () => {
+  it("returns no macro for the removed stay/heal commands", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
-    expect(plugin.compile({ name: "stay" })).toHaveLength(2);
-    expect(plugin.compile({ name: "heal" })).toHaveLength(2);
+    expect(plugin.compile({ name: "stay" })).toHaveLength(0);
+    expect(plugin.compile({ name: "heal" })).toHaveLength(0);
   });
 
   it("compiles fight to menu navigation plus linear target-cursor navigation", () => {

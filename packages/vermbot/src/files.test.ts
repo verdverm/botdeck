@@ -29,6 +29,15 @@ import {
   listPlaySteps,
   readPlayStep,
   readRecentStepHistory,
+  listGamePromptTemplates,
+  readGamePromptTemplate,
+  writeGamePromptTemplate,
+  deleteGamePromptTemplate,
+  listPlayPromptTemplates,
+  readPlayPromptTemplate,
+  writePlayPromptTemplate,
+  deletePlayPromptTemplate,
+  readEffectivePromptTemplate,
 } from "./files.ts";
 import { useTempRepoRoot } from "./test-root.ts";
 
@@ -62,7 +71,14 @@ function seedGameConfig(): void {
       recentHistoryLimit: 10,
     },
     prompt: {
-      snippets: ["system", "commands", "state"],
+      modes: [
+        {
+          id: "field",
+          label: "Field",
+          promptSnippets: ["system", "commands", "state"],
+          autoAdvance: true,
+        },
+      ],
     },
   });
 }
@@ -173,29 +189,82 @@ describe("resolveAgentConfig", () => {
 });
 
 describe("resolvePromptConfig", () => {
-  it("returns the play prompt snippet list when present", () => {
+  it("merges a play mode's non-empty list over the game's for the same id", () => {
     createPlay(TEST_GAME, "0000_dev");
     try {
       writePlayConfig(TEST_GAME, "0000_dev", {
         id: "0000_dev",
         game: TEST_GAME,
-        prompt: { snippets: ["play-system", "play-state"] },
+        prompt: {
+          modes: [
+            {
+              id: "field",
+              label: "Field",
+              promptSnippets: ["play-system", "play-state"],
+              autoAdvance: true,
+            },
+          ],
+        },
       });
       const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
-      expect(cfg.snippets).toEqual(["play-system", "play-state"]);
+      expect(cfg.modes?.find((m) => m.id === "field")?.promptSnippets).toEqual([
+        "play-system",
+        "play-state",
+      ]);
     } finally {
       deletePlay(TEST_GAME, "0000_dev");
     }
   });
 
-  it("falls back to the game prompt snippets", () => {
-    const cfg = resolvePromptConfig(TEST_GAME);
-    expect(cfg.snippets).toContain("system");
+  it("inherits the game mode list when a play declares an empty list", () => {
+    createPlay(TEST_GAME, "0000_dev");
+    try {
+      writePlayConfig(TEST_GAME, "0000_dev", {
+        id: "0000_dev",
+        game: TEST_GAME,
+        prompt: {
+          modes: [
+            {
+              id: "field",
+              label: "Field",
+              promptSnippets: [],
+            },
+          ],
+        },
+      });
+      const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
+      expect(cfg.modes?.find((m) => m.id === "field")?.promptSnippets).toEqual([
+        "system",
+        "commands",
+        "state",
+      ]);
+    } finally {
+      deletePlay(TEST_GAME, "0000_dev");
+    }
   });
 
-  it("uses a hardcoded default when no game config exists", () => {
+  it("returns the game modes when the play has none", () => {
+    createPlay(TEST_GAME, "0000_dev");
+    try {
+      writePlayConfig(TEST_GAME, "0000_dev", {
+        id: "0000_dev",
+        game: TEST_GAME,
+      });
+      const cfg = resolvePromptConfig(TEST_GAME, "0000_dev");
+      expect(cfg.modes?.map((m) => m.id)).toEqual(["field"]);
+    } finally {
+      deletePlay(TEST_GAME, "0000_dev");
+    }
+  });
+
+  it("returns the game config modes when no play is specified", () => {
+    const cfg = resolvePromptConfig(TEST_GAME);
+    expect(cfg.modes?.find((m) => m.id === "field")?.promptSnippets).toContain("system");
+  });
+
+  it("returns an empty config when no game config exists", () => {
     const cfg = resolvePromptConfig("__totally_missing_game_12345");
-    expect(cfg.snippets).toEqual(["system", "commands", "state"]);
+    expect(cfg).toEqual({});
   });
 });
 
@@ -598,4 +667,66 @@ describe("step persistence and recent-action history", () => {
     }
   });
 });
+});
+
+describe("prompt templates (game + play override)", () => {
+  useTempRepoRoot();
+
+  function seedGame(game: string, files: Record<string, string>): void {
+    mkdirSync(gameDir(game), { recursive: true });
+    const dir = join(gameDir(game), "prompts");
+    mkdirSync(dir, { recursive: true });
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(dir, `${name}.md`), content);
+    }
+  }
+
+  it("lists, reads, writes, deletes game prompt templates", () => {
+    seedGame(TEST_GAME, { system: "SYS", commands: "CMD" });
+    const names = listGamePromptTemplates(TEST_GAME).map((t) => t.name);
+    expect(names).toEqual(["commands", "system"]);
+    expect(readGamePromptTemplate(TEST_GAME, "system")).toBe("SYS");
+
+    writeGamePromptTemplate(TEST_GAME, "goals", "G");
+    expect(readGamePromptTemplate(TEST_GAME, "goals")).toBe("G");
+
+    deleteGamePromptTemplate(TEST_GAME, "goals");
+    expect(() => readGamePromptTemplate(TEST_GAME, "goals")).toThrow(FileNotFoundError);
+  });
+
+  it("lists, reads, writes, deletes play-level prompt overrides", () => {
+    seedGame(TEST_GAME, { system: "GAME" });
+    const id = tmpPlayId("ovr");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(listPlayPromptTemplates(TEST_GAME, id)).toEqual([]);
+      writePlayPromptTemplate(TEST_GAME, id, "system", "PLAY");
+      expect(readPlayPromptTemplate(TEST_GAME, id, "system")).toBe("PLAY");
+
+      // Play override shadows the game default for the effective template.
+      const eff = readEffectivePromptTemplate(TEST_GAME, id, "system");
+      expect(eff).toEqual({ content: "PLAY", source: "play" });
+
+      deletePlayPromptTemplate(TEST_GAME, id, "system");
+      const eff2 = readEffectivePromptTemplate(TEST_GAME, id, "system");
+      expect(eff2.source).toBe("game");
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("reports source none when neither layer has the template", () => {
+    const id = tmpPlayId("none");
+    createPlay(TEST_GAME, id);
+    try {
+      expect(readEffectivePromptTemplate(TEST_GAME, id, "missing").source).toBe("none");
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
+
+  it("rejects unsafe prompt names", () => {
+    expect(() => writeGamePromptTemplate(TEST_GAME, "../evil", "x")).toThrow(PathEscapeError);
+    expect(() => writeGamePromptTemplate(TEST_GAME, ".hidden", "x")).toThrow(PathEscapeError);
+  });
 });

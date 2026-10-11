@@ -97,6 +97,8 @@ export function GameInfoPanel({
   onRefresh,
   agent,
   playId,
+  game,
+  plugin,
   onRunSnippet,
   onManualCommand,
   snippetRunning,
@@ -215,7 +217,18 @@ export function GameInfoPanel({
             )}
           </div>
         )}
-        {tab === "markdown" && <MarkdownTab />}
+        {tab === "markdown" &&
+          (playId && game && plugin ? (
+            <MarkdownTab
+              playId={playId}
+              game={game}
+              plugin={plugin}
+              pendingMessage={agent?.pendingMessage}
+              disabled={disabled}
+            />
+          ) : (
+            <p className="text-xs text-neutral-500">Select a play to view markdown.</p>
+          ))}
       </div>
     </div>
   );

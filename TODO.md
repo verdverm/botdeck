@@ -8,6 +8,7 @@
     - prompt groups and parts
 - from the UI, the user should be able to CRUD the prompt markdown as well as change the group contents/order
 - we need a way to show templates / rendered versions based on the current state, perhaps a toggle so the rendered versions update with state updates?
+- we need a way to handle game vs play vs combined/overridden
 
 ## Map changes
 

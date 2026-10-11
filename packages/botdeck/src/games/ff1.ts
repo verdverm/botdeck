@@ -396,10 +396,12 @@ export class FF1GamePlugin implements GamePlugin {
   getMode(state?: Record<string, unknown>): string {
     if (isInBattle(state)) return "battle";
     const menu = getMenuContext(state);
-    if (menu === "shop") return "shop";
-    if (menu === "inn") return "inn";
-    if (menu === "clinic") return "clinic";
-    return "field";
+    // Shops, inns, and clinics are all cursor menus with the same handling,
+    // so they collapse into a single "shop" mode (per-play prompt selection).
+    if (menu === "shop" || menu === "inn" || menu === "clinic") return "shop";
+    // Towns, castles, and dungeons share single-screen navigation.
+    if (menu === "town" || menu === "castle" || menu === "dungeon") return "interior";
+    return "overworld";
   }
 
   availableCommands(state?: Record<string, unknown>, context?: { actor?: string }): CommandSpec[] {
@@ -471,19 +473,9 @@ export class FF1GamePlugin implements GamePlugin {
       );
     }
 
-    if (menu === "inn") {
-      commands.push({
-        name: "stay",
-        description: "Confirm a stay at the inn to restore the party.",
-      });
-    }
-
-    if (menu === "clinic") {
-      commands.push({
-        name: "heal",
-        description: "Confirm healing at the clinic (revive/cure poison/stone).",
-      });
-    }
+    // Inn and clinic windows are cursor menus with no distinct agent mode; the
+    // generic menu_navigate / menu_select / dialog_advance commands above are
+    // sufficient to operate them.
 
     // field/overworld/town/castle/dungeon all support using consumable items.
     if (menu === "field" || menu === "town" || menu === "castle" || menu === "dungeon" || menu === "main_menu") {
@@ -624,9 +616,6 @@ export class FF1GamePlugin implements GamePlugin {
         return this.compileBuy(command);
       case "sell":
         return this.compileSell(command);
-      case "stay":
-      case "heal":
-        return this.compileConfirmSequence();
       case "fight":
       case "magic":
       case "equip":

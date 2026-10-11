@@ -410,6 +410,8 @@ export function App() {
             onRefresh={onRefreshState}
             agent={agent}
             playId={playId}
+            game={game}
+            plugin={plugin}
             onRunSnippet={onRunSnippet}
             onManualCommand={onManualCommand}
             snippetRunning={snippetRunning}
