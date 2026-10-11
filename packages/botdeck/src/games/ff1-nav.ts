@@ -75,6 +75,21 @@ export function tileIdAt(x: number, y: number): number | undefined {
   return raw.tiles[y]?.[x];
 }
 
+/** Stable string key for a tile coordinate, used by obstacle sets. */
+export function tileKey(x: number, y: number): string {
+  return `${x},${y}`;
+}
+
+/** Build a set of tiles occupied by map objects, optionally excluding a target tile (e.g. the NPC we want to talk to). */
+export function objectBlockedTiles(objects: { physicalX: number; physicalY: number }[], exclude?: { x: number; y: number }): Set<string> {
+  const set = new Set<string>();
+  for (const obj of objects) {
+    if (exclude && obj.physicalX === exclude.x && obj.physicalY === exclude.y) continue;
+    set.add(tileKey(obj.physicalX, obj.physicalY));
+  }
+  return set;
+}
+
 /**
  * Can the given vehicle occupy this tile? Out-of-bounds is not walkable; the
  * world wraps at 256 in both axes, so callers wrap coordinates before asking.
@@ -246,9 +261,10 @@ class OpenHeap {
  * @param to - Goal tile (typically a location's entrance).
  * @param vehicle - Vehicle whose walkability mask governs movement.
  */
-export function findPath(from: Tile, to: Tile, vehicle: Vehicle): PathResult & { found: boolean } {
+export function findPath(from: Tile, to: Tile, vehicle: Vehicle, blocked?: Set<string>): PathResult & { found: boolean } {
   const start = wrapTile(from.x, from.y);
   const goal = wrapTile(to.x, to.y);
+  const blockedKey = (x: number, y: number) => blocked?.has(tileKey(x, y)) ?? false;
   if (!isWalkable(goal.x, goal.y, vehicle)) {
     return { found: false, path: [], cost: 0 };
   }
@@ -295,6 +311,7 @@ export function findPath(from: Tile, to: Tile, vehicle: Vehicle): PathResult & {
     for (const { dx, dy } of DIRECTIONS) {
       const next = wrapTile(cx + dx, cy + dy);
       if (!isWalkable(next.x, next.y, vehicle)) continue;
+      if (blockedKey(next.x, next.y) && !(next.x === goal.x && next.y === goal.y)) continue;
       const nextKey = key(next.x, next.y);
       if (closed.has(nextKey)) continue;
       const g = currentG + 1;
@@ -335,13 +352,14 @@ export function planRoute(
   name: string,
   from: Tile,
   vehicle: Vehicle = "foot",
+  blocked?: Set<string>,
 ): { location: MapLocation; goal: Tile; result: PathResult & { found: boolean } } | { error: string } {
   const loc = resolveLocation(name);
   if (!loc) {
     return { error: `goto: unknown location "${name}". Use one of the available locations listed in the state.` };
   }
   const goal = entranceFor(loc, from);
-  const result = findPath(from, goal, vehicle);
+  const result = findPath(from, goal, vehicle, blocked);
   if (!result.found) {
     return { error: `goto: no ${vehicle} path from (${from.x},${from.y}) to ${loc.name} at (${goal.x},${goal.y}).` };
   }
@@ -470,12 +488,29 @@ export interface RoutePlan {
   tiles: number;
 }
 
-const RUN_BUTTONS: Readonly<Record<MoveRun["direction"], number>> = {
+export const RUN_BUTTONS: Readonly<Record<MoveRun["direction"], number>> = {
   up: NES_BUTTONS.UP,
   down: NES_BUTTONS.DOWN,
   left: NES_BUTTONS.LEFT,
   right: NES_BUTTONS.RIGHT,
 };
+
+/**
+ * Compile a raw tile path into button presses, using the standard one-press-
+ * per-tile timing. This is useful when a caller already has a path and just
+ * needs the d-pad sequence (e.g. walking to an NPC before talking).
+ */
+export function walkPathToSteps(from: Tile, path: Tile[], hold = OW_STEP_HOLD_FRAMES, gap = OW_STEP_GAP_FRAMES): ButtonStep[] {
+  const steps: ButtonStep[] = [];
+  let cursor = from;
+  for (const step of path) {
+    const direction = stepDirection(cursor, step);
+    if (direction === undefined) continue;
+    steps.push(press(RUN_BUTTONS[direction], hold, gap));
+    cursor = step;
+  }
+  return steps;
+}
 
 /**
  * Compile a route into the d-pad macro that walks it: one press per tile.
@@ -509,8 +544,9 @@ export function gotoMacro(
   name: string,
   from: Tile,
   vehicle: Vehicle = "foot",
+  blocked?: Set<string>,
 ): { steps: ButtonStep[]; plan: RoutePlan } {
-  const planned = planRoute(name, from, vehicle);
+  const planned = planRoute(name, from, vehicle, blocked);
   if ("error" in planned) throw new Error(planned.error);
   const plan: RoutePlan = {
     mapId: "overworld",
@@ -662,6 +698,7 @@ interface GridSpec {
  */
 interface AstarOptions {
   goalPass?: (tile: Tile) => boolean;
+  blocked?: Set<string>;
 }
 
 function astarOnGrid(spec: GridSpec, from: Tile, to: Tile, opts?: AstarOptions): PathResult & { found: boolean } {
@@ -672,6 +709,7 @@ function astarOnGrid(spec: GridSpec, from: Tile, to: Tile, opts?: AstarOptions):
   });
   const start = wrapTileTo(spec, from.x, from.y);
   const goal = wrapTileTo(spec, to.x, to.y);
+  const blockedKey = (x: number, y: number) => opts?.blocked?.has(tileKey(x, y)) ?? false;
   if (!spec.passable(goal.x, goal.y) && !(opts?.goalPass?.(goal) ?? false)) {
     return { found: false, path: [], cost: 0 };
   }
@@ -725,7 +763,7 @@ function astarOnGrid(spec: GridSpec, from: Tile, to: Tile, opts?: AstarOptions):
       // Normal walkability, except the goal tile may be a terminal-only step
       // (goalPass) when the caller allows it, e.g. an out-of-map warp void.
       const terminalGoal = nextKey === goalKey && (opts?.goalPass?.(next) ?? false);
-      if (!spec.passable(next.x, next.y) && !terminalGoal) continue;
+      if ((!spec.passable(next.x, next.y) || blockedKey(next.x, next.y)) && !terminalGoal) continue;
       if (closed.has(nextKey)) continue;
       const g = currentG + 1;
       if (cameFrom.has(nextKey)) continue;
@@ -877,6 +915,7 @@ export function planSmRoute(
   mapId: number,
   name: string,
   from: Tile,
+  blocked?: Set<string>,
 ): { location: SmLocation; goal: Tile; result: PathResult & { found: boolean } } | { error: string } {
   const cands = resolveSmLocation(mapId, name);
   const map = standardMap(mapId)!;
@@ -913,7 +952,7 @@ export function planSmRoute(
     let result: PathResult & { found: boolean } = { found: false, path: [], cost: 0 };
     for (const cand of cands) {
       const finalAction = (t: Tile) => t.x === cand.tile.x && t.y === cand.tile.y;
-      const attempt = findSmPath(mapId, from, cand.tile, { goalPass: finalAction });
+      const attempt = findSmPath(mapId, from, cand.tile, { goalPass: finalAction, blocked });
       if (attempt.found) {
         goal = cand.tile;
         result = attempt;
@@ -953,7 +992,7 @@ export function planSmRoute(
     mapId,
     from,
     goal,
-    isPoi || loc.void ? { goalPass: (t) => t.x === goal.x && t.y === goal.y } : undefined,
+    isPoi || loc.void ? { goalPass: (t) => t.x === goal.x && t.y === goal.y, blocked } : { blocked },
   );
   if (!result.found) {
     return { error: `goto: no path from (${from.x},${from.y}) to the ${loc.type} at (${goal.x},${goal.y}).` };
@@ -1044,8 +1083,9 @@ export function gotoSmMacro(
   mapId: number,
   name: string,
   from: Tile,
+  blocked?: Set<string>,
 ): { steps: ButtonStep[]; plan: RoutePlan } {
-  const planned = planSmRoute(mapId, name, from);
+  const planned = planSmRoute(mapId, name, from, blocked);
   if ("error" in planned) throw new Error(planned.error);
   const plan: RoutePlan = {
     mapId,
@@ -1091,13 +1131,16 @@ export interface GrindSpec {
   maxSteps?: number;
   /** Optional PRNG; defaults to a fresh mulberry32 from Date.now(). */
   rng?: () => number;
+  /** Optional set of tiles occupied by objects/NPCs that the walk may not enter. */
+  blocked?: Set<string>;
 }
 
-/** Where on the grid can the walk step? Never steps onto an impassable tile. */
+/** Where on the grid can the walk step? Never steps onto an impassable or blocked tile. */
 function grindNeighborOk(spec: GrindSpec, node: Tile, next: Tile): boolean {
-  const { grid, center, distance } = spec;
+  const { grid, center, distance, blocked } = spec;
   if (!grid.passable(next.x, next.y)) return false;
   const pos = { x: grid.wrapX ? ((next.x % grid.width) + grid.width) % grid.width : next.x, y: grid.wrapY ? ((next.y % grid.height) + grid.height) % grid.height : next.y };
+  if (blocked?.has(tileKey(pos.x, pos.y))) return false;
   const d = Math.abs(wrapDelta(pos.x - center.x, grid.width)) + Math.abs(wrapDelta(pos.y - center.y, grid.height));
   if (d > distance) return false;
   void node;
@@ -1199,6 +1242,7 @@ export function grindMacro(
   distance: number,
   from: Tile,
   where: { kind: "overworld"; vehicle: Vehicle } | { kind: "standard"; mapId: number },
+  blocked?: Set<string>,
 ): { steps: ButtonStep[]; plan: { center: Tile; distance: number; approach: Tile[]; walkSteps: number } } {
   if (!Number.isFinite(distance) || distance < 0) {
     throw new Error("grind: distance must be a non-negative number of tiles.");
@@ -1207,7 +1251,7 @@ export function grindMacro(
   if (!grid) throw new Error(`grind: unknown standard map ${where.kind === "standard" ? where.mapId : ""}.`);
 
   // A* approach to the center (skip when already on it).
-  const approach = findPathOnGrid(grid, from, coords);
+  const approach = findPathOnGrid(grid, from, coords, blocked);
   if (!approach.found) {
     throw new Error(
       `grind: the walk-area center (${coords.x},${coords.y}) is unreachable from (${from.x},${from.y}) on this map.`,
@@ -1224,6 +1268,6 @@ export function grindMacro(
 }
 
 /** Route a path over a spec'd grid by reusing it through astarOnGrid. */
-function findPathOnGrid(spec: GridSpec, from: Tile, to: Tile): PathResult & { found: boolean } {
-  return astarOnGrid(spec, from, to);
+function findPathOnGrid(spec: GridSpec, from: Tile, to: Tile, blocked?: Set<string>): PathResult & { found: boolean } {
+  return astarOnGrid(spec, from, to, { blocked });
 }

@@ -307,7 +307,7 @@ function ManualCommandInput({
 
   return (
     <div className="flex flex-col gap-1">
-      <label className="text-xs text-neutral-500">Manual command (JSON)</label>
+      <label className="text-xs text-neutral-500">Manual agent command (JSON)</label>
       <div className="flex gap-2">
         <input
           type="text"
@@ -316,7 +316,7 @@ function ManualCommandInput({
           onKeyDown={(e) => {
             if (e.key === "Enter") run();
           }}
-          placeholder='{"name":"fight","args":{"actor":"Fighter","target":"enemy_1"}}'
+          placeholder='{"name":"fight","args":{"actor":"Fighter","target":"enemy_1"}} runs through the agent path and persists the step'
           disabled={disabled}
           className="flex-1 rounded border border-neutral-700 bg-neutral-800 px-2 py-1 text-xs text-neutral-200 placeholder:text-neutral-600 focus:border-neutral-500 focus:outline-none disabled:opacity-50"
         />

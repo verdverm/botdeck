@@ -8,6 +8,9 @@ Key files:
 - `src/hooks/useEmulator.ts` - boots the emulator, render loop, save/load, collect.
 - `src/hooks/useBotLoop.ts` - turn loop: read state, POST `/api/turn`, play macro, persist step.
 - `src/games/generic.ts` - fallback single-tap plugin.
+- `src/games/ff1.ts` - FF1 plugin: state reading, command compilation, A* travel.
+- `src/games/ff1-nav.ts` - overworld/standard-map A*, route planning, random walk.
+- `src/games/ff1-menu.ts` - shared menu/battle cursor navigation helpers.
 - `src/types.ts` - protocol types mirrored from vermbot.
 
 Components:
@@ -17,12 +20,15 @@ Components:
 - `src/components/SaveControls.tsx` - save/load/collect state controls.
 - `src/components/LoadMenu.tsx` - saved-state browser and loader.
 - `src/components/game-info/GameInfoPanel.tsx` - tabbed game state panel (`OverviewTab`, `PartyTab`, `LocationTab`, `BattleTab`, `AgentTab`, `MarkdownTab`).
+- `src/components/game-info/AgentTab.tsx` - agent turn log, manual agent command input, and snippet runner.
 
 Commands:
 - `pnpm dev:botdeck`
+- `pnpm --filter botdeck typecheck`
 - `pnpm --filter botdeck test`
 - `pnpm --filter botdeck test:e2e`
 - `pnpm --filter botdeck bench`
+- `pnpm --filter botdeck lint`
 
 Rules:
 - Use `@/` imports only.

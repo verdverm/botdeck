@@ -347,15 +347,18 @@ A=0, B=1, SELECT=2, START=3, UP=4, DOWN=5, LEFT=6, RIGHT=7.
 interface GamePlugin {
   id: string;
   title: string;
-  availableCommands(): CommandSpec[];   // advertised each turn
-  readState(): Record<string, unknown>;  // from live emulator RAM/screen
-  compile(command: GameCommand): ButtonStep[]; // command -> button macro
+  availableCommands(state?: Record<string, unknown>, context?: { actor?: string }): CommandSpec[];
+  readState(): Record<string, unknown>;
+  getMode(state?: Record<string, unknown>): string;
+  compile(command: GameCommand): ButtonStep[];
+  macroAbort?(command: GameCommand): (() => boolean) | undefined;
 }
 ```
 
-Only a `GenericGamePlugin` (single-tap placeholders) and an FF1 plugin (state
-reading, menu/target compilation - see §9) exist today. Higher-level travel
-compilers (A* to a destination) are not yet written.
+Two plugins exist today:
+- `GenericGamePlugin` - single-tap placeholders for any ROM.
+- `FF1GamePlugin` (`packages/botdeck/src/games/ff1.ts`) - full FF1 state
+  reading, menu/battle/target compilation, and A*-based travel macros (see §9).
 
 ---
 
@@ -386,6 +389,26 @@ generate context-aware sequences (e.g., A* walking to a destination compiled int
 held d-pad segments, or adaptive combat sequences that pick spells based on
 current enemy state). The `GamePlugin.compile(command)` method is the boundary
 where a high-level `GameCommand` becomes concrete `ButtonStep`s.
+
+### Travel and navigation macros
+
+The FF1 plugin compiles travel commands into A*-planned d-pad sequences:
+
+- `goto` plans a route to a named overworld location or standard-map doorway
+  (town, castle, dungeon exit, shop/inn/clinic door) using extracted tile grids
+  (`games/ff1/maps/`). Routes respect the current vehicle's walkability mask
+  (foot, canoe, ship, airship) on the overworld.
+- `grind` A*-walks to a target tile coordinate on the current map, then performs
+  a bounded random walk until a battle starts.
+- `talk_to` resolves the target NPC by name or index, A*-walks to the nearest
+  adjacent tile while avoiding other objects, faces the NPC, and presses `A`.
+- Object/NPC occupancy from the live `world.mapObjects` list is treated as a
+  dynamic obstacle set for pathfinding, so an NPC standing on a tile no longer
+  breaks A*.
+- Long travel macros register a `macroAbort` predicate that watches the
+  `mapflags` byte ($2D): any transition (random battle, town entrance, exit
+  teleport) changes the byte and aborts the macro so the agent regains control
+  in the new context.
 
 ### Battle target navigation (VERIFIED against FF1Disassembly bank_0C.asm)
 
@@ -428,8 +451,11 @@ jsNES CPU memory or from a jsNES save-state object. It exposes:
 - Party characters (stats, HP, status, spells, equipment).
 - Inventory (consumables and key items).
 - Gold.
-- World state (overworld/standard map, position, vehicles, map objects).
+- World state (overworld/standard map, position, vehicles, standard-map objects/NPCs).
 - Game flags (raw `$6200` page; decoded progression flags are still TODO).
+- Menu context and cursor, dialog open flag, and shop/inn/clinic state.
+- Battle state including phase, party/enemy rosters, command buffer, and the
+  verified enemy-target cursor order.
 
 `formatFF1StateFromUnknown` produces a human-readable summary for the prompt's
 `gameInfo` context. The reader is linked into both botdeck (to display state in
@@ -504,9 +530,12 @@ This feature is further out and currently unbuilt. See `TODO.md`.
     loadRom/reset/buttonDown/Up/save/load/collect/romName/power.
   - `hooks/useBotLoop` - the turn loop (reads state, POSTs `/api/turn`, plays
     the macro, persists the step, auto-run scheduler).
-  - `games/*` - `GamePlugin` implementations (`GenericGamePlugin` now).
+  - `games/*` - `GamePlugin` implementations (`GenericGamePlugin` and
+    `FF1GamePlugin`). FF1 navigation/menu logic lives in `games/ff1-nav.ts`
+    and `games/ff1-menu.ts`.
   - `components/` - `GameScreen`, `Gamepad`, `RomPicker`, `SaveControls`,
-    `LoadMenu`, `GameInfoPanel` (+ `game-info/*` tabs).
+    `LoadMenu`, `GameInfoPanel` (+ `game-info/*` tabs). `AgentTab` includes
+    the manual agent command input and snippet runner.
   - `play.ts` - play-id resolution (`?play=`) + file-API URL builders (§4).
 - **vermbot** (node, tsx, :8787)
   - `server.ts` - HTTP front door: `/api/turn`, `/api/games`, `/api/plays`,

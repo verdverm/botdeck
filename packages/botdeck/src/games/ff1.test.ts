@@ -147,6 +147,30 @@ describe("FF1GamePlugin", () => {
     expect(names).not.toContain("stay");
   });
 
+  it("does not advertise menu navigation while walking on the field", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    for (const menu of ["field", "town", "castle", "dungeon"]) {
+      const options = plugin.availableCommands(baseState("field", menu));
+      const names = options.map((o) => o.name);
+      expect(names).toContain("goto");
+      expect(names).toContain("talk_to");
+      expect(names).not.toContain("menu_navigate");
+      expect(names).not.toContain("dialog_advance");
+    }
+  });
+
+  it("does not advertise field commands while in a menu or dialog", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    for (const menu of ["main_menu", "shop", "inn", "clinic", "dialog"]) {
+      const options = plugin.availableCommands(baseState(menu === "dialog" ? "field" : "menu", menu));
+      const names = options.map((o) => o.name);
+      expect(names).toContain("menu_navigate");
+      expect(names).not.toContain("goto");
+      expect(names).not.toContain("grind");
+      expect(names).not.toContain("talk_to");
+    }
+  });
+
   it("compiles press_button to the requested NES button", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
     const macro = plugin.compile({ name: "press_button", args: { button: "b", frames: 6 } });
@@ -372,6 +396,48 @@ describe("FF1GamePlugin", () => {
   it("rejects buy by name because shop inventory labels are unavailable", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
     expect(() => plugin.compile({ name: "buy", args: { item: "Potion" } })).toThrow("buy");
+  });
+
+  it("compiles talk_to to walk adjacent to the NPC, face them, and press A", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const state = baseState("field", "town");
+    (state.ff1 as FF1GameState).world = {
+      isStandardMap: true,
+      mapId: 0,
+      standardMapScrollX: 5,
+      standardMapScrollY: 63,
+      mapObjects: [{ index: 0, id: 1, physicalX: 13, physicalY: 6 }],
+    } as unknown as FF1GameState["world"];
+    vi.spyOn(plugin, "readState").mockReturnValue(state);
+
+    const macro = plugin.compile({ name: "talk_to", args: { target: "object 0" } });
+
+    // Should walk one tile east, face east (toward the NPC), then press A.
+    expect(macro.filter((s) => s.button === NES_BUTTONS.RIGHT).length).toBe(1);
+    expect(macro.filter((s) => s.button === NES_BUTTONS.A).length).toBe(1);
+    expect(macro.some((s) => s.button === NES_BUTTONS.LEFT)).toBe(false);
+  });
+
+  it("avoids walking through other objects when pathing to an NPC", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const state = baseState("field", "town");
+    (state.ff1 as FF1GameState).world = {
+      isStandardMap: true,
+      mapId: 0,
+      standardMapScrollX: 5,
+      standardMapScrollY: 63,
+      mapObjects: [
+        { index: 0, id: 1, physicalX: 13, physicalY: 6 },
+        { index: 1, id: 2, physicalX: 12, physicalY: 7 }, // blocks the direct south route
+      ],
+    } as unknown as FF1GameState["world"];
+    vi.spyOn(plugin, "readState").mockReturnValue(state);
+
+    const macro = plugin.compile({ name: "talk_to", args: { target: "object 0" } });
+
+    // Direct route east (13,6) should still work; it does not pass through (12,7).
+    expect(macro.filter((s) => s.button === NES_BUTTONS.RIGHT).length).toBe(1);
+    expect(macro.filter((s) => s.button === NES_BUTTONS.A).length).toBe(1);
   });
 
   it("resolves sell and use_item by inventory name and rejects unknown names", () => {

@@ -10,6 +10,7 @@ import {
   createCpuMemoryView,
   readFF1State,
   formatFF1GameInfo,
+  getNpcNameById,
   ADDR_DIALOG_OPEN,
   ADDR_MAPFLAGS,
   FF1_DIALOG_GEOMETRY,
@@ -44,6 +45,10 @@ import {
   grindMacro,
   smAvailableLocations,
   reachableNamedLocations,
+  objectBlockedTiles,
+  tileKey,
+  findSmPath,
+  walkPathToSteps,
   type RoutePlan,
   type Vehicle,
 } from "./ff1-nav";
@@ -183,6 +188,53 @@ function standardMapPlayerTile(world: WorldState): { x: number; y: number } {
     x: (world.standardMapScrollX + 7) & 0x3f,
     y: (world.standardMapScrollY + 7) & 0x3f,
   };
+}
+
+/** Standard-map objects/NPCs from the reader's world block. */
+function getMapObjects(state?: Record<string, unknown>): { index: number; physicalX: number; physicalY: number; id: number; name?: string }[] {
+  const world = getWorld(state);
+  if (!world || !world.isStandardMap) return [];
+  return world.mapObjects.map((obj) => ({
+    ...obj,
+    name: getNpcNameById(obj.id),
+  }));
+}
+
+/**
+ * Tiles occupied by standard-map objects that should be treated as
+ * pathfinding obstacles. The party's own tile and an optional target tile
+ * (e.g. the NPC being talked to) are never blocked.
+ */
+function blockedTiles(state?: Record<string, unknown>, target?: { x: number; y: number }): Set<string> {
+  const world = getWorld(state);
+  if (!world || !world.isStandardMap) return new Set<string>();
+  return objectBlockedTiles(world.mapObjects, target);
+}
+
+/**
+ * Resolve a talk_to target string to a standard-map object. Accepts the NPC
+ * name, a canonical "Name (slot N)" label, "slot N", or a bare numeric index.
+ */
+function resolveTalkToTarget(
+  target: string,
+  objects: { index: number; id: number; physicalX: number; physicalY: number; name?: string }[],
+): { index: number; id: number; physicalX: number; physicalY: number; name?: string } | undefined {
+  const raw = target.trim();
+  if (raw === "") return objects[0];
+  // Canonical / explicit index references: "object 0", "npc 0", "slot 0".
+  const indexMatch = raw.match(/(?:object|npc|slot)\s*(\d+)/i);
+  if (indexMatch) {
+    const idx = Number(indexMatch[1]);
+    return objects.find((o) => o.index === idx);
+  }
+  const bare = Number(raw);
+  if (Number.isFinite(bare) && raw !== "") {
+    return objects.find((o) => o.index === bare);
+  }
+  const normalized = raw.toLowerCase();
+  const exact = objects.find((o) => (o.name ?? "").toLowerCase() === normalized);
+  if (exact) return exact;
+  return objects.find((o) => (o.name ?? "").toLowerCase().startsWith(normalized));
 }
 
 function isInBattle(state?: Record<string, unknown>): boolean {
@@ -407,25 +459,11 @@ export class FF1GamePlugin implements GamePlugin {
       return this.battleCommands(state, context?.actor);
     }
 
+    const menu = getMenuContext(state);
+    const inMenu = menu === "main_menu" || menu === "shop" || menu === "inn" || menu === "clinic" || menu === "dialog";
+    const inField = !inMenu;
+
     const commands: CommandSpec[] = [
-      {
-        name: "goto",
-        description:
-          "Walk the party to a known location. The location must be one of the available locations listed in the state. Works on the overworld, and inside town/castle/dungeon maps (doors and exits).",
-        args: '{ "location": "string" }',
-      },
-      {
-        name: "grind",
-        description:
-          'Walk to the given tile coordinate, then randomly walk around within the given Manhattan distance of it until a battle starts (the macro aborts on battle). x/y are tile coordinates on the current map (overworld 0-255, standard maps 0-63).',
-        args: '{ "x": "number", "y": "number", "distance": "number" }',
-      },
-      {
-        name: "talk_to",
-        description:
-          "Talk to the NPC the party is currently facing. Provide an informational target name if known.",
-        args: '{ "target": "string" }',
-      },
       { name: "interact", description: "Press A to talk, search, or confirm the current selection." },
       { name: "cancel", description: "Press B to cancel or go back." },
       { name: "menu", description: "Press START to open or close the main menu." },
@@ -435,10 +473,40 @@ export class FF1GamePlugin implements GamePlugin {
       },
     ];
 
-    const menu = getMenuContext(state);
-    const inMenu = menu === "main_menu" || menu === "shop" || menu === "inn" || menu === "clinic" || menu === "dialog";
+    if (inField) {
+      commands.push(
+        {
+          name: "goto",
+          description:
+            "Walk the party to a known location. The location must be one of the available locations listed in the state. Works on the overworld, and inside town/castle/dungeon maps (doors and exits).",
+          args: '{ "location": "string" }',
+        },
+        {
+          name: "grind",
+          description:
+            'Walk to the given tile coordinate, then randomly walk around within the given Manhattan distance of it until a battle starts (the macro aborts on battle). x/y are tile coordinates on the current map (overworld 0-255, standard maps 0-63).',
+          args: '{ "x": "number", "y": "number", "distance": "number" }',
+        },
+        {
+          name: "talk_to",
+          description:
+            "Walk to the named NPC if needed, face them, and press A to talk. Provide an informational target name if known.",
+          args: '{ "target": "string" }',
+        },
+      );
 
-    if (inMenu || menu === "town" || menu === "castle" || menu === "dungeon") {
+      // field/overworld/town/castle/dungeon support using consumable items.
+      if (this.hasConsumable(state)) {
+        commands.push({
+          name: "use_item",
+          description:
+            `Open the ITEM menu, navigate to the named consumable item, and use it on the target party member. Available consumables: ${getConsumablesList(state)}.`,
+          args: '{ "item": "string", "target": "string" }',
+        });
+      }
+    }
+
+    if (inMenu) {
       commands.push(
         {
           name: "menu_navigate",
@@ -454,36 +522,20 @@ export class FF1GamePlugin implements GamePlugin {
           args: '{ "presses": "number" }',
         },
       );
-    }
 
-    if (menu === "shop") {
-      commands.push(
-        {
-          name: "buy",
-          description: "Buy an item from the current shop. Provide the item name or 0-based index.",
-          args: '{ "item": "string", "quantity": "number" }',
-        },
-        {
-          name: "sell",
-          description: "Sell an item to the current shop. Provide the item name or 0-based index.",
-          args: '{ "item": "string" }',
-        },
-      );
-    }
-
-    // Inn and clinic windows are cursor menus with no distinct agent mode; the
-    // generic menu_navigate / menu_select / dialog_advance commands above are
-    // sufficient to operate them.
-
-    // field/overworld/town/castle/dungeon all support using consumable items.
-    if (menu === "field" || menu === "town" || menu === "castle" || menu === "dungeon" || menu === "main_menu") {
-      if (this.hasConsumable(state)) {
-        commands.push({
-          name: "use_item",
-          description:
-            `Open the ITEM menu, navigate to the named consumable item, and use it on the target party member. Available consumables: ${getConsumablesList(state)}.`,
-          args: '{ "item": "string", "target": "string" }',
-        });
+      if (menu === "shop") {
+        commands.push(
+          {
+            name: "buy",
+            description: "Buy an item from the current shop. Provide the item name or 0-based index.",
+            args: '{ "item": "string", "quantity": "number" }',
+          },
+          {
+            name: "sell",
+            description: "Sell an item to the current shop. Provide the item name or 0-based index.",
+            args: '{ "item": "string" }',
+          },
+        );
       }
     }
 
@@ -580,7 +632,7 @@ export class FF1GamePlugin implements GamePlugin {
       case "grind":
         return this.compileGrind(command);
       case "talk_to":
-        return [pressA(HOLD_FRAMES, GAP_FRAMES)];
+        return this.compileTalkTo(command);
       case "move": {
         const direction = String(command.args?.direction ?? "down").toLowerCase();
         const map: Record<string, number | undefined> = {
@@ -656,11 +708,14 @@ export class FF1GamePlugin implements GamePlugin {
     const location = String(command.args?.location ?? "").trim();
     if (!location) throw new Error('goto: missing "location"');
 
-    const world = getWorld(this.readState());
+    const state = this.readState();
+    const world = getWorld(state);
     if (!world) throw new Error("goto: no game state available.");
 
+    const blocked = blockedTiles(state);
+
     if (world.isStandardMap) {
-      const { steps, plan } = gotoSmMacro(world.mapId, location, standardMapPlayerTile(world));
+      const { steps, plan } = gotoSmMacro(world.mapId, location, standardMapPlayerTile(world), blocked);
       this.emulator.setLastRoute(plan);
       return steps;
     }
@@ -669,6 +724,7 @@ export class FF1GamePlugin implements GamePlugin {
       location,
       { x: world.overworldPlayerX, y: world.overworldPlayerY },
       vehicleOf(world),
+      blocked,
     );
     this.emulator.setLastRoute(plan);
     return steps;
@@ -690,8 +746,11 @@ export class FF1GamePlugin implements GamePlugin {
       throw new Error('grind: missing numeric "x"/"y" coordinates.');
     }
 
-    const world = getWorld(this.readState());
+    const state = this.readState();
+    const world = getWorld(state);
     if (!world) throw new Error("grind: no game state available.");
+
+    const blocked = blockedTiles(state);
 
     const { steps, plan } = world.isStandardMap
       ? grindMacro(
@@ -699,12 +758,14 @@ export class FF1GamePlugin implements GamePlugin {
           distance,
           standardMapPlayerTile(world),
           { kind: "standard", mapId: world.mapId },
+          blocked,
         )
       : grindMacro(
           { x, y },
           distance,
           { x: world.overworldPlayerX, y: world.overworldPlayerY },
           { kind: "overworld", vehicle: vehicleOf(world) },
+          blocked,
         );
     const from = world.isStandardMap ? standardMapPlayerTile(world) : { x: world.overworldPlayerX, y: world.overworldPlayerY };
     this.emulator.setLastRoute({
@@ -716,6 +777,86 @@ export class FF1GamePlugin implements GamePlugin {
       runs: [],
       tiles: plan.approach.length,
     });
+    return steps;
+  }
+
+  /**
+   * Compile a `talk_to`: on standard maps, A* to a tile adjacent to the target
+   * NPC, face them, then press A. On the overworld (no object data) it falls
+   * back to a single A press, preserving the old behavior for non-NPC
+   * interactions.
+   */
+  private compileTalkTo(command: GameCommand): ButtonStep[] {
+    const target = String(command.args?.target ?? "").trim();
+    const state = this.readState();
+    const world = getWorld(state);
+    if (!world) throw new Error("talk_to: no game state available.");
+
+    if (!world.isStandardMap) {
+      // Overworld has no tracked objects; trust the party is already facing
+      // whatever they want to talk to.
+      return [pressA(HOLD_FRAMES, GAP_FRAMES)];
+    }
+
+    const objects = getMapObjects(state);
+    if (objects.length === 0) {
+      throw new Error("talk_to: no NPCs/objects visible on this map.");
+    }
+
+    const npc = target === "" ? objects[0] : resolveTalkToTarget(target, objects);
+    if (!npc) {
+      const names = objects.map((o) => `"${o.name ?? `object ${o.index}`}"`).join(", ");
+      throw new Error(`talk_to: cannot resolve "${target}". Visible NPCs/objects: ${names || "none"}.`);
+    }
+
+    const from = standardMapPlayerTile(world);
+    const blocked = blockedTiles(state);
+
+    // Try each adjacent tile, preferring the one closest to the party. The
+    // NPC's own tile stays blocked so the path never walks through them.
+    const candidates = [
+      { dx: 0, dy: -1, face: NES_BUTTONS.DOWN },
+      { dx: 0, dy: 1, face: NES_BUTTONS.UP },
+      { dx: -1, dy: 0, face: NES_BUTTONS.RIGHT },
+      { dx: 1, dy: 0, face: NES_BUTTONS.LEFT },
+    ]
+      .map(({ dx, dy, face }) => ({ tile: { x: npc.physicalX + dx, y: npc.physicalY + dy }, face }))
+      .filter(({ tile }) => !blocked.has(tileKey(tile.x, tile.y)));
+
+    let best: { tile: { x: number; y: number }; face: number; path: { x: number; y: number }[]; distance: number } | undefined;
+    for (const cand of candidates) {
+      const result = findSmPath(world.mapId, from, cand.tile, { blocked });
+      if (!result.found) continue;
+      const distance = result.path.length;
+      if (!best || distance < best.distance) {
+        best = { ...cand, path: result.path, distance };
+      }
+    }
+
+    if (!best) {
+      throw new Error(
+        `talk_to: cannot reach ${npc.name ?? `object ${npc.index}`} at (${npc.physicalX},${npc.physicalY}). ` +
+          "No adjacent tile is walkable and unblocked.",
+      );
+    }
+
+    const steps: ButtonStep[] = [];
+    if (best.distance > 0) {
+      steps.push(...walkPathToSteps(from, best.path));
+    }
+    steps.push(press(best.face, HOLD_FRAMES, GAP_FRAMES));
+    steps.push(pressA(HOLD_FRAMES, GAP_FRAMES));
+
+    this.emulator.setLastRoute({
+      mapId: world.mapId,
+      location: { destMapId: -1, teleportIds: [], x: npc.physicalX, y: npc.physicalY, warpTiles: [], name: npc.name ?? `object ${npc.index}`, glyph: "n" },
+      from,
+      goal: best.tile,
+      path: best.path,
+      runs: [],
+      tiles: best.distance,
+    });
+
     return steps;
   }
 

@@ -1,5 +1,14 @@
 # TODO
 
+## Priority
+
+## Done
+
+- commands need better filtering based on current state (eg. allowing goto while in a menu or allowing menu navigation while not in a menu)
+- A* fails when an object is on a tile, such as an npc
+- talk_to should use the A* to get to the person and then interact
+- there should be a mode / way a human user can run commands and have then work as if it was the agent, so the user can simulate the agent and find reproducible bugs. Snippets already support command steps; the Manual agent command input in the Agent tab runs through the agent path and persists the step.
+
 ## Map changes
 
 - how do we determine difference between field, forest, sand, etc...?
@@ -20,6 +29,4 @@ overworld:
 
 general:
 
-- commands need better filtering based on current state (eg. allowing goto while in a menu or allowing menu navigation while not in a menu)
 - navigation plan should not be shown if the curr/last command was not navigate
-- A* fails when an object is on a tile, such as an npc

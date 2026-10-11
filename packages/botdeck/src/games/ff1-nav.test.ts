@@ -16,6 +16,7 @@ import {
   playerTile,
   smIsWalkable,
   standardMap,
+  tileKey,
   toMoveRuns,
 } from "./ff1-nav";
 import { NES_BUTTONS } from "@/types";
@@ -219,5 +220,37 @@ describe("ff1 grind (random walk)", () => {
     expect(res.plan.approach.length).toBeGreaterThan(0);
     expect(res.plan.walkSteps).toBeGreaterThan(0);
     expect(res.steps.length).toBe(res.plan.approach.length + res.plan.walkSteps);
+  });
+
+  it("avoids tiles occupied by objects when a blocked set is supplied", () => {
+    // Block the direct north/south corridor near the dev start and force a
+    // detour east/west.
+    const from = playerTile(146, 158);
+    const to = { x: from.x, y: from.y + 2 };
+    const blocked = new Set([tileKey(from.x, from.y + 1)]);
+    const result = findPath(from, to, "foot", blocked);
+    expect(result.found).toBe(true);
+    expect(result.path.some((t) => t.x === from.x && t.y === from.y + 1)).toBe(false);
+  });
+
+  it("lets the goal tile remain reachable even if it is in the blocked set", () => {
+    // The blocked set stops intermediate steps, not a deliberate terminal
+    // tile. The caller excludes a target NPC from blocked when needed.
+    const from = playerTile(146, 158);
+    const to = { x: from.x, y: from.y + 1 };
+    const blocked = new Set([tileKey(to.x, to.y)]);
+    const result = findPath(from, to, "foot", blocked);
+    expect(result.found).toBe(true);
+    expect(result.path.at(-1)).toEqual(to);
+  });
+
+  it("avoids object tiles in standard-map pathfinding", () => {
+    // In Coneria town, block the tile between two known walkable plaza tiles.
+    const from = { x: 12, y: 6 };
+    const to = { x: 14, y: 6 };
+    const blocked = new Set([tileKey(13, 6)]);
+    const result = findSmPath(0, from, to, { blocked });
+    expect(result.found).toBe(true);
+    expect(result.path.some((t) => t.x === 13 && t.y === 6)).toBe(false);
   });
 });

@@ -46,6 +46,7 @@ Layers:
 - vermbot owns the agent, the prompt assembly, the tool-use loop, and the file API over repo `fs`.
 - games own the smarts per title: RAM/state readers and command-to-button-sequence mappings (e.g. "travel to destination", "use healing potion").
 - `@games/ff1-state` is the first workspace package that reads Final Fantasy I state from live jsNES CPU RAM and save states.
+- The FF1 plugin (`packages/botdeck/src/games/ff1.ts`) compiles high-level commands into button macros, including A* pathfinding for travel (`goto`, `grind`) and NPC approach (`talk_to`).
 
 The shared protocol types (`GameCommand`, `ButtonStep`, `CommandSpec`, `TurnRequest`, `TurnResponse`, `StepRecord`) are mirrored in `packages/botdeck/src/types.ts` and `packages/vermbot/src/protocol.ts`: botdeck is a browser app and vermbot stays Node-only.
 
