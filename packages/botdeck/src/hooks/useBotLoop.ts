@@ -64,6 +64,8 @@ export interface UseBotLoopOptions {
 export interface UseBotLoopResult {
   isThinking: boolean;
   isPlayingMacro: boolean;
+  /** A battle turn is in flight and the game is animating/waiting, NOT calling the LLM. */
+  isBattling: boolean;
   error: string | undefined;
   lastRequest: TurnRequest | undefined;
   lastResponse: TurnResponse | undefined;
@@ -99,6 +101,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
 
   const [isThinking, setIsThinking] = useState(false);
   const [isPlayingMacro, setIsPlayingMacro] = useState(false);
+  const [isBattling, setIsBattling] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [lastRequest, setLastRequest] = useState<TurnRequest | undefined>();
   const [lastResponse, setLastResponse] = useState<TurnResponse | undefined>();
@@ -320,14 +323,22 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
    * rather than silently proceed on).
    */
   const waitForBattleRound = useCallback(
-    (signal?: AbortSignal): Promise<boolean> => {
-      return waitForBattlePhase(
-        (state) => {
-          const s = state as unknown as BattleStateLike;
-          return !isRoundExecuting(s) && (isBattleOver(s) || isCommandEntryReady(s));
-        },
-        { signal },
-      );
+    async (signal?: AbortSignal): Promise<boolean> => {
+      // Round processing: every member's queued action is resolving. This is
+      // the one battle phase the "battling" pill should cover - not the
+      // per-member command-entry windows or the LLM calls in between.
+      setIsBattling(true);
+      try {
+        return await waitForBattlePhase(
+          (state) => {
+            const s = state as unknown as BattleStateLike;
+            return !isRoundExecuting(s) && (isBattleOver(s) || isCommandEntryReady(s));
+          },
+          { signal },
+        );
+      } finally {
+        setIsBattling(false);
+      }
     },
     [waitForBattlePhase],
   );
@@ -483,6 +494,10 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         if (request.mode === "battle") {
           await waitForCommandLatch(request.actor, postState, signal);
           postState = plugin.readState();
+          // The queued command may have started the round. Reflect the live
+          // condition so the pill shows "battling" straight through processing
+          // instead of falling back to "thinking" until waitForBattleRound runs.
+          setIsBattling(isRoundExecuting(postState as unknown as BattleStateLike));
         } else if (postDialogOpen) {
           await waitSettle();
           postState = plugin.readState();
@@ -721,6 +736,9 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     try {
       const state = plugin.readState();
       const mode = plugin.getMode(state);
+      // The battling pill tracks live round processing (waitForBattleRound /
+      // executeCommand), not mere battle mode. Reset it at turn start.
+      setIsBattling(false);
 
       if (mode === "battle") {
         await runBattleRound({ signal: controller.signal });
@@ -744,6 +762,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       turnAbortRef.current = null;
       setIsThinking(false);
       setIsPlayingMacro(false);
+      setIsBattling(false);
       runningRef.current = false;
     }
   }, [emulator, plugin, runBattleRound, decideAndMaybeExecute]);
@@ -774,6 +793,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         plugin.getMode(state) === "battle" &&
         isRoundExecuting(state as unknown as BattleStateLike)
       ) {
+        setIsBattling(true);
         try {
           await waitForBattlePhase(
             (s) => {
@@ -798,6 +818,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       turnAbortRef.current = null;
       setIsThinking(false);
       setIsPlayingMacro(false);
+      setIsBattling(false);
       runningRef.current = false;
     }
   }, [pendingDecision, executeCommand, plugin, waitForBattlePhase]);
@@ -893,6 +914,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   return {
     isThinking,
     isPlayingMacro,
+    isBattling,
     error,
     lastRequest,
     lastResponse,

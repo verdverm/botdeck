@@ -24,6 +24,7 @@ interface MacroProgress {
 interface AgentTabProps {
   isThinking?: boolean;
   isPlayingMacro?: boolean;
+  isBattling?: boolean;
   error?: string;
   lastRequest?: TurnRequest;
   lastResponse?: TurnResponse;
@@ -114,10 +115,12 @@ function PrimaryActionButton({
 function StatusBadge({
   isThinking,
   isPlayingMacro,
+  isBattling,
   error,
 }: {
   isThinking?: boolean;
   isPlayingMacro?: boolean;
+  isBattling?: boolean;
   error?: string;
 }) {
   if (error) {
@@ -131,6 +134,13 @@ function StatusBadge({
     return (
       <span className="rounded-full bg-amber-500/20 px-2 py-0.5 text-xs text-amber-300">
         playing macro
+      </span>
+    );
+  }
+  if (isBattling) {
+    return (
+      <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-xs text-violet-300">
+        battling
       </span>
     );
   }
@@ -428,6 +438,7 @@ function SnippetDropdown({
 export function AgentTab({
   isThinking,
   isPlayingMacro,
+  isBattling,
   error,
   lastRequest,
   lastResponse,
@@ -467,7 +478,12 @@ export function AgentTab({
   return (
     <div className="flex h-full flex-col gap-3 text-sm">
       <div className="flex items-center justify-between gap-3">
-        <StatusBadge isThinking={isThinking} isPlayingMacro={isPlayingMacro} error={error} />
+        <StatusBadge
+          isThinking={isThinking}
+          isPlayingMacro={isPlayingMacro}
+          isBattling={isBattling}
+          error={error}
+        />
         <div className="flex items-center gap-2">
           <SnippetDropdown
             playId={playId}

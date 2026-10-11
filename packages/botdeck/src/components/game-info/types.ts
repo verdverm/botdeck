@@ -2,7 +2,7 @@ import type { CollectedState } from "@/emulator/collectState";
 import type { UseBotLoopResult } from "@/hooks/useBotLoop";
 import type { GameCommand, PlaySnippet, SnippetRunResult } from "@/types";
 
-export type Tab = "overview" | "party" | "location" | "battle" | "menu" | "agent" | "snippets" | "agent-snippets" | "markdown";
+export type Tab = "overview" | "party" | "location" | "battle" | "menu" | "snippets" | "agent" | "markdown";
 export type PartySubTab = "main" | number;
 
 export interface GameInfoPanelProps {

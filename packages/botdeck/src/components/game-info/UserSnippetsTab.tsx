@@ -11,7 +11,7 @@ interface SnippetDescriptor {
 
 type EditableSnippet = Omit<PlaySnippet, "id" | "game" | "play">;
 
-interface SnippetsTabProps {
+interface UserSnippetsTabProps {
   playId: string;
   disabled?: boolean;
   onRun: (snippet: PlaySnippet) => Promise<SnippetRunResult | void> | void;
@@ -68,7 +68,7 @@ function SummaryView({ snippet }: { snippet: PlaySnippet }) {
   );
 }
 
-export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
+export function UserSnippetsTab({ playId, disabled, onRun }: UserSnippetsTabProps) {
   const [snippets, setSnippets] = useState<SnippetDescriptor[]>([]);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [details, setDetails] = useState<Record<string, PlaySnippet>>({});
@@ -298,7 +298,7 @@ export function SnippetsTab({ playId, disabled, onRun }: SnippetsTabProps) {
   return (
     <div className="flex h-full flex-col gap-3 text-sm">
       <div className="flex items-center justify-between">
-        <SectionTitle>Play Snippets</SectionTitle>
+        <SectionTitle>User Snippets</SectionTitle>
         <button
           onClick={addNew}
           disabled={disabled}

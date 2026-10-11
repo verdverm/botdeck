@@ -2,8 +2,6 @@
 
 ## UI changes
 
-- says "thinking" while battle moves are playing out, but not actually thinking (or calling llm based on gpu usage), we need another state "battling"
-- consolidate snippets tab and move before agents, first agents, then user snippets
 - make markdown tab show (each as accordians, multi-display)
     - agent goals/memories/journal
     - prompt files

@@ -176,4 +176,28 @@ describe("AgentTab transcript rendering", () => {
     fireEvent.click(stopButton);
     expect(onAbort).toHaveBeenCalled();
   });
+
+  it("shows the idle pill when nothing is running", () => {
+    render(<AgentTab messages={[]} />);
+    expect(screen.getByText("idle")).toBeInTheDocument();
+  });
+
+  it("shows the thinking pill only while awaiting the LLM", () => {
+    render(<AgentTab isThinking={true} messages={[]} />);
+    expect(screen.getByText("thinking")).toBeInTheDocument();
+  });
+
+  it("shows the battling pill while a battle animates, not thinking", () => {
+    render(<AgentTab isThinking={true} isBattling={true} messages={[]} />);
+    expect(screen.getByText("battling")).toBeInTheDocument();
+    expect(screen.queryByText("thinking")).not.toBeInTheDocument();
+  });
+
+  it("prefers the playing-macro pill over battling", () => {
+    render(
+      <AgentTab isThinking={true} isBattling={true} isPlayingMacro={true} messages={[]} />,
+    );
+    expect(screen.getByText("playing macro")).toBeInTheDocument();
+    expect(screen.queryByText("battling")).not.toBeInTheDocument();
+  });
 });

@@ -320,7 +320,18 @@ export class Emulator {
 
   private advanceMacro(): void {
     if (!this.macro) return;
-    if (this.macroInterrupt?.()) {
+    // The per-frame interrupt predicate reads live game state and can throw.
+    // A throw here must not escape into the render loop: that would strand the
+    // macro (button left held, runMacro never resolving) and stop the RAF loop
+    // from re-arming, leaving the emulator unrecoverable. Treat a failing
+    // predicate as an interrupt so the button is released and playback ends.
+    let interrupt = false;
+    try {
+      interrupt = this.macroInterrupt?.() ?? false;
+    } catch {
+      interrupt = true;
+    }
+    if (interrupt) {
       this.cancelMacro("interrupt");
       return;
     }
@@ -410,7 +421,13 @@ export class Emulator {
   }
 
   stepFrame(): void {
-    this.advanceMacro();
+    try {
+      this.advanceMacro();
+    } catch {
+      // Safety net: any unexpected macro-advance failure must not kill the RAF
+      // loop. Cancel the macro so playback can recover on the next turn.
+      this.cancelMacro("interrupt");
+    }
     try {
       this.nes.frame();
       for (const probe of this.frameProbes) {

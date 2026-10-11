@@ -7,7 +7,7 @@ import { MarkdownTab } from "./MarkdownTab";
 import { MenuTab } from "./MenuTab";
 import { OverviewTab } from "./OverviewTab";
 import { PartyTab } from "./PartyTab";
-import { SnippetsTab } from "./SnippetsTab";
+import { UserSnippetsTab } from "./UserSnippetsTab";
 import { TabButton } from "./shared";
 import type { GameInfoPanelProps, Tab } from "./types";
 
@@ -162,9 +162,8 @@ export function GameInfoPanel({
             "location",
             "battle",
             "menu",
-            "agent",
             "snippets",
-            "agent-snippets",
+            "agent",
             "markdown",
           ] as Tab[]
         ).map((t) => (
@@ -182,6 +181,7 @@ export function GameInfoPanel({
           <AgentTab
             isThinking={agent?.isThinking}
             isPlayingMacro={agent?.isPlayingMacro}
+            isBattling={agent?.isBattling}
             error={agent?.error}
             lastRequest={agent?.lastRequest}
             lastResponse={agent?.lastResponse}
@@ -207,10 +207,14 @@ export function GameInfoPanel({
             lastRoute={data?.lastRoute}
           />
         )}
-        {tab === "snippets" && playId && onRunSnippet && (
-          <SnippetsTab playId={playId} disabled={disabled} onRun={onRunSnippet} />
+        {tab === "snippets" && playId && (
+          <div className="flex flex-col gap-4">
+            <AgentSnippetsTab playId={playId} disabled={disabled} />
+            {onRunSnippet && (
+              <UserSnippetsTab playId={playId} disabled={disabled} onRun={onRunSnippet} />
+            )}
+          </div>
         )}
-        {tab === "agent-snippets" && playId && <AgentSnippetsTab playId={playId} disabled={disabled} />}
         {tab === "markdown" && <MarkdownTab />}
       </div>
     </div>

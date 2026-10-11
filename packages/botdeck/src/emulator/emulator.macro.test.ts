@@ -111,4 +111,45 @@ describe("Emulator macro playback", () => {
     expect(nes.buttonUp).toHaveBeenCalledWith(1, 2);
     expect(emulator.isPlayingMacro()).toBe(false);
   });
+
+  it("survives a throwing interrupt predicate without killing the frame loop", async () => {
+    const { emulator, nes } = makeEmulator();
+    const promise = emulator.runMacro(
+      [{ button: RIGHT, holdFrames: 100, gapFrames: 4 }],
+      () => {
+        throw new Error("state read failed");
+      },
+    );
+
+    // The predicate throwing must not escape stepFrame (an escaping throw would
+    // stop requestAnimationFrame from re-arming and strand the macro).
+    expect(() => emulator.stepFrame()).not.toThrow();
+
+    await expect(promise).resolves.toBeUndefined();
+    expect(emulator.isPlayingMacro()).toBe(false);
+    expect(emulator.wasMacroInterrupted()).toBe(true);
+    expect(nes.buttonUp).toHaveBeenCalledWith(1, RIGHT);
+  });
+
+  it("a throwing predicate does not strand the macro across further frames", async () => {
+    const { emulator } = makeEmulator();
+    let calls = 0;
+    const promise = emulator.runMacro(
+      [{ button: 0, holdFrames: 100, gapFrames: 4 }],
+      () => {
+        calls += 1;
+        throw new Error("boom");
+      },
+    );
+
+    emulator.stepFrame();
+    emulator.stepFrame();
+    emulator.stepFrame();
+
+    // Cancelled on the first throwing frame; the predicate is not re-run after
+    // the macro has been torn down.
+    expect(calls).toBe(1);
+    await expect(promise).resolves.toBeUndefined();
+    expect(emulator.isPlayingMacro()).toBe(false);
+  });
 });
