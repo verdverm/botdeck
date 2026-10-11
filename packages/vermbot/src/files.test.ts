@@ -543,6 +543,25 @@ describe("play snippets", () => {
       deletePlay(TEST_GAME, id);
     }
   });
+
+  it("allows snippets without a startState", () => {
+    const id = tmpPlayId("snippets_no_start");
+    createPlay(TEST_GAME, id);
+    try {
+      const snippet = writePlaySnippet(TEST_GAME, id, "no-start", {
+        name: "No Start State",
+        description: "Runs against the currently loaded emulator state.",
+        steps: [{ kind: "command", command: { name: "interact" } }],
+      });
+      expect(snippet.id).toBe("no-start");
+      expect(snippet.startState).toBeUndefined();
+
+      const read = readPlaySnippet(TEST_GAME, id, "no-start");
+      expect(read.startState).toBeUndefined();
+    } finally {
+      deletePlay(TEST_GAME, id);
+    }
+  });
 });
 
 describe("agent snippets", () => {

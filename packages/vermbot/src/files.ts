@@ -1407,7 +1407,8 @@ export interface PlaySnippet {
   description: string;
   game: string;
   play: string;
-  startState: string;
+  /** Optional saved-state filename to load before running. When omitted, the snippet runs against the currently loaded emulator state. */
+  startState?: string;
   steps: SnippetStep[];
   expectedEndState?: string;
   tags?: string[];
@@ -1452,8 +1453,8 @@ function assertSnippet(body: unknown, id: string, game: string, play: string): P
   if (typeof description !== "string") {
     throw new ValidationError("snippet.description must be a string");
   }
-  if (typeof startState !== "string" || startState === "") {
-    throw new ValidationError("snippet.startState must be a non-empty string");
+  if (startState !== undefined && (typeof startState !== "string" || startState === "")) {
+    throw new ValidationError("snippet.startState must be a non-empty string if provided");
   }
   if (!Array.isArray(steps) || !steps.every(isSnippetStep)) {
     throw new ValidationError("snippet.steps must be an array of valid snippet steps");

@@ -308,8 +308,9 @@ export function UserSnippetsTab({ playId, disabled, onRun }: UserSnippetsTabProp
         </button>
       </div>
       <p className="text-xs text-neutral-400">
-        Reproducible button sequences that start from a saved snapshot. Expand a snippet to view
-        its summary; click Edit to change it with the JSON editor. Run always executes the current
+        Reproducible button sequences. Provide startState to load a saved snapshot before running;
+        omit it to run against the currently loaded emulator state. Expand a snippet to view its
+        summary; click Edit to change it with the JSON editor. Run always executes the current
         content.
       </p>
 
@@ -455,12 +456,7 @@ export function UserSnippetsTab({ playId, disabled, onRun }: UserSnippetsTabProp
                 <div className="mt-2 flex items-center justify-end gap-2">
                   <button
                     onClick={() => handleRun(NEW_KEY)}
-                    disabled={
-                      disabled ||
-                      !drafts[NEW_KEY] ||
-                      !drafts[NEW_KEY].id ||
-                      !drafts[NEW_KEY].startState
-                    }
+                    disabled={disabled || !drafts[NEW_KEY] || !drafts[NEW_KEY].id}
                     className="rounded bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
                   >
                     Run

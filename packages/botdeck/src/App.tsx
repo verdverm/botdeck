@@ -252,17 +252,18 @@ export function App() {
       };
 
       try {
-        const filename = `${snippet.startState}.state.json`;
-        const res = await fetch(stateUrl(playId, filename));
-        if (!res.ok) {
-          throw new Error(`failed to load start state ${filename}: ${res.status}`);
+        if (snippet.startState) {
+          const filename = `${snippet.startState}.state.json`;
+          const res = await fetch(stateUrl(playId, filename));
+          if (!res.ok) {
+            throw new Error(`failed to load start state ${filename}: ${res.status}`);
+          }
+          const state = (await res.json()) as object;
+          const collected = await loadState(state);
+          setSnapshot(collected);
+          setLastSaved(null);
+          await settle(200);
         }
-        const state = (await res.json()) as object;
-        const collected = await loadState(state);
-        setSnapshot(collected);
-        setLastSaved(null);
-
-        await settle(200);
         const beforePath = await snapshot("before");
 
         for (const step of snippet.steps) {

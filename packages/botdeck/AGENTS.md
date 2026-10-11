@@ -30,6 +30,9 @@ Commands:
 - `pnpm --filter botdeck bench`
 - `pnpm --filter botdeck lint`
 
+Docs:
+- `docs/snippets.md` - schema and examples for user snippets.
+
 Rules:
 - Use `@/` imports only.
 - Browser code never touches `node:fs`; all repo reads/writes go through the `/api` proxy.

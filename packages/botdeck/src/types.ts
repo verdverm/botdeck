@@ -169,7 +169,8 @@ export interface PlaySnippet {
   description: string;
   game: string;
   play: string;
-  startState: string;
+  /** Optional saved-state filename to load before running. When omitted, the snippet runs against the currently loaded emulator state. */
+  startState?: string;
   steps: SnippetStep[];
   expectedEndState?: string;
   tags?: string[];
