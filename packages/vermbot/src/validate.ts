@@ -41,6 +41,9 @@ interface ValidatedState {
     activePartyIndex?: number;
   };
   inventory?: ValidatedInventoryItem[];
+  availableLocations?: { id?: string; name?: string }[];
+  availableNpcs?: { index?: number; name?: string }[];
+  world?: { isOverworld?: boolean; isStandardMap?: boolean; mapName?: string };
 }
 
 export interface ValidationFailure {
@@ -84,6 +87,13 @@ export function validateCommand(command: GameCommand, request: TurnRequest): Val
     };
   }
 
+  if (command.args != null && (typeof command.args !== "object" || Array.isArray(command.args))) {
+    return {
+      error: `Command "${command.name}" args must be a JSON object, got ${typeof command.args}.`,
+      correction: `Example args: ${spec.args ?? "none"}.`,
+    };
+  }
+
   const args = command.args ?? {};
   const state = extractState(request);
   const isBattle = request.mode === "battle";
@@ -110,7 +120,183 @@ export function validateCommand(command: GameCommand, request: TurnRequest): Val
     if (targetFailure) return targetFailure;
   }
 
+  switch (command.name) {
+    case "goto":
+      return validateGoto(args, state);
+    case "grind":
+      return validateGrind(args, state);
+    case "talk_to":
+      return validateTalkTo(args, state);
+    case "menu_navigate":
+      return validateMenuNavigate(args);
+    case "dialog_advance":
+      return validateDialogAdvance(args);
+    case "buy":
+      return validateBuy(args);
+    case "sell":
+      return validateSell(args, state);
+  }
+
   return undefined;
+}
+
+/** Mirrors botdeck ff1-nav trimLoc: lowercase, [_\s-]+ collapsed to single space. */
+function normalizeLocationName(name: string): string {
+  return name.trim().toLowerCase().replace(/[_\s-]+/g, " ");
+}
+
+function validateGoto(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const locationName = String(args.location ?? "").trim();
+  if (locationName === "") {
+    return { error: 'goto: missing "location".', correction: buildLocationCorrection(state.availableLocations) };
+  }
+  if (!isKnownLocation(locationName, state.availableLocations)) {
+    return {
+      error: `goto: unknown location "${locationName}".`,
+      correction: buildLocationCorrection(state.availableLocations),
+    };
+  }
+  return undefined;
+}
+
+function isKnownLocation(name: string, locations?: { id?: string; name?: string }[]): boolean {
+  if (!locations || locations.length === 0) return false;
+  const want = normalizeLocationName(name);
+  return locations.some((loc) => {
+    const id = loc.id != null ? normalizeLocationName(String(loc.id)) : undefined;
+    const name2 = loc.name != null ? normalizeLocationName(String(loc.name)) : undefined;
+    return id === want || name2 === want || (name2 !== undefined && name2.startsWith(want) && want !== "") || id?.startsWith(want);
+  });
+}
+
+function buildLocationCorrection(locations?: { id?: string; name?: string }[]): string {
+  if (!locations || locations.length === 0) {
+    return "No locations are available on the current map; state did not list any. Use press_button to move instead.";
+  }
+  return `Valid locations: ${locations.map((l) => l.name ?? l.id).join(", ")}.`
+}
+
+function validateGrind(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const x = Number(args.x);
+  const y = Number(args.y);
+  const distance = Number(args.distance ?? 4);
+  const isStandardMap = state.world?.isOverworld === false;
+  const maxCoord = isStandardMap ? 63 : 255;
+  const label = `tile coordinates on the ${isStandardMap ? "current standard map (0-63)" : "overworld (0-255)"}`;
+  if (args.x === undefined || args.y === undefined) {
+    return { error: 'grind: missing "x" and "y".', correction: `grind needs numeric ${label} plus a "distance" radius.` };
+  }
+  if (!Number.isFinite(x) || x < 0 || x > maxCoord || !Number.isFinite(y) || y < 0 || y > maxCoord) {
+    return {
+      error: `grind: invalid x/y (${String(args.x)}, ${String(args.y)}); expected ${label}.`,
+      correction: `Pass numeric ${label}, and a non-negative "distance" radius in tiles.`,
+    };
+  }
+  if (!Number.isFinite(distance) || distance < 0) {
+    return { error: `grind: invalid distance ${String(args.distance)}.`, correction: '"distance" must be a non-negative number of tiles (the random-walk radius).' };
+  }
+  return undefined;
+}
+
+/** Mirrors botdeck resolveTalkToTarget: "npc/slot/object N", bare number, name exact or prefix. */
+function validateTalkTo(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const targetName = String(args.target ?? "").trim();
+  const npcs = state.availableNpcs ?? [];
+  if (!npcs.some((n) => typeof n?.index === "number")) {
+    return {
+      error: "talk_to: no NPCs/objects are visible on this map.",
+      correction: "Use goto/interact/press_button instead, or wait until a distinct context is visible.",
+    };
+  }
+  if (targetName === "") return undefined; // compiler falls back to the first visible object.
+
+  const indexMatch = targetName.match(/(?:object|npc|slot)\s*(\d+)/i);
+  const bare = /^\d+$/.test(targetName) ? Number(targetName) : undefined;
+  if (indexMatch || bare !== undefined) {
+    const idx = indexMatch ? Number(indexMatch[1]) : bare;
+    const found = npcs.find((n) => n.index === idx);
+    if (found) return undefined;
+    return failTalkToTarget(targetName, npcs);
+  }
+
+  const normalized = targetName.toLowerCase();
+  const named = npcs.find((n) => (n.name ?? "").toLowerCase() === normalized);
+  if (named) return undefined;
+  const prefix = npcs.find((n) => (n.name ?? "").toLowerCase().startsWith(normalized));
+  if (prefix) return undefined;
+  return failTalkToTarget(targetName, npcs);
+}
+
+function failTalkToTarget(targetName: string, npcs: { index?: number; name?: string }[]): ValidationFailure {
+  const names = npcs
+    .filter((n) => n.name)
+    .map((n) => `"${n.name}" (slot ${n.index})`)
+    .join(", ");
+  return {
+    error: `talk_to: cannot resolve "${targetName}".`,
+    correction: `Visible NPCs/objects: ${names || "none"}. Use a listed name, or "npc <number>" from that list.`,
+  };
+}
+
+const VALID_DIRECTIONS = ["up", "down", "left", "right"];
+
+function validateMenuNavigate(args: Record<string, unknown>): ValidationFailure | undefined {
+  const direction = String(args.direction ?? "down").toLowerCase().trim();
+  if (!VALID_DIRECTIONS.includes(direction)) {
+    return { error: `menu_navigate: unknown direction "${direction}".`, correction: `Valid directions: ${VALID_DIRECTIONS.join(", ")}.` };
+  }
+  const steps = args.steps;
+  if (steps !== undefined && (!Number.isFinite(Number(steps)) || Number(steps) < 1)) {
+    return { error: `menu_navigate: invalid steps ${String(steps)}.`, correction: "steps must be a number >= 1 (defaults to 1 when omitted)." };
+  }
+  return undefined;
+}
+
+function validateDialogAdvance(args: Record<string, unknown>): ValidationFailure | undefined {
+  const presses = args.presses;
+  if (presses !== undefined && (!Number.isFinite(Number(presses)) || Number(presses) < 1 || Number(presses) > 20)) {
+    return { error: `dialog_advance: invalid presses ${String(presses)}.`, correction: "presses must be a number between 1 and 20 (defaults to 3 when omitted)." };
+  }
+  return undefined;
+}
+
+function validateBuy(args: Record<string, unknown>): ValidationFailure | undefined {
+  const itemName = String(args.item ?? "").trim();
+  if (itemName === "") {
+    return { error: 'buy: missing "item".', correction: 'Provide the 0-based shop inventory index as "item" (shop item names are not yet exposed).' };
+  }
+  return undefined;
+}
+
+function validateSell(args: Record<string, unknown>, state: ValidatedState): ValidationFailure | undefined {
+  const itemName = String(args.item ?? "").trim();
+  if (itemName === "") {
+    return { error: 'sell: missing "item".', correction: buildSellCorrection(state) };
+  }
+  if (/^\d+$/.test(itemName)) {
+    const inventory = (state.inventory ?? []).filter((it) => (it.quantity ?? 0) > 0);
+    if (Number(itemName) >= inventory.length) {
+      return { error: `sell: item index ${itemName} is out of range.`, correction: buildSellCorrection(state) };
+    }
+    return undefined;
+  }
+  const labels = (state.inventory ?? [])
+    .filter((it) => (it.quantity ?? 0) > 0)
+    .map((it) => it.itemInfo?.name ?? "")
+    .filter((n) => n !== "");
+  const normalized = itemName.toLowerCase();
+  if (labels.some((l) => l.toLowerCase() === normalized || l.toLowerCase().startsWith(normalized))) {
+    return undefined;
+  }
+  return { error: `sell: "${itemName}" is not in inventory.`, correction: buildSellCorrection(state) };
+}
+
+function buildSellCorrection(state: ValidatedState): string {
+  const items = (state.inventory ?? [])
+    .filter((it) => (it.quantity ?? 0) > 0)
+    .map((it) => `${it.itemInfo?.name ?? "?"} x${it.quantity} (slot ${state.inventory?.indexOf(it)})`)
+    .join(", ");
+  return `Inventory: ${items || "empty"}. "item" takes the 0-based inventory index or item name.`;
 }
 
 function validateActor(
@@ -301,7 +487,6 @@ function extractState(request: TurnRequest): ValidatedState {
   const ff1 = request.state?.ff1 as ValidatedState | undefined;
   return ff1 ?? {};
 }
-
 function parseSlotIndex(input: string): number | undefined {
   const match = input.match(/^slot\s*(\d+)$/i);
   if (match) return Number(match[1]);

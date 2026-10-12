@@ -396,6 +396,60 @@ describe("useBotLoop step persistence", () => {
     expect(body.error).toContain("max tool rounds reached");
   }, 30_000);
 
+  it("records a compile error and feeds it back to the agent on the next turn", async () => {
+    fetchSpy.mockImplementation(async (url: unknown) => {
+      if (String(url).endsWith("/api/turn")) {
+        return {
+          ok: true,
+          json: async () => ({ command: { name: "goto", args: { location: "Bogus" } }, reason: "travel" }),
+        } as unknown as Response;
+      }
+      return { ok: true, json: async () => ({}) } as unknown as Response;
+    });
+
+    const plugin = {
+      id: "ff1",
+      title: "FF1",
+      readState: () => commandEntryState(),
+      getMode: () => "battle",
+      availableCommands: () => [{ name: "goto", description: "Travel", args: '{ "location": "string" }' }],
+      compile: () => {
+        throw new Error('goto: unknown location "Bogus".');
+      },
+    } as unknown as GamePlugin;
+
+    const { result } = renderHook(() =>
+      useBotLoop({
+        playId: "ff1/0000_dev",
+        game: "ff1",
+        emulator,
+        plugin,
+        collectStates: false,
+        settleDelayMs: 5,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.step();
+    });
+
+    // The step is recorded as a failure with an empty macro...
+    const stepPosts = fetchSpy.mock.calls.filter((call) => String(call[0]).endsWith("/steps"));
+    expect(stepPosts.length).toBe(1);
+    const body = JSON.parse(String((stepPosts[0]![1] as RequestInit).body)) as {
+      error?: string;
+      macro: unknown[];
+      command: { name: string };
+    };
+    expect(body.error).toContain('goto: unknown location "Bogus"');
+    expect(body.macro).toEqual([]);
+    expect(body.command.name).toBe("goto");
+    // ...and the pending one-shot user message carries the correction for the
+    // agent's next turn.
+    expect(result.current.pendingMessage).toContain("goto: unknown location \"Bogus\"");
+    expect(result.current.pendingMessage).toContain("Do not repeat it");
+  }, 30_000);
+
   it("does not ask the agent twice for the same actor when the command does not latch", async () => {
     // The command buffer never advances (stub macro), so the game still shows
     // command entry for Stu; the loop must stop instead of re-asking forever.

@@ -1,0 +1,20 @@
+{
+  "id": "test-astar-with-npc-blocker",
+  "name": "Test Astar With Npc Blocker",
+  "description": "tests that A* works when an NPC blocks the shortest path",
+  "game": "ff1",
+  "play": "0001_dev",
+  "steps": [
+    {
+      "kind": "command",
+      "command": {
+        "name": "goto",
+        "args": {
+          "location": "coneria_castle_2f"
+        }
+      }
+    }
+  ],
+  "expectedEndState": "",
+  "tags": []
+}

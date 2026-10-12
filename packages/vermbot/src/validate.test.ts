@@ -393,3 +393,131 @@ describe("validateCommand real battle state shape", () => {
     expect(bad!.correction).toContain("LIT");
   });
 });
+
+describe("validateCommand arg-value checks (field/menus)", () => {
+  const FIELD_OPTIONS: CommandSpec[] = [
+    { name: "goto", description: "Travel", args: '{ "location": "string" }' },
+    { name: "grind", description: "Walk", args: '{ "x": "number", "y": "number", "distance": "number" }' },
+    { name: "talk_to", description: "Talk", args: '{ "target": "string" }' },
+    { name: "menu_navigate", description: "Cursor", args: '{ "direction": "string", "steps": "number" }' },
+    { name: "sell", description: "Sell", args: '{ "item": "string" }' },
+    { name: "buy", description: "Buy", args: '{ "item": "string" }' },
+    { name: "dialog_advance", description: "Advance", args: '{ "presses": "number" }' },
+  ];
+
+  function fieldState(state: Record<string, unknown>): Record<string, unknown> {
+    return { ff1: state };
+  }
+
+  const Locations = [
+    { id: "coneria_castle", name: "Coneria Castle" },
+    { id: "pravoka", name: "Pravoka" },
+  ];
+
+  it("rejects a goto with an unknown location and lists valid ones", () => {
+    const req = makeRequest(fieldState({ availableLocations: Locations, world: { isOverworld: true } }), FIELD_OPTIONS, "field");
+    const result = validateCommand({ name: "goto", args: { location: "Coneria In" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.correction).toContain("Pravoka");
+  });
+
+  it("accepts a goto by exact name, id, or case-insensitive prefix", () => {
+    const req = makeRequest(fieldState({ availableLocations: Locations, world: { isOverworld: true } }), FIELD_OPTIONS, "field");
+    expect(validateCommand({ name: "goto", args: { location: "Coneria Castle" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "goto", args: { location: "coneria_castle" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "goto", args: { location: "pravo" } }, req)).toBeUndefined();
+  });
+
+  it("rejects a goto with a missing location", () => {
+    const req = makeRequest(fieldState({ availableLocations: Locations, world: { isOverworld: true } }), FIELD_OPTIONS, "field");
+    const result = validateCommand({ name: "goto", args: {} }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain('missing "location"');
+  });
+
+  it("rejects grind coordinates outside the current map's range", () => {
+    const over = makeRequest(fieldState({ world: { isOverworld: true } }), FIELD_OPTIONS, "field");
+    const standard = makeRequest(fieldState({ world: { isOverworld: false } }), FIELD_OPTIONS, "field");
+    expect(validateCommand({ name: "grind", args: { x: 10, y: 10, distance: 4 } }, over)).toBeUndefined();
+    expect(validateCommand({ name: "grind", args: { x: 300, y: 10, distance: 4 } }, over)).toBeDefined();
+    expect(validateCommand({ name: "grind", args: { x: 100, y: 10, distance: 4 } }, standard)).toBeDefined();
+    expect(validateCommand({ name: "grind", args: { x: 10, y: 10, distance: -1 } }, over)).toBeDefined();
+    const missing = validateCommand({ name: "grind", args: { x: 10 } }, over);
+    expect(missing).toBeDefined();
+    expect(missing!.error).toContain("y");
+  });
+
+  it("validates talk_to targets against visible NPCs (index and name forms)", () => {
+    const npcs = [{ index: 0, name: "Bridge Guard" }, { index: 1, name: "Pravoka Dissenter" }];
+    const req = makeRequest(fieldState({ availableNpcs: npcs, world: { isStandardMap: true } }), FIELD_OPTIONS, "field");
+    expect(validateCommand({ name: "talk_to", args: { target: "Bridge Guard" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "talk_to", args: { target: "bridge" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "talk_to", args: { target: "npc 1" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "talk_to", args: { target: "slot 0" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "talk_to", args: {} }, req)).toBeUndefined(); // empty -> first object
+    const bad = validateCommand({ name: "talk_to", args: { target: "King" } }, req);
+    expect(bad).toBeDefined();
+    expect(bad!.error).toContain("King");
+    expect(bad!.correction).toContain("Bridge Guard");
+  });
+
+  it("rejects talk_to when no NPCs are visible in state", () => {
+    const req = makeRequest(fieldState({ world: { isStandardMap: true } }), FIELD_OPTIONS, "field");
+    const result = validateCommand({ name: "talk_to", args: { target: "Anybody" } }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("no NPCs");
+  });
+
+  it("validates menu_navigate direction and steps", () => {
+    const req = makeRequest(fieldState({}), FIELD_OPTIONS, "field");
+    expect(validateCommand({ name: "menu_navigate", args: { direction: "up", steps: 2 } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "menu_navigate", args: {} }, req)).toBeUndefined();
+    const badDir = validateCommand({ name: "menu_navigate", args: { direction: "northeast" } }, req);
+    expect(badDir).toBeDefined();
+    expect(badDir!.correction).toContain("left");
+    const badSteps = validateCommand({ name: "menu_navigate", args: { direction: "down", steps: 0 } }, req);
+    expect(badSteps).toBeDefined();
+    expect(badSteps!.error).toContain("steps");
+  });
+
+  it("validates dialog_advance presses", () => {
+    const req = makeRequest(fieldState({}), FIELD_OPTIONS, "field");
+    expect(validateCommand({ name: "dialog_advance", args: {} }, req)).toBeUndefined();
+    expect(validateCommand({ name: "dialog_advance", args: { presses: 5 } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "dialog_advance", args: { presses: 0 } }, req)).toBeDefined();
+    expect(validateCommand({ name: "dialog_advance", args: { presses: 99 } }, req)).toBeDefined();
+  });
+
+  it("rejects an empty buy item", () => {
+    const req = makeRequest(fieldState({}), FIELD_OPTIONS, "field");
+    expect(validateCommand({ name: "buy", args: { item: "0" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "buy", args: {} }, req)).toBeDefined();
+  });
+
+  it("validates a sell item against inventory", () => {
+    const req = makeRequest(
+      fieldState({
+        inventory: [
+          { itemInfo: { name: "Potion", type: "consumable" }, quantity: 2 },
+          { itemInfo: { name: "Tent", type: "tool" }, quantity: 1 },
+        ],
+      }),
+      FIELD_OPTIONS,
+      "field",
+    );
+    expect(validateCommand({ name: "sell", args: { item: "Potion" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "sell", args: { item: "pot" } }, req)).toBeUndefined();
+    expect(validateCommand({ name: "sell", args: { item: "0" } }, req)).toBeUndefined();
+    const bad = validateCommand({ name: "sell", args: { item: "Cabin" } }, req);
+    expect(bad).toBeDefined();
+    expect(bad!.correction).toContain("Potion");
+    expect(validateCommand({ name: "sell", args: { item: "99" } }, req)).toBeDefined();
+  });
+
+  it("rejects non-object args payloads", () => {
+    const req = makeRequest(fieldState({ availableLocations: Locations }), FIELD_OPTIONS, "field");
+    const result = validateCommand({ name: "goto", args: ["Coneria Castle"] as unknown as Record<string, unknown> }, req);
+    expect(result).toBeDefined();
+    expect(result!.error).toContain("JSON object");
+  });
+});

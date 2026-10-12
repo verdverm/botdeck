@@ -454,6 +454,14 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         response.error = message;
         macroError = message;
         macro = [];
+        // Feedback loop: the turn still ran, but the macro did nothing. Inject
+        // a one-shot user message so the agent's next turn corrects its
+        // arguments instead of silently repeating a command that fails to
+        // compile with the same invalid arguments.
+        setPendingMessage(
+          `Your previous command "${response.command.name}" failed at compile time: ${message} ` +
+            "Do not repeat it. Choose a command from the available options with valid arguments, using the state's listed options.",
+        );
       }
 
       // Long travel macros assume the game stays on the field. Let the plugin
@@ -563,7 +571,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastResponse(response);
       return entry;
     },
-    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch],
+    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch, setPendingMessage],
   );
 
   const decideAndMaybeExecute = useCallback(

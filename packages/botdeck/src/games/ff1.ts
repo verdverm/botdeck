@@ -609,6 +609,15 @@ export class FF1GamePlugin implements GamePlugin {
       } else if (ff1.world.isStandardMap) {
         ff1.availableLocations = standardMapLocations(ff1.world.mapId);
       }
+      // Named visible NPCs/objects for talk_to targeting (and validation of
+      // talk_to targets server-side). Mirrors the shape compileTalkTo resolves
+      // against, so the agent is never validated against options it cannot see.
+      if (ff1.world.isStandardMap) {
+        ff1.availableNpcs = getMapObjects({ ff1 }).map((o) => ({
+          index: o.index,
+          name: o.name,
+        }));
+      }
     }
     const mode = this.getMode({ ff1 });
     return sanitizeForRequest({
@@ -642,7 +651,11 @@ export class FF1GamePlugin implements GamePlugin {
           right: NES_BUTTONS.RIGHT,
         };
         const button = map[direction];
-        if (button === undefined) return [];
+        // Invalid values never no-op silently: a rejected value must fail loud
+        // so the step is recorded with an error and the agent gets feedback.
+        if (button === undefined) {
+          throw new Error(`move: unknown direction "${direction}". Valid directions: up, down, left, right.`);
+        }
         return [press(button, HOLD_FRAMES * 2, GAP_FRAMES * 2)];
       }
       case "interact":
@@ -881,8 +894,14 @@ export class FF1GamePlugin implements GamePlugin {
   }
 
   private compileMenuNavigate(command: GameCommand): ButtonStep[] {
-    const direction = String(command.args?.direction ?? "down").toLowerCase();
+    const direction = String(command.args?.direction ?? "down").toLowerCase().trim();
+    if (!["up", "down", "left", "right"].includes(direction)) {
+      throw new Error(`menu_navigate: unknown direction "${direction}". Valid directions: up, down, left, right.`);
+    }
     const steps = Number(command.args?.steps ?? 1);
+    if (!Number.isFinite(steps) || steps < 1) {
+      throw new Error(`menu_navigate: invalid steps ${String(command.args?.steps)}. steps must be a number >= 1.`);
+    }
     return navigateDirection(direction, Math.max(1, steps));
   }
 

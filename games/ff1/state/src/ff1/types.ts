@@ -302,5 +302,7 @@ export interface FF1GameState {
   context: GameContext;
   menu: MenuState;
   availableLocations: KnownLocation[];
+  /** Visible NPCs/objects (plugin-side name lookup) for talk_to targets. */
+  availableNpcs?: { index: number; name?: string }[];
   dialog?: DialogState;
 }
