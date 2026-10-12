@@ -1,6 +1,7 @@
-import type { DialogState, FF1GameState, GameContext, KnownLocation, MenuState, PartyCharacter, SpellChargeLevel, WorldState, BattlePartyMember, BattleEnemy } from "./types.js";
+import type { DialogState, FF1GameState, GameContext, KnownLocation, MapObject, MenuState, PartyCharacter, SpellChargeLevel, WorldState, BattlePartyMember, BattleEnemy } from "./types.js";
 import { getSpellById } from "../data/spells.js";
 import { getConsumableById } from "../data/items.js";
+import { getNpcNameById } from "../data/npcs.js";
 
 export function mpSummary(charges: SpellChargeLevel[] | undefined): string {
   if (!charges || charges.length === 0) return "-";
@@ -86,6 +87,22 @@ function formatLocations(locations: KnownLocation[] | undefined): string {
     .map((loc) => {
       const badge = loc.reachable ? `[${loc.reachable}] ` : "";
       return `- ${badge}${loc.name} (${loc.id})`;
+    })
+    .join("\n");
+}
+
+/**
+ * Visible NPCs and interactable objects on a standard map (town, castle,
+ * dungeon), derived from the object sprite RAM. These are the `talk_to`
+ * targets available on the current screen; the agent cannot address what it
+ * cannot see, so the list must appear in the state prompt.
+ */
+function formatObjects(objects: MapObject[] | undefined): string {
+  if (!objects || objects.length === 0) return "None";
+  return objects
+    .map((obj) => {
+      const name = getNpcNameById(obj.id) ?? `Object ${obj.id}`;
+      return `- ${name} [slot ${obj.index}] @ (${obj.physicalX}, ${obj.physicalY}) facing ${obj.facing}`;
     })
     .join("\n");
 }
@@ -261,6 +278,9 @@ export function formatFF1GameInfo(state: FF1GameState | undefined): string {
     "",
     "## Available Locations",
     formatLocations(state.availableLocations),
+    "",
+    "## NPCs / Objects",
+    formatObjects(state.world?.mapObjects),
     "",
     "## Inventory",
     formatInventory(state),

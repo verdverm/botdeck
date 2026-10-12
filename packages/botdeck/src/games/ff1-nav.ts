@@ -574,10 +574,20 @@ export function gotoMacro(
 export interface SmTileProps {
   noMove: boolean;
   battle: boolean;
+  /** TP_SPEC_* bits (Constants.inc). 0x02 room door, 0x04 locked door. */
   special: number;
   param: number;
   walkable: boolean;
 }
+
+/**
+ * Locked-door special bit (TP_SPEC_LOCKED, Constants.inc). The tile is
+ * no-move in the extracted grid; the game's `SMMove_Door` only permits a step
+ * onto it while `item_mystickey` is set (`bank_0F.asm:3471+`). It rewrites the
+ * PPU door graphic, never the RAM `mapdata` tile, so there is no persistent
+ * "open" tile to read: passability is exactly the Mystic-Key flag.
+ */
+export const TP_SPEC_LOCKED = 0x04;
 
 /** A doorway/teleport cluster or POI inside a standard map. */
 export interface SmLocation {
@@ -668,10 +678,25 @@ function smVoidSet(map: RawSmMap): Set<string> {
   return set;
 }
 
-/** Standard maps walk on foot only; TP_NOMOVE is the single walkability bit. */
-export function smIsWalkable(map: RawSmMap, x: number, y: number): boolean {
+/**
+ * Standard maps walk on foot only; TP_NOMOVE is the single walkability bit.
+ *
+ * @param openLockedDoors - When the party holds the Mystic Key, locked-door
+ * tiles (special 0x04) become steppable, matching `SMMove_Door`. Off by
+ * default so callers that do not model the key keep the door as a wall.
+ */
+export function smIsWalkable(
+  map: RawSmMap,
+  x: number,
+  y: number,
+  openLockedDoors = false,
+): boolean {
   const props = mapPropsAt(map, x, y);
   if (!props) return false;
+  // A locked door is a wall only while the key is absent; with it the tile is
+  // an ordinary step. Checked before the walkable bit because the door tile is
+  // itself flagged no-move in the static grid.
+  if (openLockedDoors && props.special === TP_SPEC_LOCKED) return true;
   if (!props.walkable) return false;
   // Out-of-map warp-void tiles are not navigable steps: stepping on them
   // exits the map, so A* must treat them as walls (they can only be a goal).
@@ -700,6 +725,8 @@ interface GridSpec {
 interface AstarOptions {
   goalPass?: (tile: Tile) => boolean;
   blocked?: Set<string>;
+  /** Party holds the Mystic Key: locked-door tiles (special 0x04) are steppable. */
+  openLockedDoors?: boolean;
 }
 
 function astarOnGrid(spec: GridSpec, from: Tile, to: Tile, opts?: AstarOptions): PathResult & { found: boolean } {
@@ -788,7 +815,7 @@ export function findSmPath(mapId: number, from: Tile, to: Tile, opts?: AstarOpti
   // Standard maps are hard-bounded by no-move void; the party cannot wrap
   // around the edges. Only the overworld is a true torus.
   return astarOnGrid(
-    { width: map.width, height: map.height, wrapX: false, wrapY: false, passable: (x, y) => smIsWalkable(map, x, y) },
+    { width: map.width, height: map.height, wrapX: false, wrapY: false, passable: (x, y) => smIsWalkable(map, x, y, opts?.openLockedDoors ?? false) },
     from,
     to,
     opts,
@@ -917,6 +944,7 @@ export function planSmRoute(
   name: string,
   from: Tile,
   blocked?: Set<string>,
+  openLockedDoors = false,
 ): { location: SmLocation; goal: Tile; result: PathResult & { found: boolean } } | { error: string } {
   const cands = resolveSmLocation(mapId, name);
   const map = standardMap(mapId)!;
@@ -953,7 +981,7 @@ export function planSmRoute(
     let result: PathResult & { found: boolean } = { found: false, path: [], cost: 0 };
     for (const cand of cands) {
       const finalAction = (t: Tile) => t.x === cand.tile.x && t.y === cand.tile.y;
-      const attempt = findSmPath(mapId, from, cand.tile, { goalPass: finalAction, blocked });
+      const attempt = findSmPath(mapId, from, cand.tile, { goalPass: finalAction, blocked, openLockedDoors });
       if (attempt.found) {
         goal = cand.tile;
         result = attempt;
@@ -993,7 +1021,7 @@ export function planSmRoute(
     mapId,
     from,
     goal,
-    isPoi || loc.void ? { goalPass: (t) => t.x === goal.x && t.y === goal.y, blocked } : { blocked },
+    isPoi || loc.void ? { goalPass: (t) => t.x === goal.x && t.y === goal.y, blocked, openLockedDoors } : { blocked, openLockedDoors },
   );
   if (!result.found) {
     return { error: `goto: no path from (${from.x},${from.y}) to the ${loc.type} at (${goal.x},${goal.y}).` };
@@ -1085,8 +1113,9 @@ export function gotoSmMacro(
   name: string,
   from: Tile,
   blocked?: Set<string>,
+  openLockedDoors = false,
 ): { steps: ButtonStep[]; plan: RoutePlan } {
-  const planned = planSmRoute(mapId, name, from, blocked);
+  const planned = planSmRoute(mapId, name, from, blocked, openLockedDoors);
   if ("error" in planned) throw new Error(planned.error);
   const plan: RoutePlan = {
     mapId,

@@ -119,3 +119,39 @@ describe("formatFF1GameInfo battle section", () => {
     expect(info).toContain("[queued: DRINK Potion -> Jaki (slot 3)]");
   });
 });
+
+describe("formatFF1GameInfo NPCs / Objects section", () => {
+  it("lists named map objects with their slot index and position", () => {
+    const state = makeState();
+    state.world = {
+      ...state.world,
+      isOverworld: false,
+      isStandardMap: true,
+      mapObjects: [
+        { index: 0, id: 0x0a, rawId: 0x0a, flags: 0, physicalX: 4, physicalY: 6, graphicX: 4, graphicY: 6, facing: 2, pl: 0, rawBytes: new Uint8Array(0) },
+      ],
+    };
+    const info = formatFF1GameInfo(state);
+    expect(info).toContain("## NPCs / Objects");
+    expect(info).toContain("- Matoya [slot 0] @ (4, 6) facing 2");
+  });
+
+  it("falls back to a generic object label for unnamed IDs", () => {
+    const state = makeState();
+    state.world = {
+      ...state.world,
+      isOverworld: false,
+      isStandardMap: true,
+      mapObjects: [
+        { index: 1, id: 0x99, rawId: 0x99, flags: 0, physicalX: 2, physicalY: 3, graphicX: 2, graphicY: 3, facing: 0, pl: 0, rawBytes: new Uint8Array(0) },
+      ],
+    };
+    const info = formatFF1GameInfo(state);
+    expect(info).toContain("- Object 153 [slot 1] @ (2, 3) facing 0");
+  });
+
+  it("reports None when no objects are visible", () => {
+    const info = formatFF1GameInfo(makeState());
+    expect(info).toContain("## NPCs / Objects\nNone");
+  });
+});

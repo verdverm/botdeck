@@ -5,7 +5,8 @@
   "agent": {
     "model": "small",
     "maxToolRounds": 25,
-    "maxTokens": 2048,
+    "maxTokens": 4096,
+    "timeoutMs": 240000,
     "limits": {
       "goals": 1024,
       "memory": 2048,

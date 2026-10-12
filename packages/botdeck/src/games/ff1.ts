@@ -168,6 +168,18 @@ function getWorld(state?: Record<string, unknown>): WorldState | undefined {
 }
 
 /**
+ * Whether the party can open locked doors right now. The game's `SMMove_Door`
+ * permits a step onto a locked-door tile only while `item_mystickey` is set, so
+ * this single key-item flag is the whole condition for navigating through an
+ * unlocked door. Falls back to false when state is unavailable (conservative:
+ * a door stays a wall rather than planning a step the game will refuse).
+ */
+function canOpenLockedDoors(state?: Record<string, unknown>): boolean {
+  const flags = (state?.ff1 as { flags?: { hasMysticKey?: boolean } } | undefined)?.flags;
+  return flags?.hasMysticKey === true;
+}
+
+/**
  * Map the reader's vehicle name onto the navigation vehicle key used by the
  * walkability masks. Anything unknown is treated as foot, the conservative
  * choice: it never plans a route the party cannot physically walk.
@@ -728,7 +740,13 @@ export class FF1GamePlugin implements GamePlugin {
     const blocked = blockedTiles(state);
 
     if (world.isStandardMap) {
-      const { steps, plan } = gotoSmMacro(world.mapId, location, standardMapPlayerTile(world), blocked);
+      const { steps, plan } = gotoSmMacro(
+        world.mapId,
+        location,
+        standardMapPlayerTile(world),
+        blocked,
+        canOpenLockedDoors(state),
+      );
       this.emulator.setLastRoute(plan);
       return steps;
     }
@@ -838,7 +856,7 @@ export class FF1GamePlugin implements GamePlugin {
 
     let best: { tile: { x: number; y: number }; face: number; path: { x: number; y: number }[]; distance: number } | undefined;
     for (const cand of candidates) {
-      const result = findSmPath(world.mapId, from, cand.tile, { blocked });
+      const result = findSmPath(world.mapId, from, cand.tile, { blocked, openLockedDoors: canOpenLockedDoors(state) });
       if (!result.found) continue;
       const distance = result.path.length;
       if (!best || distance < best.distance) {

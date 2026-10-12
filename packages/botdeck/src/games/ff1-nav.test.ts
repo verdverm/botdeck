@@ -154,6 +154,28 @@ describe("ff1 standard-map nav", () => {
     expect(planSmRoute(0, "coneria_castle", { x: 12, y: 14 })).toHaveProperty("error");
   });
 
+  it("paths through a locked door only when the Mystic Key is set", () => {
+    // Coneria Castle (mapId 8): locked doors at (12,14)/(17,14) are the only
+    // opening between the lower hall (y>=15) and the treasure rooms above
+    // (y<=13); every other tile in row 14 is a wall. So a south->north route
+    // must step onto a locked-door tile to be found.
+    const map = standardMap(8)!;
+    const from = { x: 12, y: 16 };
+    const to = { x: 12, y: 12 };
+
+    // Door tile is a wall without the key, walkable with it (the game's
+    // SMMove_Door rule). smIsWalkable is the primitive both routes use.
+    expect(smIsWalkable(map, 12, 14, false)).toBe(false);
+    expect(smIsWalkable(map, 12, 14, true)).toBe(true);
+
+    // Without the key the route does not exist.
+    expect(findSmPath(8, from, to, { openLockedDoors: false }).found).toBe(false);
+    // With the key it is found and the path actually crosses a door tile.
+    const withKey = findSmPath(8, from, to, { openLockedDoors: true });
+    expect(withKey.found).toBe(true);
+    expect(withKey.path.some((t) => smIsWalkable(map, t.x, t.y, false) === false)).toBe(true);
+  });
+
   it("routes from Coneria entrance to weapon shop", () => {
     // Entrance from dev save: scroll (9,16) -> player tile (16,23).
     const planned = planSmRoute(0, "weapon shop", { x: 16, y: 23 });
