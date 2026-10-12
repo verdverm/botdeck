@@ -11,8 +11,8 @@ import {
   readFF1State,
   formatFF1GameInfo,
   getNpcNameById,
-  ADDR_DIALOG_OPEN,
   ADDR_MAPFLAGS,
+  MAPFLAG_BATTLE_SCREEN,
   FF1_DIALOG_GEOMETRY,
   decodeNametableWindow,
   type FF1GameState,
@@ -264,6 +264,21 @@ function getActivePartyIndex(state?: Record<string, unknown>): number | undefine
   return ff1?.battle?.activePartyIndex;
 }
 
+/**
+ * Read the live battle command menu cursor (btlcurs_x/y, $6AAA/$6AAB) from
+ * battle state. Defaults to (0,0): MenuSelection_2x4 zeroes the cursor every
+ * time the command menu is entered (VERIFIED, bank_0C), so the default is
+ * safe at command-entry time and only matters for mid-menu recompiles.
+ */
+function getBattleMenuCursor(state?: Record<string, unknown>): { x: number; y: number } {
+  const battle = (state?.ff1 as { battle?: { cursorX?: number; cursorY?: number } } | undefined)
+    ?.battle;
+  return {
+    x: typeof battle?.cursorX === "number" ? battle.cursorX & 1 : 0,
+    y: typeof battle?.cursorY === "number" ? battle.cursorY & 3 : 0,
+  };
+}
+
 function getMenuCursor(state?: Record<string, unknown>): number | undefined {
   const ff1 = state?.ff1 as { menu?: { cursor?: number } } | undefined;
   const cursor = ff1?.menu?.cursor;
@@ -373,7 +388,8 @@ export class FF1GamePlugin implements GamePlugin {
     lastCurrent: string;
     pages: string[];
     sawBlank: boolean;
-  } = { open: false, lastCurrent: "", pages: [], sawBlank: false };
+    blankFrames: number;
+  } = { open: false, lastCurrent: "", pages: [], sawBlank: false, blankFrames: 0 };
 
   constructor(private emulator: Emulator) {}
 
@@ -384,7 +400,7 @@ export class FF1GamePlugin implements GamePlugin {
 
   /** Reset the per-turn dialog accumulator. Called before a macro plays. */
   resetDialogCapture(): void {
-    this.dialogCapture = { open: false, lastCurrent: "", pages: [], sawBlank: false };
+    this.dialogCapture = { open: false, lastCurrent: "", pages: [], sawBlank: false, blankFrames: 0 };
   }
 
   /** Sample one frame of dialog text, accumulating new pages while the box is open. */
@@ -392,9 +408,11 @@ export class FF1GamePlugin implements GamePlugin {
     const mem = this.emulator.getMemory();
     if (!mem || mem.length < 0x10000) return;
 
+    // NPC dialogue sets no RAM flag ($7F is the in-menu desc box only), so
+    // dialog visibility is derived from nametable text. Battle frames are
+    // skipped: the dialog window overlaps the battle menu boxes.
     const view = createCpuMemoryView(mem);
-    const open = view.u8(ADDR_DIALOG_OPEN) !== 0;
-    if (!open) {
+    if ((view.u8(ADDR_MAPFLAGS) & MAPFLAG_BATTLE_SCREEN) !== 0) {
       this.dialogCapture.open = false;
       return;
     }
@@ -404,6 +422,7 @@ export class FF1GamePlugin implements GamePlugin {
 
     const lines = decodeNametableWindow(nametable.data, nametable.width, FF1_DIALOG_GEOMETRY);
     const current = lines.join("\n").trim();
+    if (current === "" && !this.dialogCapture.open) return;
 
     if (!this.dialogCapture.open) {
       // First frame of a new dialog box.
@@ -414,10 +433,17 @@ export class FF1GamePlugin implements GamePlugin {
     }
 
     if (current === "") {
+      this.dialogCapture.blankFrames += 1;
       this.dialogCapture.sawBlank = true;
       this.dialogCapture.lastCurrent = "";
+      // A page turn blanks the box briefly; a closed box stays blank. Treat a
+      // sustained blank as closed so the next box starts a fresh capture.
+      if (this.dialogCapture.blankFrames >= 30) {
+        this.dialogCapture.open = false;
+      }
       return;
     }
+    this.dialogCapture.blankFrames = 0;
 
     if (this.dialogCapture.sawBlank) {
       // A blank frame followed by text indicates a new page.
@@ -439,12 +465,7 @@ export class FF1GamePlugin implements GamePlugin {
   }
 
   private readCapturedDialog(): DialogState {
-    const mem = this.emulator.getMemory();
-    let open = false;
-    if (mem && mem.length >= 0x10000) {
-      const view = createCpuMemoryView(mem);
-      open = view.u8(ADDR_DIALOG_OPEN) !== 0;
-    }
+    const open = this.dialogCapture.open;
     return {
       open,
       current: this.dialogCapture.lastCurrent,
@@ -1001,12 +1022,21 @@ export class FF1GamePlugin implements GamePlugin {
   private compileBattleAction(command: GameCommand): ButtonStep[] {
     const name = command.name;
     const state = this.readState();
-    const menuCursor = getMenuCursor(state);
-    const menuIndex = this.battleMenuIndexForAction(name);
+    // The battle command menu is a 2-column x 4-row grid (VERIFIED against
+    // MenuSelection_2x4 and lua_BattleCommandBoxInfo in the disassembly):
+    // left column FIGHT/MAGIC/DRINK/ITEM (x=0, y=0..3), RUN at x=1,y=0.
+    // btlcurs_x/y ($6AAA/B) reset to (0,0)=FIGHT every time the menu is
+    // entered, and are read live from battle state here. The $62 menu cursor
+    // is a shared field-menu byte and is NOT valid in battle.
+    const battleCursor = getBattleMenuCursor(state);
+    const target = this.battleMenuCursorForAction(name);
     const steps: ButtonStep[] = [];
 
-    // Select the battle menu action.
-    steps.push(...navigateVertical(menuCursor, menuIndex));
+    // Select the battle menu action: vertical first, then horizontal.
+    steps.push(...navigateVertical(battleCursor.y, target.y));
+    if (battleCursor.x !== target.x) {
+      steps.push(...navigateDirection(target.x > battleCursor.x ? "right" : "left", 1));
+    }
     steps.push(pressA());
 
     if (name === "magic") {
@@ -1090,20 +1120,19 @@ export class FF1GamePlugin implements GamePlugin {
     return steps;
   }
 
-  private battleMenuIndexForAction(action: string): number {
+  private battleMenuCursorForAction(action: string): { x: number; y: number } {
     switch (action) {
-      case "fight":
-        return 0;
       case "magic":
-        return 1;
-      case "use_item":
-        return 2;
-      case "equip":
-        return 3;
+        return { x: 0, y: 1 };
+      case "use_item": // DRINK
+        return { x: 0, y: 2 };
+      case "equip": // ITEM
+        return { x: 0, y: 3 };
       case "run":
-        return 4;
+        return { x: 1, y: 0 };
+      case "fight":
       default:
-        return 0;
+        return { x: 0, y: 0 };
     }
   }
 

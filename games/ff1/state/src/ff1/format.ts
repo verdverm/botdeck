@@ -1,4 +1,4 @@
-import type { DialogState, FF1GameState, GameContext, KnownLocation, MapObject, MenuState, PartyCharacter, SpellChargeLevel, WorldState, BattlePartyMember, BattleEnemy } from "./types.js";
+import type { DialogState, FF1GameState, GameContext, KnownLocation, MapObject, MenuState, PartyCharacter, SpellChargeLevel, WorldState, BattlePartyMember, BattleEnemy, BattleMenuState } from "./types.js";
 import { getSpellById } from "../data/spells.js";
 import { getConsumableById } from "../data/items.js";
 import { getNpcNameById } from "../data/npcs.js";
@@ -188,11 +188,33 @@ function formatBattle(state: FF1GameState): string {
     `Phase: ${phaseLabels[battle.phase ?? "commandEntry"] ?? battle.phase}`,
     `Active actor: ${battle.activePartyIndex !== undefined ? state.party[battle.activePartyIndex]?.name ?? "?" : "unknown"}`,
     `Next commandable: ${nextActor}`,
+    formatBattleMenu(battle.menu),
     "Enemies:",
     enemies,
     "Party:",
     party,
   ].join("\n");
+}
+
+/**
+ * Agent-facing description of the on-screen battle menu (VERIFIED box-window
+ * decode) and the raw battle cursor. This is the ground truth for "is a menu
+ * open and what does it say".
+ */
+function formatBattleMenu(menu: BattleMenuState | undefined): string {
+  if (!menu) return "Menu: unknown (nametable unavailable)";
+  if (menu.kind === "none") {
+    const target =
+      menu.targetSlot !== undefined ? ` target-cursor slot=${menu.targetSlot} (stale outside target selection)` : "";
+    return `Menu: none visible (target selection, transition, or round execution).${target}`;
+  }
+  const contents = (menu.contents ?? []).filter((l) => l.trim().length > 0).join(" / ");
+  const cursor =
+    menu.cursorX !== undefined && menu.cursorY !== undefined
+      ? ` cursor=(${menu.cursorX},${menu.cursorY})`
+      : "";
+  const page = menu.kind === "magic" && menu.page !== undefined ? ` page=${menu.page}` : "";
+  return `Menu: ${menu.kind}${page}${cursor} contents: ${contents || "(unreadable)"}`;
 }
 
 export function formatContext(context: GameContext | undefined): string {
@@ -213,12 +235,14 @@ export function formatContext(context: GameContext | undefined): string {
 export function formatMenu(menu: MenuState | undefined): string {
   if (!menu) return "unknown";
   const bits: string[] = [
+    menu.open ? `open kind=${menu.kind ?? "unknown"}` : "closed",
     `cursor ${menu.cursor ?? "-"}/${menu.cursorMax}`,
     `window $1f=${menu.windowId}`,
     menu.menuOverlay ? "overlay-bit-set" : "overlay-bit-clear",
   ];
   if (menu.enteringShop) bits.push(`shop ${menu.shopType ?? "?"} #${menu.shopId ?? "?"}`);
-  if (menu.dialogOpen) bits.push("dialog");
+  if (menu.descBoxOpen) bits.push("desc-box");
+  if ((menu.contents?.length ?? 0) > 0) bits.push(`contents: ${menu.contents.join(" / ")}`);
   return bits.join(" | ");
 }
 

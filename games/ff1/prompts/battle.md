@@ -19,4 +19,4 @@ Battle state reads the live enemy roster, active party index, and cursor positio
 
 When choosing targets, prefer the enemy name or slot label from the state (e.g., `Goblin`, `Goblin Guard`). If no name is available, use the slot label `Enemy N` where N is 1-9.
 
-Menu cursor navigation is implemented: the compiler will move from the current cursor position to the chosen menu entry and confirm. If the cursor is not readable, it will use the provided relative moves.
+The state includes a `Menu:` line decoded from the actual on-screen menu box. It tells you which battle menu is open (command / magic / item / drink), its text contents, and the cursor position. The command menu is a 2-column grid: FIGHT/MAGIC/DRINK/ITEM down the left column, RUN at the top-right. The magic menu has 4 rows (spell levels) x 3 columns over 2 pages (L1-4, L5-8). Trust the `Menu:` line over assumptions - if it says no menu is visible, the game is in target selection, a transition, or round execution, and you should wait or pick the least risky command.

@@ -215,6 +215,46 @@ export interface BattleState {
    * headless ROM probe.
    */
   enemyCursorOrder: number[];
+  /**
+   * Which battle menu is currently on screen, decoded from the nametable
+   * box windows (VERIFIED geometry from bank_0F box luts), plus the raw
+   * battle cursor bytes. Undefined when not in battle.
+   */
+  menu: BattleMenuState | undefined;
+  note: string;
+}
+
+export interface BattleMenuState {
+  /**
+   * Detected open menu. "command"/"magic"/"item"/"drink" come from text
+   * decoded inside the VERIFIED box windows; "none" means no known menu box
+   * text is visible (target selection, transitions, round execution).
+   */
+  kind: "command" | "magic" | "item" | "drink" | "none";
+  /** Decoded text lines of the detected menu box (empty when kind="none"). */
+  contents: string[];
+  /**
+   * Raw battle cursor (btlcurs_x/y, $6AAA/$6AAB). Semantics depend on kind:
+   * command menu is a 2-col x 4-row grid (x: 0=FIGHT column, 1=RUN column;
+   * y: row), magic menu is 3 cols x 4 rows (x=col, y=row), both VERIFIED
+   * against MenuSelection_2x4 / MenuSelection_Magic in bank_0C.
+   */
+  cursorX: number | undefined;
+  cursorY: number | undefined;
+  /** Cursor sprite pixel position (btlcursspr_x/y, $6AE3/$6AE4), VERIFIED. */
+  cursorPixelX: number | undefined;
+  cursorPixelY: number | undefined;
+  /**
+   * Magic menu page 0 (L1-4) or 1 (L5-8) from $6AF8. Only valid while
+   * kind==="magic" (the byte is shared with btl_combatboxcount).
+   */
+  page: number | undefined;
+  /**
+   * Enemy slot under the target cursor (btlcmd_target, $6B7B). VERIFIED as
+   * written by SelectEnemyTarget; stale outside target selection (INFERRED
+   * lifetime), so only trust it while a target cursor is visible.
+   */
+  targetSlot: number | undefined;
   note: string;
 }
 
@@ -233,8 +273,41 @@ export type MenuContext =
 
 export interface MenuState {
   inMenu: boolean;
+  /**
+   * Field menu open proxy: music_track ($4B) == $51 && !battle && !shop.
+   * The game has no menu-open byte or menu-id byte (VERIFIED: menu identity
+   * is call-stack state); this proxy is INFERRED and needs live verification.
+   */
+  open: boolean;
+  /**
+   * Best-effort menu identity. "shop" from entering_shop ($50, VERIFIED);
+   * "main" when open && cursorMax==5 (main menu sets $63=5, bank_0E:6193);
+   * otherwise "unknown". Submenu identity (item/magic/equip/status) is not
+   * recoverable from RAM alone - see `contents` for the on-screen text.
+   */
+  kind: "main" | "shop" | "unknown" | "none";
+  /**
+   * On-screen text decoded from the full nametable while the menu is open.
+   * This is the ground truth for menu contents (menu labels are drawn from
+   * ROM lut_MenuText, so only the nametable has them). INFERRED: may contain
+   * stray text tiles from whatever else is on screen.
+   */
+  contents: string[];
+  /**
+   * Menu item/magic description box open (descboxopen, $7F). VERIFIED:
+   * in-menu desc box only, never set for NPC dialogue.
+   */
+  descBoxOpen: boolean;
+  /**
+   * Raw shared cursor byte ($62). VERIFIED shared (lu_cursor2/cursor2/etc):
+   * only meaningful while the corresponding menu is open; semantics vary per
+   * menu (magic uses it as a packed 4-col grid, equip pairs it with $63).
+   */
   cursor: number | undefined;
-  /** $63 row count / cursor max; nonzero when a list window is drawn (observed). */
+  /**
+   * Raw $63. VERIFIED shared (cursor_max/cursor2/lu_mode): a count only for
+   * main/item/shop menus; repurposed as a secondary cursor by magic/equip.
+   */
   cursorMax: number;
   /** $1f window/overlay id; 64 (0x40) on a plain field, 1 under a menu (observed). */
   windowId: number;
@@ -246,7 +319,6 @@ export interface MenuState {
   shopCursorX: number | undefined;
   shopCursorY: number | undefined;
   talkObject: number | undefined;
-  dialogOpen: boolean;
   note: string;
 }
 

@@ -395,8 +395,46 @@ export const ADDR_SHOP_CURSOR_X = 0x64;
 export const ADDR_SHOP_CURSOR_Y = 0x65;
 /** Object index currently being talked to on a standard map ($67). */
 export const ADDR_TALK_OBJECT = 0x67;
-/** Nonzero when a description/item dialog box is open ($7F). */
-export const ADDR_DIALOG_OPEN = 0x7f;
+/**
+ * Menu item/magic DESCRIPTION box counter ($7F, `descboxopen` in
+ * variables.inc). INCed by DrawItemDescBox (bank_0E:8480), cleared by
+ * EnterItemMenu / EnterMagicMenu / CloseDescBox. VERIFIED: this flags the
+ * in-menu description box only. It is NOT set for NPC dialogue boxes
+ * (ShowDialogueBox sets no persistent flag), so it must not be used as a
+ * "dialog open" signal.
+ */
+export const ADDR_DESC_BOX_OPEN = 0x7f;
+/**
+ * Current music track ($4B, `music_track`). EnterMainMenu sets it to $51
+ * (bank_0E:6158) and it runs through all field submenus. VERIFIED as set;
+ * its persistence across every submenu is INFERRED. Used as the field-menu
+ * open proxy: music_track == $51 && !inBattle && !entering_shop.
+ */
+export const ADDR_MUSIC_TRACK = 0x4b;
+export const MUSIC_TRACK_FIELD_MENU = 0x51;
+
+/**
+ * Battle command-buffer target ($6B7B, `btlcmd_target`). During
+ * SelectEnemyTarget this holds the enemy slot the target cursor is currently
+ * on (bank_0C SelectEnemyTarget stores it at :1960/:1986). Lifetime outside
+ * target selection is INFERRED/stale; only trust it while a target cursor is
+ * on screen.
+ */
+export const ADDR_BATTLE_TARGET = 0x6b7b;
+/**
+ * Battle cursor sprite pixel position ($6AE3/$6AE4, `btlcursspr_x/y`).
+ * Updated every frame by the active battle menu routine from btlcurs_x/y,
+ * so it tracks whichever menu is currently polling input. VERIFIED in
+ * MenuSelection_2x4 / MenuSelection_Magic (bank_0C).
+ */
+export const ADDR_BATTLE_CURSOR_SPR_X = 0x6ae3;
+export const ADDR_BATTLE_CURSOR_SPR_Y = 0x6ae4;
+/**
+ * Magic menu page ($6AF8). MenuSelection_Magic sets it to 0/1 on entry and
+ * on page flip (bank_0C:2032+). SHARED with `btl_combatboxcount`
+ * (variables.inc:670): only meaningful while the magic menu is open.
+ */
+export const ADDR_BATTLE_MAGIC_PAGE = 0x6af8;
 
 // ===========================================================================
 // DEPRECATED / INCORRECT offsets kept out of the active reader.

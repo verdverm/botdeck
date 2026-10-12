@@ -282,11 +282,10 @@ export function diffFF1States(before: FF1GameState, after: FF1GameState): FF1Sta
   if (menuBefore !== menuAfter) {
     context.menu = { before: menuBefore, after: menuAfter };
   }
-  if (before.menu?.dialogOpen !== after.menu?.dialogOpen) {
-    context.dialog = {
-      before: before.menu?.dialogOpen ?? false,
-      after: after.menu?.dialogOpen ?? false,
-    };
+  const dialogBefore = before.dialog?.open ?? false;
+  const dialogAfter = after.dialog?.open ?? false;
+  if (dialogBefore !== dialogAfter) {
+    context.dialog = { before: dialogBefore, after: dialogAfter };
   }
   if (before.menu?.cursor !== after.menu?.cursor) {
     context.cursor = {

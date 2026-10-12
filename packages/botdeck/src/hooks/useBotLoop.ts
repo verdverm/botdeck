@@ -472,6 +472,43 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     [waitForBattlePhase],
   );
 
+  /**
+   * Drive an open NPC/object dialog to completion: press A page by page
+   * (like `dismissBattleEnd` does for the victory sequence) until the dialog
+   * text disappears, while the per-frame dialog capture probe accumulates
+   * every page. The collected pages land in the post-turn state's `dialog`
+   * and are surfaced to the agent on the next turn.
+   *
+   * Multi-page dialogs blank briefly between pages, so a single empty read
+   * is not proof of closure: the box is treated as closed only after two
+   * consecutive settles with no text.
+   */
+  const driveDialogToCompletion = useCallback(
+    async (signal?: AbortSignal): Promise<void> => {
+      const maxPresses = 24;
+      let blankReads = 0;
+      for (let presses = 0; presses < maxPresses; presses++) {
+        const state = plugin.readState();
+        const dialog = (state.ff1 as { dialog?: { current?: string } } | undefined)?.dialog;
+        if ((dialog?.current ?? "").trim() === "") {
+          blankReads += 1;
+          if (blankReads >= 2) return;
+          await waitSettle();
+          continue;
+        }
+        blankReads = 0;
+        // A during typewriter completes the page, A on a full page advances,
+        // A on the last page closes the box. `interact` is a single A press.
+        await emulator.runMacro(plugin.compile({ name: "interact" }));
+        if (signal?.aborted) return;
+        await waitSettle();
+      }
+      setError("dialog did not close after 24 A presses; the game appears stuck");
+      setAutoRunState(false);
+    },
+    [plugin, emulator, waitSettle],
+  );
+
   const callAgent = useCallback(
     async (request: TurnRequest, signal?: AbortSignal): Promise<TurnResponse> => {
       const controller = new AbortController();
@@ -639,10 +676,45 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
           postState = plugin.readState();
           const postDialogOpen =
             (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
-          if (postDialogOpen) {
-            // Dialog may have advanced pages during the settle; re-read.
-            await waitSettle();
+          // dialog.open is nametable-derived, so menu text (shops, field
+          // menus) can also satisfy it. Only commands that actually produce
+          // NPC/object dialog are allowed to trigger the paging loop, and
+          // never inside a shop/menu context - an A press there is a
+          // purchase/selection, not a page advance.
+          const dialogCommand = ["talk_to", "interact", "dialog_advance"].includes(
+            response.command.name,
+          );
+          const inShopOrMenu =
+            (postState.ff1 as
+              | { menu?: { enteringShop?: boolean; open?: boolean } }
+              | undefined)?.menu?.enteringShop === true ||
+            (postState.ff1 as
+              | { menu?: { enteringShop?: boolean; open?: boolean } }
+              | undefined)?.menu?.open === true;
+          if (postDialogOpen && dialogCommand && !inShopOrMenu) {
+            // An NPC/object dialog opened (talk_to, interact, pick-up, ...).
+            // Page through it to completion while the capture probe records
+            // every page, so the full text reaches the agent next turn.
+            await driveDialogToCompletion(signal);
             postState = plugin.readState();
+
+            const dialog = (postState.ff1 as
+              | { dialog?: { pages?: string[]; current?: string } }
+              | undefined)?.dialog;
+            const transcript = [...(dialog?.pages ?? []), dialog?.current ?? ""]
+              .map((p) => p.trim())
+              .filter((p) => p !== "")
+              .join(" / ");
+            if (transcript !== "") {
+              const args = Object.entries(response.command.args ?? {})
+                .map(([k, v]) => `${k}: ${String(v)}`)
+                .join(", ");
+              setPendingMessage(
+                `Dialog from your previous command "${response.command.name}"` +
+                  (args !== "" ? ` (${args})` : "") +
+                  `:\n"${transcript.slice(0, 2000)}"`,
+              );
+            }
           } else {
             await waitForStateStable(signal);
             postState = plugin.readState();
@@ -700,7 +772,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastResponse(response);
       return entry;
     },
-    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch, waitForStateStable, setPendingMessage],
+    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch, waitForStateStable, driveDialogToCompletion, setPendingMessage],
   );
 
   const decideAndMaybeExecute = useCallback(

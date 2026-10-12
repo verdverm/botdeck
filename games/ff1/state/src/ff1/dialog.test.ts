@@ -3,8 +3,9 @@ import {
   decodeNametableWindow,
   FF1_DIALOG_GEOMETRY,
   readDialogState,
+  detectBattleMenuWindow,
   createCpuMemoryView,
-  ADDR_DIALOG_OPEN,
+  ADDR_DESC_BOX_OPEN,
   type DialogGeometry,
 } from "../index.js";
 
@@ -151,25 +152,86 @@ describe("decodeNametableWindow", () => {
 });
 
 describe("readDialogState", () => {
-  it("reports dialog closed when the dialog flag is clear", () => {
+  it("reports dialog closed when no nametable text is visible", () => {
     const mem = new Uint8Array(0x10000);
-    mem[ADDR_DIALOG_OPEN] = 0;
+    mem[ADDR_DESC_BOX_OPEN] = 0;
     const state = readDialogState(createCpuMemoryView(mem));
     expect(state.open).toBe(false);
     expect(state.current).toBe("");
     expect(state.pages).toEqual([]);
   });
 
-  it("decodes current text when the dialog flag is set", () => {
+  it("decodes current text when dialog text is on the nametable", () => {
     const width = 64;
     const nametable = new Uint8Array(width * 64);
     fillBox(nametable, width, FF1_DIALOG_GEOMETRY, 0xff);
     writeLine(nametable, width, FF1_DIALOG_GEOMETRY.startRow + 1, FF1_DIALOG_GEOMETRY.startCol, "Welcome");
 
     const mem = new Uint8Array(0x10000);
-    mem[ADDR_DIALOG_OPEN] = 1;
     const state = readDialogState(createCpuMemoryView(mem), { data: nametable, width });
     expect(state.open).toBe(true);
     expect(state.current).toBe("Welcome");
+  });
+
+  it("skips the dialog window decode during battle", () => {
+    const width = 64;
+    const nametable = new Uint8Array(width * 64);
+    fillBox(nametable, width, FF1_DIALOG_GEOMETRY, 0xff);
+    writeLine(nametable, width, FF1_DIALOG_GEOMETRY.startRow + 1, FF1_DIALOG_GEOMETRY.startCol, "Welcome");
+
+    const mem = new Uint8Array(0x10000);
+    const state = readDialogState(createCpuMemoryView(mem), { data: nametable, width }, { inBattle: true });
+    expect(state.open).toBe(false);
+    expect(state.current).toBe("");
+  });
+});
+
+describe("detectBattleMenuWindow", () => {
+  const width = 64;
+
+  it("detects the command menu from the plain-letter ITEM/RUN tiles", () => {
+    const nametable = new Uint8Array(width * 64);
+    // VERIFIED layout from lua_BattleCommandBoxInfo: ITEM at col $0E row 7,
+    // RUN at col $14 row 1 (FIGHT/MAGIC/DRINK are digraph tiles, untestable
+    // through the plain text table).
+    writeLine(nametable, width, 7, 0x0e, "ITEM");
+    writeLine(nametable, width, 1, 0x14, "RUN");
+    const win = detectBattleMenuWindow(nametable, width);
+    expect(win?.kind).toBe("command");
+    expect(win?.contents.join(" ")).toContain("ITEM");
+    expect(win?.contents.join(" ")).toContain("RUN");
+  });
+
+  it("detects the magic menu from its L1-L4 row labels", () => {
+    const nametable = new Uint8Array(width * 64);
+    // Magic box text starts one tile inside the box (X=$02, Y=$01); the four
+    // level rows reach below the drink sub-rectangle (rows 1-6).
+    writeLine(nametable, width, 2, 0x03, "L1 FIRE");
+    writeLine(nametable, width, 4, 0x03, "L2");
+    writeLine(nametable, width, 6, 0x03, "L3");
+    writeLine(nametable, width, 8, 0x03, "L4");
+    const win = detectBattleMenuWindow(nametable, width);
+    expect(win?.kind).toBe("magic");
+    expect(win?.contents.join(" ")).toContain("FIRE");
+  });
+
+  it("detects the item box when the shared box has no L-labels", () => {
+    const nametable = new Uint8Array(width * 64);
+    // Item names run long enough to extend past the drink box width.
+    writeLine(nametable, width, 2, 0x03, "POTION         X");
+    const win = detectBattleMenuWindow(nametable, width);
+    expect(win?.kind).toBe("item");
+  });
+
+  it("detects the drink box", () => {
+    const nametable = new Uint8Array(width * 64);
+    writeLine(nametable, width, 2, 0x04, "PURE");
+    const win = detectBattleMenuWindow(nametable, width);
+    expect(win?.kind).toBe("drink");
+  });
+
+  it("returns undefined when no menu box text is visible", () => {
+    const nametable = new Uint8Array(width * 64).fill(0x01);
+    expect(detectBattleMenuWindow(nametable, width)).toBeUndefined();
   });
 });

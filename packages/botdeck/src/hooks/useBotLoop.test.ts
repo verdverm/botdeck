@@ -776,3 +776,108 @@ describe("useBotLoop frame-probe path (S2/S3)", () => {
     expect(probe).toBeUndefined();
   }, 30_000);
 });
+
+describe("useBotLoop dialog drive", () => {
+  let fetchSpy: ReturnType<typeof vi.fn<typeof fetch>>;
+  let emulator: Emulator;
+  let currentState: Record<string, unknown>;
+  let macroCalls: number;
+
+  const fieldState = (dialog?: { open: boolean; current: string; pages: string[] }) => ({
+    ff1: {
+      battle: { inBattle: false },
+      world: { mapId: 1, location: {}, playerTile: "0,0" },
+      menu: { enteringShop: false, open: false },
+      dialog: dialog ?? { open: false, current: "", pages: [] },
+    },
+  });
+
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    globalThis.fetch = fetchSpy;
+    macroCalls = 0;
+    currentState = fieldState();
+
+    emulator = {
+      hasRomLoaded: vi.fn().mockReturnValue(true),
+      isRunning: vi.fn().mockReturnValue(true),
+      wasMacroInterrupted: vi.fn(() => false),
+      onFrameProbe: vi.fn().mockReturnValue(() => {}),
+      isPlayingMacro: vi.fn().mockReturnValue(false),
+      setLastRoute: vi.fn(),
+      runMacro: vi.fn().mockImplementation(async () => {
+        macroCalls += 1;
+        // 1: the talk_to macro opens the dialog. 2/3: the dialog driver's A
+        // presses advance page 1 -> page 2 -> closed.
+        if (macroCalls === 1) {
+          currentState = fieldState({ open: true, current: "Page one", pages: ["Page one"] });
+        } else if (macroCalls === 2) {
+          currentState = fieldState({ open: true, current: "Page two", pages: ["Page one", "Page two"] });
+        } else {
+          currentState = fieldState({ open: false, current: "", pages: ["Page one", "Page two"] });
+        }
+      }),
+    } as unknown as Emulator;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("pages an NPC dialog to completion and feeds the transcript to the next turn", async () => {
+    fetchSpy.mockResolvedValue({
+      ok: true,
+      json: async () => ({ command: { name: "talk_to", args: { npc: "Old Man" } } }),
+    } as Response);
+
+    const plugin = {
+      id: "ff1",
+      title: "FF1",
+      readState: () => currentState,
+      getMode: () => "field",
+      availableCommands: () => [
+        { name: "talk_to", description: "Talk", args: '{ "npc": "string" }' },
+      ],
+      compile: () => [{ button: 0 }],
+      resetDialogCapture: () => {},
+      captureDialogFrame: () => {},
+    } as unknown as GamePlugin;
+
+    const { result } = renderHook(() =>
+      useBotLoop({
+        playId: "ff1/0000_dev",
+        game: "ff1",
+        emulator,
+        plugin,
+        collect: () => ({}) as unknown as CollectedState,
+        collectStates: false,
+        settleDelayMs: 5,
+      }),
+    );
+
+    // First turn: talk_to opens a two-page dialog; the driver pages through it.
+    act(() => result.current.setRunMode("step"));
+    await act(async () => {
+      await result.current.step();
+    });
+    expect(result.current.pendingDecision).toBeDefined();
+    await act(async () => {
+      await result.current.executePending();
+    });
+    await waitFor(() => expect(result.current.pendingDecision).toBeUndefined());
+
+    // talk_to macro + two interact A presses to reach the closed state.
+    expect(macroCalls).toBe(3);
+
+    // Second turn: the transcript rides along as the one-shot user message.
+    await act(async () => {
+      await result.current.step();
+    });
+    const turnBodies = fetchSpy.mock.calls
+      .filter((call) => String(call[0]).endsWith("/api/turn"))
+      .map((call) => JSON.parse(String((call[1] as RequestInit).body)) as { userMessage?: string });
+    expect(turnBodies.length).toBe(2);
+    expect(turnBodies[1]!.userMessage).toContain('"talk_to" (npc: Old Man)');
+    expect(turnBodies[1]!.userMessage).toContain("Page one / Page two");
+  }, 30_000);
+});

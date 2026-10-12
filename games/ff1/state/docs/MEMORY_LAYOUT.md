@@ -115,6 +115,22 @@ These addresses live in CPU RAM page 0 (`$0000`–`$00FF`) and are *not* saved t
 | `$0068` | 1 | smX | Player collision X on standard maps. | VERIFIED |
 | `$0069` | 1 | smY | Player collision Y on standard maps. | VERIFIED |
 
+## Menu / battle-menu runtime state
+
+Menu identity in FF1 is call-stack state: there is no "menu open" or "which menu" byte anywhere (VERIFIED by bank_0E/bank_0F read-through). The reader therefore combines the bytes below with nametable text decoding (see `src/ff1/dialog.ts` `detectBattleMenuWindow`; battle box geometry VERIFIED from bank_0F luts `lua_BattleCommandBoxInfo` $3FA2B, `lut_CombatItemMagicBox` $3FA26, `lut_CombatDrinkBox` $3FA16).
+
+| Address | Size | Field | Description | Certainty |
+|--------:|-----:|-------|-------------|-----------|
+| `$004B` | 1 | music_track | Set to `$51` by EnterMainMenu (bank_0E:6158); used as the field-menu-open proxy (`== $51 && !battle && !shop`). | VERIFIED (set) / INFERRED (persistence) |
+| `$0062` | 1 | cursor | Field menu cursor. SHARED zero page (`lu_cursor2`, `shutter_b`, `theend_src`); only meaningful while its menu is open; packed 4-col grid in the magic menu, paired with `$63` in equip. | VERIFIED (shared) |
+| `$0063` | 1 | cursor_max | Item count for main/item/shop menus; REPURPOSED as secondary cursor (`cursor2`/`lu_mode`) by magic/equip - not a range there. | VERIFIED (shared) |
+| `$007F` | 1 | descboxopen | In-menu item/magic DESCRIPTION box counter (INC bank_0E:8480, cleared 6812/6348/8071). Never set for NPC dialogue (ShowDialogueBox has no flag) - do not use as a dialog-open signal. | VERIFIED |
+| `$6AAA` | 1 | btlcurs_x | Battle cursor X. Command menu: 2 cols (0=FIGHT column, 1=RUN); magic menu: 3 cols. Zeroed on menu entry. | VERIFIED (bank_0C MenuSelection_2x4 / MenuSelection_Magic) |
+| `$6AAB` | 1 | btlcurs_y | Battle cursor Y (4 rows per menu, masked at confirm). | VERIFIED |
+| `$6AE3`/`$6AE4` | 2 | btlcursspr_x/y | Cursor sprite pixel position, updated by whichever battle menu is polling. | VERIFIED |
+| `$6AF8` | 1 | magic page | Magic menu page 0/1. SHARED with `btl_combatboxcount` - only valid while the magic menu is open. | VERIFIED (shared) |
+| `$6B7B` | 1 | btlcmd_target | Enemy slot under the target cursor, written by SelectEnemyTarget (bank_0C:1960/1986). Stale outside target selection. | VERIFIED (write) / INFERRED (lifetime) |
+
 ## Standard-map object / NPC table (`$6F00`–`$6FFF`)
 
 The game keeps 16 object records at `$6F00`. Each record is 16 bytes. Slots with `id == 0` are empty and are ignored by the reader.

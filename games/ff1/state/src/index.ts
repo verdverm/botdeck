@@ -102,8 +102,14 @@ export * from "./ff1/index.js";
 
 export {
   FF1_DIALOG_GEOMETRY,
+  FF1_BATTLE_COMMAND_BOX,
+  FF1_BATTLE_MAGIC_BOX,
+  FF1_BATTLE_DRINK_BOX,
   decodeNametableWindow,
+  detectBattleMenuWindow,
   readDialogState,
   type DialogGeometry,
   type DialogState,
+  type BattleMenuKind,
+  type BattleMenuWindow,
 } from "./ff1/dialog.js";

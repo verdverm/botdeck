@@ -111,7 +111,13 @@ import {
   ADDR_SHOP_CURSOR_X,
   ADDR_SHOP_CURSOR_Y,
   ADDR_TALK_OBJECT,
-  ADDR_DIALOG_OPEN,
+  ADDR_DESC_BOX_OPEN,
+  ADDR_MUSIC_TRACK,
+  MUSIC_TRACK_FIELD_MENU,
+  ADDR_BATTLE_TARGET,
+  ADDR_BATTLE_CURSOR_SPR_X,
+  ADDR_BATTLE_CURSOR_SPR_Y,
+  ADDR_BATTLE_MAGIC_PAGE,
 } from "../data/constants.js";
 import { getClassById } from "../data/classes.js";
 import { getEnemyNameById } from "../data/enemies.js";
@@ -133,7 +139,8 @@ import {
   hasVehicleOwnership,
 } from "../data/vehicles.js";
 import { decodeName } from "../data/text.js";
-import { readDialogState } from "./dialog.js";
+import { readDialogState, detectBattleMenuWindow, decodeNametableWindow } from "./dialog.js";
+import type { BattleMenuState } from "./types.js";
 import type {
   PartyCharacter,
   InventoryItem,
@@ -778,7 +785,11 @@ function readBattleEnemies(view: MemoryView, count: number): BattleEnemy[] {
  * @param party - Current party state, used to populate the battle party view.
  * @returns Battle state with live enemy roster and cursor positions.
  */
-export function readBattleState(view: MemoryView, party: PartyCharacter[]): BattleState {
+export function readBattleState(
+  view: MemoryView,
+  party: PartyCharacter[],
+  nametable?: { data: Uint8Array; width: number },
+): BattleState {
   const enemyCount = view.u8(ADDR_BATTLE_ENEMY_COUNT);
   const activeIndex = view.u8(ADDR_BATTLE_ACTIVE_INDEX);
   const resultByte = view.u8(ADDR_BATTLE_RESULT);
@@ -834,7 +845,44 @@ export function readBattleState(view: MemoryView, party: PartyCharacter[]): Batt
     enemyCursorOrder: inBattle
       ? Array.from(BATTLE_ENEMY_CURSOR_ORDER[view.u8(ADDR_BATTLE_TYPE)] ?? BATTLE_ENEMY_CURSOR_ORDER[0] ?? [0])
       : [],
+    menu: inBattle ? readBattleMenuState(view, nametable) : undefined,
     note: VERIFIED_BATTLE_NOTE,
+  };
+}
+
+const BATTLE_MENU_NOTE =
+  "Battle menu identity is decoded from nametable box windows whose geometry " +
+  "is VERIFIED against bank_0F box luts (command $3FA2B, magic/item $3FA26, " +
+  "drink $3FA16); the game tracks the open submenu in call-stack state only. " +
+  "cursorX/Y are raw btlcurs ($6AAA/B, VERIFIED per-menu semantics), " +
+  "cursorPixelX/Y are btlcursspr ($6AE3/4), page is $6AF8 (shared byte, magic " +
+  "menu only), targetSlot is btlcmd_target ($6B7B, stale outside target " +
+  "selection - INFERRED lifetime).";
+
+/**
+ * Read which battle menu is on screen and the raw battle cursor bytes.
+ *
+ * @param view - A MemoryView backed by the full NES CPU address space.
+ * @param nametable - Live PPU nametable, when available.
+ */
+function readBattleMenuState(
+  view: MemoryView,
+  nametable?: { data: Uint8Array; width: number },
+): BattleMenuState {
+  const window = nametable
+    ? detectBattleMenuWindow(nametable.data, nametable.width)
+    : undefined;
+  const kind = window?.kind ?? "none";
+  return {
+    kind,
+    contents: window?.contents ?? [],
+    cursorX: view.u8(ADDR_BATTLE_CURSOR_X),
+    cursorY: view.u8(ADDR_BATTLE_CURSOR_Y),
+    cursorPixelX: view.u8(ADDR_BATTLE_CURSOR_SPR_X),
+    cursorPixelY: view.u8(ADDR_BATTLE_CURSOR_SPR_Y),
+    page: kind === "magic" ? view.u8(ADDR_BATTLE_MAGIC_PAGE) & 1 : undefined,
+    targetSlot: view.u8(ADDR_BATTLE_TARGET),
+    note: BATTLE_MENU_NOTE,
   };
 }
 
@@ -899,8 +947,11 @@ export function readGameContext(view: MemoryView, world: WorldState, battle: Bat
     };
   }
 
-  if (view.u8(ADDR_DIALOG_OPEN) !== 0) {
-    return { mode: "field", menu: "dialog", note: VERIFIED_MENU_NOTE };
+  // $7F (descboxopen) is the in-menu item/magic description box, never NPC
+  // dialogue (VERIFIED, bank_0E:8480 vs ShowDialogueBox). NPC dialogue has
+  // no RAM flag; it is detected from the nametable in readDialogState.
+  if (view.u8(ADDR_DESC_BOX_OPEN) !== 0) {
+    return { mode: "menu", menu: "main_menu", note: VERIFIED_MENU_NOTE };
   }
 
   if (!world.isStandardMap) {
@@ -921,14 +972,49 @@ export function readGameContext(view: MemoryView, world: WorldState, battle: Bat
  * @param context - Current game context.
  * @returns Menu cursor, shop state, and dialog state.
  */
-export function readMenuState(view: MemoryView, context: GameContext): MenuState {
+export function readMenuState(
+  view: MemoryView,
+  context: GameContext,
+  nametable?: { data: Uint8Array; width: number },
+): MenuState {
   const enteringShop = view.u8(ADDR_ENTERING_SHOP) !== 0;
   const shopTypeRaw = view.u8(ADDR_SHOP_TYPE);
   const cursorMax = view.u8(ADDR_MENU_CURSOR_MAX);
   const windowId = view.u8(ADDR_WINDOW_ID);
   const overlay = view.u8(ADDR_MENU_OVERLAY);
+  const descBoxOpen = view.u8(ADDR_DESC_BOX_OPEN) !== 0;
+  // Field-menu open proxy. The game has no menu-open byte (VERIFIED: menu
+  // identity is call-stack state); EnterMainMenu sets music_track=$51 and it
+  // runs through the submenus (set VERIFIED, persistence INFERRED).
+  const open =
+    context.mode !== "battle" &&
+    !enteringShop &&
+    view.u8(ADDR_MUSIC_TRACK) === MUSIC_TRACK_FIELD_MENU;
+  const kind: MenuState["kind"] = enteringShop
+    ? "shop"
+    : open
+      ? cursorMax === 5
+        ? "main"
+        : "unknown"
+      : "none";
+  // While the field menu is up, the nametable holds the menu boxes; decoding
+  // it is the only way to see the menu's labels (they are drawn from ROM
+  // lut_MenuText, never staged in RAM). INFERRED: may catch stray text.
+  let contents: string[] = [];
+  if (open && nametable) {
+    contents = decodeNametableWindow(nametable.data, nametable.width, {
+      startRow: 0,
+      startCol: 0,
+      width: nametable.width,
+      height: 30,
+    });
+  }
   return {
-    inMenu: context.mode === "menu" || view.u8(ADDR_DIALOG_OPEN) !== 0,
+    inMenu: context.mode === "menu" || open || descBoxOpen,
+    open,
+    kind,
+    contents,
+    descBoxOpen,
     cursor: view.u8(ADDR_MENU_CURSOR),
     cursorMax,
     windowId,
@@ -939,7 +1025,6 @@ export function readMenuState(view: MemoryView, context: GameContext): MenuState
     shopCursorX: enteringShop ? view.u8(ADDR_SHOP_CURSOR_X) : undefined,
     shopCursorY: enteringShop ? view.u8(ADDR_SHOP_CURSOR_Y) : undefined,
     talkObject: view.u8(ADDR_TALK_OBJECT),
-    dialogOpen: view.u8(ADDR_DIALOG_OPEN) !== 0,
     note: VERIFIED_MENU_NOTE,
   };
 }
@@ -1023,7 +1108,7 @@ export function readFF1State(
 ): FF1GameState {
   const party = readParty(view);
   const world = readWorldState(view);
-  const battle = readBattleState(view, party);
+  const battle = readBattleState(view, party, nametable);
   const context = readGameContext(view, world, battle);
   return {
     party,
@@ -1033,9 +1118,9 @@ export function readFF1State(
     flags: readGameFlags(view),
     battle,
     context,
-    menu: readMenuState(view, context),
+    menu: readMenuState(view, context, nametable),
     availableLocations: getAvailableLocations(world),
-    dialog: readDialogState(view, nametable),
+    dialog: readDialogState(view, nametable, { inBattle: battle.inBattle }),
   };
 }
 

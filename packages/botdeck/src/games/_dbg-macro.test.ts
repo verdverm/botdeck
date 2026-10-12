@@ -186,7 +186,7 @@ it(
       if (vf > 300 && vf % 60 === 8) emulator.buttonUp(A);
       emulator.stepFrame();
       const ns = readFF1State(view);
-      const sig = `phase=${ns.battle.phase} inBattle=${ns.battle.inBattle} mapflags=${ns.world.mapFlags} std=${ns.world.isStandardMap} dialog=${ns.menu.dialogOpen} menu=${ns.context.menu} enemies=${ns.battle.enemyCount} alive=${ns.battle.enemies.filter((e) => e.alive).length}`;
+      const sig = `phase=${ns.battle.phase} inBattle=${ns.battle.inBattle} mapflags=${ns.world.mapFlags} std=${ns.world.isStandardMap} dialog=${ns.dialog?.open} menu=${ns.context.menu} enemies=${ns.battle.enemyCount} alive=${ns.battle.enemies.filter((e) => e.alive).length}`;
       if (sig !== last) {
         console.log(`  vf=${vf} (${(vf / 60).toFixed(1)}s) ${sig}`);
         last = sig;
@@ -262,7 +262,7 @@ it(
       if (f > 600 && f % 60 === 8) emulator.buttonUp(A);
       emulator.stepFrame();
       const ns = readFF1State(view);
-      const sig = `phase=${ns.battle.phase} inBattle=${ns.battle.inBattle} mapflags=${ns.world.mapFlags} std=${ns.world.isStandardMap} dialog=${ns.menu.dialogOpen} menu=${ns.context.menu}`;
+      const sig = `phase=${ns.battle.phase} inBattle=${ns.battle.inBattle} mapflags=${ns.world.mapFlags} std=${ns.world.isStandardMap} dialog=${ns.dialog?.open} menu=${ns.context.menu}`;
       if (sig !== last) {
         console.log(`  f=${f} (${(f / 60).toFixed(1)}s) ${sig}`);
         last = sig;
@@ -286,7 +286,7 @@ it(
     const A = 0;
 
     let s = readFF1State(view);
-    console.log(`boot: inBattle=${s.battle.inBattle} phase=${s.battle.phase} std=${s.world.isStandardMap} mapflags=${s.world.mapFlags} dialog=${s.menu.dialogOpen}`);
+    console.log(`boot: inBattle=${s.battle.inBattle} phase=${s.battle.phase} std=${s.world.isStandardMap} mapflags=${s.world.mapFlags} dialog=${s.dialog?.open}`);
 
     // Press A every 60 frames; log every state flip for 60s.
     let last = "";
@@ -295,7 +295,7 @@ it(
       if (f % 60 === 8) emulator.buttonUp(A);
       emulator.stepFrame();
       const ns = readFF1State(view);
-      const sig = `inBattle=${ns.battle.inBattle} phase=${ns.battle.phase} std=${ns.world.isStandardMap} mapflags=${ns.world.mapFlags} dialog=${ns.menu.dialogOpen} enemies=${ns.battle.enemyCount}`;
+      const sig = `inBattle=${ns.battle.inBattle} phase=${ns.battle.phase} std=${ns.world.isStandardMap} mapflags=${ns.world.mapFlags} dialog=${ns.dialog?.open} enemies=${ns.battle.enemyCount}`;
       if (sig !== last) {
         console.log(`  f=${f} ${sig}`);
         last = sig;

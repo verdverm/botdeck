@@ -29,7 +29,7 @@ export function MenuTab({ ff1 }: { ff1: FF1GameState | undefined }) {
         </div>
         <div>
           <SectionTitle>Dialog</SectionTitle>
-          <p className="text-neutral-200">{menu?.dialogOpen ? "Open" : "Closed"}</p>
+          <p className="text-neutral-200">{menu?.open || menu?.descBoxOpen ? "Open" : "Closed"}</p>
         </div>
       </section>
 

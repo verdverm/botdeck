@@ -1,8 +1,11 @@
 # TODO
 
-## Priority
+## General
 
-- navigation plan should not be shown if the curr/last command was not navigate
+- rendering should happen in templates, not code, that is the entire fucking point, we do not want to have to change code to change rendering, templates should be feed data ONLY, not constructed strings from state, that logic belongs in templates so users can change it
+
+
+
 
 ## Errors noticed in game play
 

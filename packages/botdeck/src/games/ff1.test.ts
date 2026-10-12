@@ -3,7 +3,6 @@ import { FF1GamePlugin } from "./ff1";
 import { OW_STEP_GAP_FRAMES, OW_STEP_HOLD_FRAMES } from "./ff1-nav";
 import { NES_BUTTONS } from "@/types";
 import type { Emulator } from "@/emulator/emulator";
-import { ADDR_DIALOG_OPEN } from "@games/ff1-state";
 import type { FF1GameState } from "@games/ff1-state";
 
 function makeNametable(): { data: Uint8Array; width: number; height: number } {
@@ -372,16 +371,24 @@ describe("FF1GamePlugin", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
     const macro = plugin.compile({ name: "run", args: { actor: "Stu" } });
 
-    // Cursor starts at 0 (FIGHT), so run (index 4) needs 4 down presses + A.
+    // Cursor starts at FIGHT (0,0); RUN is the right column (1,0) of the
+    // 2x4 command grid, so the macro is RIGHT + A (no DOWN presses).
     expect(macro.length).toBeGreaterThan(1);
+    expect(macro[0]?.button).toBe(NES_BUTTONS.RIGHT);
     expect(macro[macro.length - 1]?.button).toBe(NES_BUTTONS.A);
   });
 
-  it("reports dialog state from the nametable when the dialog flag is set", () => {
+  it("reports dialog state when dialog text is on the nametable", () => {
+    // NPC dialogue sets no RAM flag ($7F is the in-menu desc box), so dialog
+    // visibility is derived from decoded nametable text in the dialog window.
     const emulator = makeEmulator();
-    const mem = new Uint8Array(0x10000);
-    mem[ADDR_DIALOG_OPEN] = 1;
-    vi.mocked(emulator.getMemory).mockReturnValue(mem);
+    const nametable = makeNametable();
+    // Write "HI" into the dialog text window (row startRow+1, col startCol).
+    const row = 5;
+    const col = 2;
+    nametable.data[row * nametable.width + col] = 0x91; // 'H'
+    nametable.data[row * nametable.width + col + 1] = 0x92; // 'I'
+    vi.mocked(emulator.getNametable).mockReturnValue(nametable);
 
     const plugin = new FF1GamePlugin(emulator);
     plugin.resetDialogCapture();
@@ -390,7 +397,8 @@ describe("FF1GamePlugin", () => {
 
     const dialog = (state.ff1 as { dialog?: { open: boolean; pages: string[] } } | undefined)?.dialog;
     expect(dialog?.open).toBe(true);
-    expect(dialog?.pages.length).toBe(0);
+    // The captured frame accumulates the visible text as the first page.
+    expect(dialog?.pages).toEqual(["HI"]);
   });
 
   it("rejects buy by name because shop inventory labels are unavailable", () => {
