@@ -21,6 +21,14 @@ export const OFF_LUT_MINIMAPNT = 0x27010; // bank_09.asm:4120, 30x32 minimap nam
 
 export const VEHICLES = { foot: 0x01, canoe: 0x02, ship: 0x04, airship: 0x08 };
 
+// Overworld tileset_prop byte 1 flags (Constants.inc:332-339).
+export const OWTP_FOREST = 0x10;
+export const OWTP_DOCKSHIP = 0x20;
+export const OWTP_SPEC_CHIME = 0x40;
+export const OWTP_SPEC_CARAVAN = 0x80;
+export const OWTP_SPEC_FLOATER = 0xc0;
+export const OWTP_SPEC_MASK = 0xc0;
+
 export function loadRom(p = ROM_PATH) {
   return fs.readFileSync(p);
 }
@@ -110,15 +118,67 @@ export function isTownDungeonTile(tileId, minimap) {
   return (minimap[tileId] & 0x04) !== 0;
 }
 
-// Terrain glyph for a tile id from its tileset_prop entry.
+// Classify an overworld tile by its gameplay-visible terrain.
+// The OWTP_* flags live in tileset_prop byte 0 (our `blockMask`), alongside
+// the vehicle collision bits. Desert and swamp are not directly encoded; they
+// are inferred here from minimap color when there is no stronger signal, and
+// are marked INFERRED so consumers can treat them as best-effort.
+export function terrainType(tilePropEntry) {
+  const b = tilePropEntry.blockMask;
+  const p = passability(b);
+  const m = tilePropEntry.minimap;
+
+  // Ship-dock tiles take precedence over base walkability.
+  if (b & OWTP_DOCKSHIP) return "dock";
+
+  // Special-item tiles (chime/caravan/floater).
+  if ((b & OWTP_SPEC_MASK) === OWTP_SPEC_CHIME) return "chime";
+  if ((b & OWTP_SPEC_MASK) === OWTP_SPEC_CARAVAN) return "caravan";
+  if ((b & OWTP_SPEC_MASK) === OWTP_SPEC_FLOATER) return "floater";
+
+  // Forests are explicitly flagged.
+  if (b & OWTP_FOREST) return "forest";
+
+  // Water / river.
+  if (p.ship) return "water";
+  if (p.canoe) return "river";
+
+  // Impassable ground (mountains, walls, airship-only).
+  if (!p.foot) return "mountain";
+
+  // Walkable land. minimap color gives a coarse visual hint.
+  //   2 = tan/sand in the southern deserts, snow/ice in the north (same
+  //       tile reused with different attribute palettes) -- INFERRED.
+  //   3 = marshy/decorative ground near water -- INFERRED.
+  if (m === 2) return "desert";   // INFERRED
+  if (m === 3) return "swamp";    // INFERRED
+  return "field";
+}
+
+// One-character render glyph for a terrain type. Uppercase letters and digits
+// are reserved for overworld entrance glyphs, so this stays within symbols and
+// lowercase letters (which never appear as entrance glyphs).
+export function terrainGlyph(type) {
+  switch (type) {
+    case "field": return ".";
+    case "forest": return "^";
+    case "water": return "~";
+    case "river": return "=";
+    case "mountain": return "#";
+    case "dock": return "+";
+    case "desert": return "s";
+    case "swamp": return "w";
+    case "chime": return "?";
+    case "caravan": return "$";
+    case "floater": return "*";
+    default: return ".";
+  }
+}
+
+// Backwards-compatible terrain glyph for a tile id from its tileset_prop entry.
 // Terrain uses only non-letter symbols so letters stay free for entrance glyphs.
-// '.' land, '=' river (canoe), '~' ocean (ship), '#' blocked (airship only).
 export function terrainChar(tilePropEntry) {
-  const p = passability(tilePropEntry.blockMask);
-  if (p.foot) return ".";
-  if (p.canoe) return "=";
-  if (p.ship) return "~";
-  return "#";
+  return terrainGlyph(terrainType(tilePropEntry));
 }
 
 // --- standard maps (towns/castles/dungeons 64x64) ----------------------

@@ -22,6 +22,8 @@ import {
   minimapTileset,
   passability,
   terrainChar,
+  terrainType,
+  OWTP_DOCKSHIP,
   entranceTeleportTables,
   tileTeleport,
   STANDARD_MAP_NAMES,
@@ -45,6 +47,7 @@ for (let t = 0; t <= maxTile; t++) {
     special: prop[t].special,
     minimap: mini[t],
     pass: passability(prop[t].blockMask),
+    terrain: terrainType({ blockMask: prop[t].blockMask, special: prop[t].special, minimap: mini[t] }),
   };
 }
 
@@ -108,6 +111,7 @@ function serializeGame(g) {
     .map(([t, p]) => `    ${JSON.stringify(t)}: ${JSON.stringify(p)}`)
     .join(",\n");
   const locations = g.locations.map((l) => "    " + JSON.stringify(l)).join(",\n");
+  const shipDocks = g.shipDocks.map((d) => "    " + JSON.stringify(d)).join(",\n");
   const head = {
     source: g.source,
     map: g.map,
@@ -128,8 +132,21 @@ function serializeGame(g) {
     tileProps +
     "\n  },\n  \"locations\": [\n" +
     locations +
+    "\n  ],\n  \"shipDocks\": [\n" +
+    shipDocks +
     "\n  ]\n}\n"
   );
+}
+
+// Ship-dock tiles: OWTP_DOCKSHIP set in tileset_prop byte 1 (Constants.inc:332).
+// These are the only land tiles where the party can board/leave the ship.
+const shipDocks = [];
+for (let y = 0; y < 256; y++) {
+  for (let x = 0; x < 256; x++) {
+    if ((prop[grid[y][x]].blockMask & OWTP_DOCKSHIP) !== 0) {
+      shipDocks.push({ x, y, tile: grid[y][x] });
+    }
+  }
 }
 
 const game = {
@@ -144,6 +161,8 @@ const game = {
   tileProps,
   // locations: entrance sites. name null => standard map beyond 0x0C (dungeon).
   locations,
+  // shipDocks: coordinates of every OWTP_DOCKSHIP tile.
+  shipDocks,
 };
 
 // --- ASCII render: terrain + entrance glyphs + legend ------------------
@@ -161,8 +180,15 @@ locations.forEach((loc, i) => {
   );
 });
 
+const terrainLegend = [
+  ". field  ^ forest  s desert (INFERRED)  w swamp (INFERRED)",
+  "= river(canoe)  ~ ocean(ship)  # mountain/wall  + ship dock",
+  "? chime tile  $ caravan  * floater",
+];
+
 const lines = [];
-lines.push("FF1 overworld - '.' land  '=' river(canoe)  '~' ocean(ship)  '#' blocked(airship only)");
+lines.push("FF1 overworld terrain:");
+lines.push(...terrainLegend);
 lines.push("Entrance glyphs (A-Z/0-9, see LEGEND) mark overworld warp tiles.");
 for (let y = 0; y < 256; y++) {
   let row = "";
@@ -172,6 +198,11 @@ for (let y = 0; y < 256; y++) {
 lines.push("");
 lines.push("LEGEND");
 lines.push(...legend);
+if (game.shipDocks.length) {
+  lines.push("");
+  lines.push("SHIP DOCKS");
+  for (const d of game.shipDocks) lines.push(`+ @ (${d.x},${d.y}) tile ${d.tile}`);
+}
 fs.writeFileSync(path.join(MAPS_DIR, "overworld.txt"), lines.join("\n") + "\n");
 
 // write json once, after glyphs are assigned

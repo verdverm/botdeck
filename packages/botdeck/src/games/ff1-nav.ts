@@ -36,6 +36,7 @@ export interface TileProps {
   special: number;
   minimap: number;
   pass: Record<Vehicle, boolean>;
+  terrain: string;
 }
 
 export interface MapLocation {

@@ -57,6 +57,22 @@ To extract the complete grid offline we decompress all 256 rows ourselves:
   per overworld tile. Low 2 bits = color; **bit 2 (`$04`) set = this tile is a town/dungeon
   (a marker sprite is drawn).** Useful for auto-detecting entrance tiles for the location table.
 
+## 3a. Terrain classification (VERIFIED + INFERRED)
+
+`games/ff1/maps/overworld.json` now includes a per-tile `terrain` string and a `shipDocks`
+array in addition to walkability:
+
+- **Ship docks:** `OWTP_DOCKSHIP` (`tileset_prop` byte 0 bit 5, `Constants.inc:332`). These are
+  the only land tiles where the party can board or leave the ship. `shipDocks` lists every
+  such tile coordinate.
+- **Forest:** `OWTP_FOREST` (`tileset_prop` byte 0 bit 4). Tiles where the party sprite is
+  visually hidden (`inforest` in `DrawOWSprites`, `bank_0F.asm:8199`).
+- **Special tiles:** `OWTP_SPEC_CHIME/CARAVAN/FLOATER` (`tileset_prop` byte 0 bits 6-7).
+- **Water / river / mountain:** derived from the vehicle block mask (ship, canoe, foot).
+- **Desert / swamp:** **INFERRED** from `lut_MinimapTileset` color (2 = tan/sand, 3 = marshy
+  ground). The same tile IDs are reused with different attribute palettes in different
+  regions, so these are best-effort visual hints rather than verified terrain flags.
+
 ## 4. Walkability rule (VERIFIED, `bank_0F.asm:1086` `OWCanMove`)
 
 For a target tile with `byte0 = tileset_prop[tileID*2]`:
