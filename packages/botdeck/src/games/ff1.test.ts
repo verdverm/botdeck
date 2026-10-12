@@ -440,6 +440,61 @@ describe("FF1GamePlugin", () => {
     expect(macro.filter((s) => s.button === NES_BUTTONS.A).length).toBe(1);
   });
 
+  it("paths talk_to through a locked door when the Mystic Key is held", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const state = baseState("field", "town");
+    (state.ff1 as FF1GameState).flags = { hasMysticKey: true } as unknown as FF1GameState["flags"];
+    (state.ff1 as FF1GameState).world = {
+      isStandardMap: true,
+      mapId: 8, // Coneria Castle
+      standardMapScrollX: 5, // player tile x = 12
+      standardMapScrollY: 9, // player tile y = 16
+      mapObjects: [{ index: 0, id: 1, physicalX: 12, physicalY: 12 }],
+    } as unknown as FF1GameState["world"];
+    vi.spyOn(plugin, "readState").mockReturnValue(state);
+
+    const macro = plugin.compile({ name: "talk_to", args: { target: "object 0" } });
+
+    // Route: up through the locked door at (12,14), stand at (12,13), face up, press A.
+    expect(macro.filter((s) => s.button === NES_BUTTONS.UP).length).toBeGreaterThanOrEqual(1);
+    expect(macro.filter((s) => s.button === NES_BUTTONS.A).length).toBe(1);
+  });
+
+  it("refuses talk_to through a locked door without the Mystic Key", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const state = baseState("field", "town");
+    (state.ff1 as FF1GameState).flags = { hasMysticKey: false } as unknown as FF1GameState["flags"];
+    (state.ff1 as FF1GameState).world = {
+      isStandardMap: true,
+      mapId: 8,
+      standardMapScrollX: 5,
+      standardMapScrollY: 9,
+      mapObjects: [{ index: 0, id: 1, physicalX: 12, physicalY: 12 }],
+    } as unknown as FF1GameState["world"];
+    vi.spyOn(plugin, "readState").mockReturnValue(state);
+
+    expect(() => plugin.compile({ name: "talk_to", args: { target: "object 0" } })).toThrow("talk_to: cannot reach");
+  });
+
+  it("paths talk_to through an always-open room door", () => {
+    const plugin = new FF1GamePlugin(makeEmulator());
+    const state = baseState("field", "town");
+    (state.ff1 as FF1GameState).world = {
+      isStandardMap: true,
+      mapId: 24, // Coneria Castle 2F
+      standardMapScrollX: 5, // player tile x = 12
+      standardMapScrollY: 11, // player tile y = 18
+      mapObjects: [{ index: 0, id: 1, physicalX: 12, physicalY: 6 }],
+    } as unknown as FF1GameState["world"];
+    vi.spyOn(plugin, "readState").mockReturnValue(state);
+
+    const macro = plugin.compile({ name: "talk_to", args: { target: "object 0" } });
+
+    // Route: up through the doorway at (12,8), stand at (12,7), face up, press A.
+    expect(macro.filter((s) => s.button === NES_BUTTONS.UP).length).toBeGreaterThanOrEqual(1);
+    expect(macro.filter((s) => s.button === NES_BUTTONS.A).length).toBe(1);
+  });
+
   it("resolves sell and use_item by inventory name and rejects unknown names", () => {
     const plugin = new FF1GamePlugin(makeEmulator());
     const state = baseState("menu", "shop");

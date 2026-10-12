@@ -581,6 +581,13 @@ export interface SmTileProps {
 }
 
 /**
+ * Open doorway special bit (TP_SPEC_DOOR, Constants.inc). Door tiles are
+ * marked no-move in the extracted grid, but the party can walk through them
+ * freely (they are cosmetic/archway doorways, not locked barriers).
+ */
+export const TP_SPEC_DOOR = 0x02;
+
+/**
  * Locked-door special bit (TP_SPEC_LOCKED, Constants.inc). The tile is
  * no-move in the extracted grid; the game's `SMMove_Door` only permits a step
  * onto it while `item_mystickey` is set (`bank_0F.asm:3471+`). It rewrites the
@@ -693,6 +700,9 @@ export function smIsWalkable(
 ): boolean {
   const props = mapPropsAt(map, x, y);
   if (!props) return false;
+  // Open doorways (special 0x02) are cosmetic/archways in the static grid:
+  // the tile is flagged no-move, but the party walks through them normally.
+  if (props.special === TP_SPEC_DOOR) return true;
   // A locked door is a wall only while the key is absent; with it the tile is
   // an ordinary step. Checked before the walkable bit because the door tile is
   // itself flagged no-move in the static grid.

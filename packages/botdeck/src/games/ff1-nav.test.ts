@@ -176,6 +176,21 @@ describe("ff1 standard-map nav", () => {
     expect(withKey.path.some((t) => smIsWalkable(map, t.x, t.y, false) === false)).toBe(true);
   });
 
+  it("paths through an open room door on Coneria Castle 2F", () => {
+    // Coneria Castle 2F (mapId 24): the only way from the entrance at (12,18)
+    // to the north room is through the doorway tile at (12,8). It is flagged
+    // no-move in the extracted grid but the party walks through it normally.
+    const map = standardMap(24)!;
+    const from = { x: 12, y: 18 };
+    const to = { x: 12, y: 6 };
+
+    expect(smIsWalkable(map, 12, 8)).toBe(true);
+
+    const result = findSmPath(24, from, to);
+    expect(result.found).toBe(true);
+    expect(result.path.some((t) => t.x === 12 && t.y === 8)).toBe(true);
+  });
+
   it("routes from Coneria entrance to weapon shop", () => {
     // Entrance from dev save: scroll (9,16) -> player tile (16,23).
     const planned = planSmRoute(0, "weapon shop", { x: 16, y: 23 });
