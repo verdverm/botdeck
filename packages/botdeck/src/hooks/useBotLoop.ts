@@ -445,6 +445,11 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       stateBefore?: string,
       signal?: AbortSignal,
     ): Promise<TurnLogEntry> => {
+      // Clear any previous travel route so the nav display disappears once
+      // a non-navigation command is issued. Navigation commands (goto, grind,
+      // talk_to) will re-set it during compile below.
+      emulator.setLastRoute(undefined);
+
       let macro: ButtonStep[];
       let macroError: string | undefined;
       try {
