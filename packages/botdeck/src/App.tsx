@@ -87,7 +87,7 @@ export function App() {
       .catch((e) => console.error("failed to load play config", e));
   }, [playId, game]);
 
-  const { turnTimeoutMs, settleDelayMs, collectStates } = useMemo(() => {
+  const { turnTimeoutMs, settleDelayMs, collectStates, transitionConfirmFrames, transitionTimeoutMs } = useMemo(() => {
     const agent = isPlainObject(playConfig?.agent) ? playConfig.agent : {};
     const maxToolRounds = typeof agent.maxToolRounds === "number" ? agent.maxToolRounds : 25;
     const timeoutMs = typeof agent.timeoutMs === "number" ? agent.timeoutMs : 120_000;
@@ -95,8 +95,10 @@ export function App() {
       agent.collectStates === false ? false : true;
     return {
       turnTimeoutMs: maxToolRounds * timeoutMs + 10_000,
-      settleDelayMs: 250,
+      settleDelayMs: typeof agent.settleDelayMs === "number" ? agent.settleDelayMs : 250,
       collectStates,
+      transitionConfirmFrames: typeof agent.transitionConfirmFrames === "number" ? agent.transitionConfirmFrames : 3,
+      transitionTimeoutMs: typeof agent.transitionTimeoutMs === "number" ? agent.transitionTimeoutMs : 3_000,
     };
   }, [playConfig]);
 
@@ -110,6 +112,8 @@ export function App() {
     collectStates,
     turnTimeoutMs,
     settleDelayMs,
+    transitionConfirmFrames,
+    transitionTimeoutMs,
   });
 
   const [snapshot, setSnapshot] = useState<CollectedState | null>(null);

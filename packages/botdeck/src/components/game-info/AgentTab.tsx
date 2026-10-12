@@ -1,5 +1,5 @@
 import { useState } from "react";
-import type { PendingDecision, TurnLogEntry } from "@/hooks/useBotLoop";
+import type { PendingDecision, SettlingInfo, TurnLogEntry } from "@/hooks/useBotLoop";
 import type { GameCommand, PlaySnippet, TurnRequest, TurnResponse, TurnTranscript, TurnTranscriptRound, ToolCall, ToolResult } from "@/types";
 import { snippetUrl, snippetsUrl } from "@/play";
 import { SectionTitle } from "./shared";
@@ -24,6 +24,10 @@ interface MacroProgress {
 interface AgentTabProps {
   isThinking?: boolean;
   isPlayingMacro?: boolean;
+  /** The loop is waiting for the game to settle (post-macro floor or state-stability wait). */
+  isSettling?: boolean;
+  /** Live observed values for what the settling check is seeing. */
+  settlingInfo?: SettlingInfo | null;
   isBattling?: boolean;
   error?: string;
   lastRequest?: TurnRequest;
@@ -56,6 +60,7 @@ function PrimaryActionButton({
   snippetRunning,
   isThinking,
   isPlayingMacro,
+  isSettling,
   pendingDecision,
   onRun,
   onAbort,
@@ -67,13 +72,14 @@ function PrimaryActionButton({
   snippetRunning?: boolean;
   isThinking?: boolean;
   isPlayingMacro?: boolean;
+  isSettling?: boolean;
   pendingDecision?: PendingDecision;
   onRun?: () => void;
   onAbort?: () => void;
   onStep?: () => void;
   onStopSnippet?: () => void;
 }) {
-  const running = snippetRunning || autoRun || isThinking || isPlayingMacro;
+  const running = snippetRunning || autoRun || isThinking || isPlayingMacro || isSettling;
 
   if (running) {
     return (
@@ -92,7 +98,7 @@ function PrimaryActionButton({
       <button
         data-testid="agent-step-action"
         onClick={onStep}
-        disabled={isThinking || isPlayingMacro || !onStep || !!pendingDecision}
+        disabled={isThinking || isPlayingMacro || isSettling || !onStep || !!pendingDecision}
         className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
       >
         Step
@@ -104,7 +110,7 @@ function PrimaryActionButton({
     <button
       data-testid="agent-run-action"
       onClick={onRun}
-      disabled={isThinking || isPlayingMacro || !onRun}
+      disabled={isThinking || isPlayingMacro || isSettling || !onRun}
       className="rounded bg-emerald-600 px-3 py-1 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
     >
       Run
@@ -115,11 +121,15 @@ function PrimaryActionButton({
 function StatusBadge({
   isThinking,
   isPlayingMacro,
+  isSettling,
+  settlingInfo,
   isBattling,
   error,
 }: {
   isThinking?: boolean;
   isPlayingMacro?: boolean;
+  isSettling?: boolean;
+  settlingInfo?: SettlingInfo | null;
   isBattling?: boolean;
   error?: string;
 }) {
@@ -141,6 +151,20 @@ function StatusBadge({
     return (
       <span className="rounded-full bg-violet-500/20 px-2 py-0.5 text-xs text-violet-300">
         battling
+      </span>
+    );
+  }
+  if (isSettling) {
+    const detail =
+      settlingInfo?.phase === "stable"
+        ? `${settlingInfo.stableFrames}/${settlingInfo.confirmFrames} · ${settlingInfo.signature}`
+        : "";
+    return (
+      <span
+        className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-xs text-cyan-300"
+        title={detail || "waiting for game to settle"}
+      >
+        settling{detail ? ` · ${detail}` : ""}
       </span>
     );
   }
@@ -438,6 +462,8 @@ function SnippetDropdown({
 export function AgentTab({
   isThinking,
   isPlayingMacro,
+  isSettling,
+  settlingInfo,
   isBattling,
   error,
   lastRequest,
@@ -481,6 +507,8 @@ export function AgentTab({
         <StatusBadge
           isThinking={isThinking}
           isPlayingMacro={isPlayingMacro}
+          isSettling={isSettling}
+          settlingInfo={settlingInfo}
           isBattling={isBattling}
           error={error}
         />
@@ -496,6 +524,7 @@ export function AgentTab({
             snippetRunning={snippetRunning}
             isThinking={isThinking}
             isPlayingMacro={isPlayingMacro}
+            isSettling={isSettling}
             pendingDecision={pendingDecision}
             onRun={() => onAutoRunChange?.(true)}
             onAbort={onAbort}

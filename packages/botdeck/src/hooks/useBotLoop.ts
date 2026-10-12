@@ -22,6 +22,11 @@ import type {
 const DEFAULT_SETTLE_MS = 250;
 const DEFAULT_TURN_TIMEOUT_MS = 120_000;
 
+/** What the loop observed during the most recent settling sample. */
+export type SettlingInfo =
+  | { phase: "floor" }
+  | { phase: "stable"; stableFrames: number; confirmFrames: number; signature: string };
+
 export interface TurnLogEntry {
   seq: number;
   ts: number;
@@ -57,16 +62,27 @@ export interface UseBotLoopOptions {
   collect?: () => CollectedState | null;
   /** Persist before/after states for each agent step (default true). */
   collectStates?: boolean;
+  /** Minimum wait after every macro before checking game state. Gives the
+   *  game time to start a transition before we sample it. */
   settleDelayMs?: number;
   /** Timeout for the POST /api/turn fetch, in milliseconds. */
   turnTimeoutMs?: number;
+  /** Consecutive stable frames required to declare a transition settled. */
+  transitionConfirmFrames?: number;
+  /** Safety bound (ms) for the post-transition condition wait. */
+  transitionTimeoutMs?: number;
 }
 
 export interface UseBotLoopResult {
   isThinking: boolean;
   isPlayingMacro: boolean;
+  /** The loop is waiting for the game to settle (post-macro floor, state-stability
+   *  condition wait, or inter-turn scheduler gap). Not calling the LLM. */
+  isSettling: boolean;
   /** A battle turn is in flight and the game is animating/waiting, NOT calling the LLM. */
   isBattling: boolean;
+  /** What isSettling is currently observing (signature, stable-frame count, etc). */
+  settlingInfo: SettlingInfo | null;
   error: string | undefined;
   lastRequest: TurnRequest | undefined;
   lastResponse: TurnResponse | undefined;
@@ -97,11 +113,21 @@ export interface UseBotLoopResult {
 export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   const { playId, game, emulator, plugin, getScreenshot, collect } = options;
   const settleDelayMs = options.settleDelayMs ?? DEFAULT_SETTLE_MS;
+  const transitionConfirmFrames = options.transitionConfirmFrames ?? 3;
+  const transitionTimeoutMs = options.transitionTimeoutMs ?? 3_000;
   const turnTimeoutMs = options.turnTimeoutMs ?? DEFAULT_TURN_TIMEOUT_MS;
   const collectStates = options.collectStates ?? true;
 
   const [isThinking, setIsThinking] = useState(false);
   const [isPlayingMacro, setIsPlayingMacro] = useState(false);
+  /** True while the loop is waiting for the game to settle (post-macro floor,
+   *  state-stability condition wait, or inter-turn scheduler gap). Distinguished
+   *  from isThinking so the pill reflects real lifecycle state, not a coarse
+   *  "we're busy" flag. */
+  const [isSettling, setIsSettling] = useState(false);
+  /** What the settling check is currently observing - surfaced in the UI so the
+   *  wait is debuggable. Updates only while isSettling is true. */
+  const [settlingInfo, setSettlingInfo] = useState<SettlingInfo | null>(null);
   const [isBattling, setIsBattling] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const [lastRequest, setLastRequest] = useState<TurnRequest | undefined>();
@@ -186,8 +212,104 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   );
 
   const waitSettle = useCallback((): Promise<void> => {
-    return new Promise((resolve) => window.setTimeout(resolve, settleDelayMs));
+    setIsSettling(true);
+    setSettlingInfo({ phase: "floor" });
+    return new Promise((resolve) =>
+      window.setTimeout(() => {
+        setIsSettling(false);
+        setSettlingInfo(null);
+        resolve();
+      }, settleDelayMs),
+    );
   }, [settleDelayMs]);
+
+  /**
+   * Condition-based wait for the game state to become stable. Samples readState()
+   * at every emulated frame boundary via onFrameProbe. Computes a signature
+   * (mode + map + location + player position) and resolves once that signature
+   * has been unchanged for `transitionConfirmFrames` consecutive frames.
+   *
+   * This catches transitions that START late (game processing a door/stair
+   * animation for many frames after the macro's last button press) as well as
+   * transitions already in flight. The `settleDelayMs` floor is still applied
+   * before this in the calling code as a minimum before we start sampling.
+   */
+  const waitForStateStable = useCallback(
+    (signal?: AbortSignal): Promise<boolean> => {
+      const confirmFrames = transitionConfirmFrames;
+      const timeout = transitionTimeoutMs;
+      const start = Date.now();
+      let prevSig = "";
+      let stableCount = 0;
+      setIsSettling(true);
+      setSettlingInfo({ phase: "stable", stableFrames: 0, confirmFrames, signature: "" });
+
+      const stateSignature = (state: Record<string, unknown>): string => {
+        const mode = plugin.getMode(state);
+        const ff1 = (state as { ff1?: Record<string, unknown> }).ff1;
+        const world = (ff1?.world ?? {}) as Record<string, unknown>;
+        const loc = (world.location ?? {}) as Record<string, unknown>;
+        return `${mode}|${world.mapId ?? ""}|${loc.currentName ?? ""}|${world.playerTile ?? ""}`;
+      };
+
+      return new Promise<boolean>((resolve, reject) => {
+        let settled = false;
+        let safetyId: number | undefined;
+        let removeProbe: (() => void) | undefined;
+
+        const cleanup = () => {
+          settled = true;
+          if (safetyId !== undefined) window.clearTimeout(safetyId);
+          removeProbe?.();
+          signal?.removeEventListener("abort", onAbort);
+          setIsSettling(false);
+          setSettlingInfo(null);
+        };
+
+        const finish = (satisfied: boolean) => {
+          if (settled) return;
+          cleanup();
+          resolve(satisfied);
+        };
+
+        const onAbort = () => {
+          if (settled) return;
+          cleanup();
+          reject(new Error("state stability wait cancelled"));
+        };
+
+        const evaluate = () => {
+          if (settled || signal?.aborted) {
+            if (signal?.aborted && !settled) onAbort();
+            return;
+          }
+          const sig = stateSignature(plugin.readState());
+          if (sig === prevSig) {
+            stableCount += 1;
+            if (stableCount >= confirmFrames) { finish(true); return; }
+          } else {
+            stableCount = 0;
+            prevSig = sig;
+          }
+          setSettlingInfo({
+            phase: "stable",
+            stableFrames: stableCount,
+            confirmFrames,
+            signature: sig,
+          });
+          if (Date.now() - start > timeout) finish(false);
+        };
+
+        signal?.addEventListener("abort", onAbort);
+        // Seed the initial signature so the first probe can detect change.
+        prevSig = stateSignature(plugin.readState());
+        removeProbe = emulator.onFrameProbe(evaluate);
+        safetyId = window.setTimeout(() => finish(false), timeout);
+        evaluate();
+      });
+    },
+    [plugin, emulator, transitionConfirmFrames, transitionTimeoutMs],
+  );
 
   /** Record a turn that never produced a playable command, so history is complete. */
   const persistFailedStep = useCallback(
@@ -358,6 +480,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       const onAbort = () => controller.abort();
       signal?.addEventListener("abort", onAbort);
 
+      setIsThinking(true);
       try {
         const res = await fetch("/api/turn", {
           method: "POST",
@@ -371,6 +494,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         }
         return (await res.json()) as TurnResponse;
       } finally {
+        setIsThinking(false);
         window.clearTimeout(timeoutId);
         signal?.removeEventListener("abort", onAbort);
       }
@@ -502,27 +626,27 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
         }
         setIsPlayingMacro(false);
 
-        // If a dialog box is open after the macro, keep sampling through the
-        // settle delay so post-macro pages (e.g. the next page after
-        // dialog_advance) are captured before persisting the step.
-        // In battle mode, wait on the game condition - the issued command has
-        // latched into the command buffer (or the round has started, or command
-        // entry moved on) - instead of a fixed delay, so the after-state
-        // snapshot never lands mid-transition. The dialog probe stays attached
-        // during the wait so late dialog pages are still captured.
-        postState = plugin.readState();
-        const postDialogOpen =
-          (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
+        // Post-macro settling: battle uses its own condition-based latch.
+        // Field/interior turns: settle floor first (gives the game time to
+        // START a transition), then condition-wait if still transitioning.
         if (request.mode === "battle") {
+          postState = plugin.readState();
           await waitForCommandLatch(request.actor, postState, signal);
           postState = plugin.readState();
-          // The queued command may have started the round. Reflect the live
-          // condition so the pill shows "battling" straight through processing
-          // instead of falling back to "thinking" until waitForBattleRound runs.
           setIsBattling(isRoundExecuting(postState as unknown as BattleStateLike));
-        } else if (postDialogOpen) {
+        } else {
           await waitSettle();
           postState = plugin.readState();
+          const postDialogOpen =
+            (postState.ff1 as { dialog?: { open?: boolean } } | undefined)?.dialog?.open ?? false;
+          if (postDialogOpen) {
+            // Dialog may have advanced pages during the settle; re-read.
+            await waitSettle();
+            postState = plugin.readState();
+          } else {
+            await waitForStateStable(signal);
+            postState = plugin.readState();
+          }
         }
       } finally {
         signal?.removeEventListener("abort", onAbort);
@@ -576,7 +700,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setLastResponse(response);
       return entry;
     },
-    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch, setPendingMessage],
+    [emulator, plugin, collectStates, saveStepState, persistStep, playId, waitSettle, waitForCommandLatch, waitForStateStable, setPendingMessage],
   );
 
   const decideAndMaybeExecute = useCallback(
@@ -817,12 +941,19 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     }
 
     runningRef.current = true;
-    setIsThinking(true);
     setError(undefined);
 
     const controller = new AbortController();
     turnAbortRef.current = controller;
     try {
+      // Wait for the game to finish any in-progress transition before reading
+      // state for the agent prompt. Without this the agent sees stale pre-
+      // transition data (old map, old location) when a macro triggered a
+      // screen change that hasn't settled yet. The settle floor comes first
+      // so the game has time to begin the transition before we sample stability.
+      await waitSettle();
+      await waitForStateStable(controller.signal);
+
       const state = plugin.readState();
       const mode = plugin.getMode(state);
       // The battling pill tracks live round processing (waitForBattleRound /
@@ -873,7 +1004,7 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
       setIsBattling(false);
       runningRef.current = false;
     }
-  }, [emulator, plugin, runBattleRound, decideAndMaybeExecute]);
+  }, [emulator, plugin, runBattleRound, decideAndMaybeExecute, waitSettle, waitForStateStable]);
 
   const executePending = useCallback(async () => {
     const pending = pendingDecision;
@@ -884,7 +1015,6 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
     if (runningRef.current) return;
     runningRef.current = true;
     setPendingDecision(undefined);
-    setIsThinking(true);
 
     const controller = new AbortController();
     turnAbortRef.current = controller;
@@ -1040,6 +1170,8 @@ export function useBotLoop(options: UseBotLoopOptions): UseBotLoopResult {
   return {
     isThinking,
     isPlayingMacro,
+    isSettling,
+    settlingInfo,
     isBattling,
     error,
     lastRequest,

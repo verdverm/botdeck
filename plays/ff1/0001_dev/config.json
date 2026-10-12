@@ -7,6 +7,9 @@
     "maxToolRounds": 25,
     "maxTokens": 4096,
     "timeoutMs": 240000,
+    "settleDelayMs": 1000,
+    "transitionConfirmFrames": 3,
+    "transitionTimeoutMs": 3000,
     "limits": {
       "goals": 1024,
       "memory": 2048,

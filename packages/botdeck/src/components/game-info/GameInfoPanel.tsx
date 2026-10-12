@@ -183,6 +183,8 @@ export function GameInfoPanel({
           <AgentTab
             isThinking={agent?.isThinking}
             isPlayingMacro={agent?.isPlayingMacro}
+            isSettling={agent?.isSettling}
+            settlingInfo={agent?.settlingInfo}
             isBattling={agent?.isBattling}
             error={agent?.error}
             lastRequest={agent?.lastRequest}

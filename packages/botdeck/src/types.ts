@@ -121,6 +121,12 @@ export interface GamePlugin {
    * undefined means "play the macro to completion".
    */
   macroAbort?(command: GameCommand): (() => boolean) | undefined;
+  /**
+   * Returns true when the game is mid-transition (screen fade, map load, warp).
+   * Used by the agent loop to decide whether to condition-wait after a macro
+   * before taking the after-state snapshot.
+   */
+  isTransitioning?(): boolean;
 }
 
 export interface ToolSpec {

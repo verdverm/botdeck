@@ -729,6 +729,12 @@ export class FF1GamePlugin implements GamePlugin {
     return () => (mem[ADDR_MAPFLAGS] ?? 0) !== initialFlags;
   }
 
+  isTransitioning(): boolean {
+    const mem = this.emulator.getMemory();
+    if (!mem || mem.length < 0x10000) return false;
+    return (mem[ADDR_MAPFLAGS] ?? 0) === 2;
+  }
+
   private compileGoto(command: GameCommand): ButtonStep[] {
     const location = String(command.args?.location ?? "").trim();
     if (!location) throw new Error('goto: missing "location"');
